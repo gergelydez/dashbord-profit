@@ -61,6 +61,12 @@ function procOrder(o) {
   if (o.cancelled_at) ts = 'anulat';
   const addr = o.shipping_address || o.billing_address || {};
   const prods = (o.line_items || []).map(i => i.name || '').join(' + ');
+  // Detect courier from fulfillment tracking_company
+  const fulfillmentData = (o.fulfillments || []).find(f => f.tracking_company || f.tracking_number);
+  const trackingCompany = (fulfillmentData?.tracking_company || '').toLowerCase();
+  const courier = trackingCompany.includes('sameday') ? 'sameday'
+                : trackingCompany.includes('gls') ? 'gls'
+                : trackingCompany ? 'other' : 'unknown';
   // Extract invoice from xConnector note_attributes
   const notes = o.note_attributes || [];
   const invUrlAttr   = notes.find(a => (a.name||'').toLowerCase().includes('invoice-url') && !(a.name||'').toLowerCase().includes('short'));
@@ -75,7 +81,7 @@ function procOrder(o) {
     trackingNo, client: addr.name || '', oras: addr.city || '',
     total: parseFloat(o.total_price) || 0,
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
-    createdAt: o.created_at || '', fulfilledAt,
+    createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
   };
 }
@@ -97,6 +103,11 @@ export default function Dashboard() {
   const [pg, setPg]             = useState(1);
   const [sortCol, setSortCol]   = useState(null);
   const [sortDir, setSortDir]   = useState(1);
+
+  // Sameday status
+  const [sdStatuses, setSdStatuses] = useState({});
+  const [sdLoading, setSdLoading]   = useState(false);
+  const [sdDone, setSdDone]         = useState(false);
 
   /* Date range — filtrare LOCALĂ, fără request nou */
   const [preset, setPreset]         = useState('last_30');
@@ -183,6 +194,36 @@ export default function Dashboard() {
     if (id !== 'custom') applyDateFilter(allOrders, id, customFrom, customTo); // filtrare LOCALĂ!
   };
 
+  // Check Sameday statuses — credentials are in Vercel env vars (server-side only)
+  const checkSameday = async (orderList) => {
+    const src = orderList || orders;
+    const samedayOrders = src.filter(o => o.courier === 'sameday' && o.trackingNo);
+    if (!samedayOrders.length) return;
+    setSdLoading(true);
+    try {
+      const awbs = samedayOrders.map(o => o.trackingNo).join(',');
+      const res = await fetch(`/api/sameday?awbs=${encodeURIComponent(awbs)}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setSdStatuses(data.results || {});
+      setSdDone(true);
+      localStorage.setItem('sd_statuses', JSON.stringify(data.results || {}));
+    } catch (e) { console.warn('Sameday check failed:', e.message); }
+    finally { setSdLoading(false); }
+  };
+
+  // Resolve Sameday display status from API response
+  const getSdStatus = (awb) => {
+    const s = sdStatuses[awb];
+    if (!s) return null;
+    const statusCode = s.statusCode || s.status || s.parcelStatus || s.code || '';
+    const statusName = (s.statusLabel || s.statusName || s.label || String(statusCode)).toLowerCase();
+    if (statusName.includes('livrat') || statusName.includes('delivered') || statusCode === 'OD') return 'livrat';
+    if (statusName.includes('retur') || statusName.includes('return') || statusCode === 'RD') return 'retur';
+    if (statusName.includes('tranzit') || statusName.includes('transit')) return 'incurs';
+    return 'incurs';
+  };
+
   const disconnect = () => { setOrders([]); setConnected(false); setError(''); localStorage.removeItem('gx_t'); };
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
@@ -192,6 +233,21 @@ export default function Dashboard() {
   const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sI=sum(['livrat']), sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
+
+  // Courier breakdown
+  const glsOrders    = orders.filter(o => o.courier === 'gls');
+  const sdOrders     = orders.filter(o => o.courier === 'sameday');
+  const glsLivrate   = glsOrders.filter(o => o.ts === 'livrat').length;
+  const glsRetur     = glsOrders.filter(o => o.ts === 'retur').length;
+  const sdLivrate    = sdOrders.filter(o => {
+    const sdS = getSdStatus(o.trackingNo);
+    return sdS === 'livrat' || (o.ts === 'livrat' && !sdS);
+  }).length;
+  const sdRetur      = sdOrders.filter(o => {
+    const sdS = getSdStatus(o.trackingNo);
+    return sdS === 'retur' || (o.ts === 'retur' && !sdS);
+  }).length;
+  const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
 
   const kpis = [
     {v:n,           lbl:'Total comenzi',  e:'📦',color:'#f97316',p:100},
@@ -407,15 +463,65 @@ export default function Dashboard() {
               {sR>0 && <div className="sc sc3"><div className="si">↩️</div><div><div className="slbl">Pierdut retur/anulat</div><div className="sv">{fmt(sR)} RON</div><div className="ssub">{retur+anulate} comenzi</div></div></div>}
             </div>
 
-            {(() => {
-              const noInvoice = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
-              return noInvoice.length > 0 ? (
-                <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12,color:'#f59e0b',display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:16}}>⚠️</span>
-                  <span><strong>{noInvoice.length} comenzi plătite fără factură:</strong> {noInvoice.map(o=>o.name).join(', ')}</span>
+
+            {/* INVOICE WARNING */}
+            {noInvoicePaid.length > 0 && (
+              <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                <span style={{fontSize:16}}>⚠️</span>
+                <span style={{color:'#f59e0b',flex:1}}><strong>{noInvoicePaid.length} comenzi plătite fără factură:</strong> {noInvoicePaid.map(o=>o.name).join(', ')}</span>
+                <a href="https://app.smartbill.ro" target="_blank" rel="noopener noreferrer"
+                  style={{background:'#f59e0b',color:'#000',padding:'5px 12px',borderRadius:7,fontSize:11,fontWeight:700,textDecoration:'none',whiteSpace:'nowrap'}}>
+                  📄 Deschide SmartBill
+                </a>
+              </div>
+            )}
+
+            {/* COURIER BREAKDOWN */}
+            {(glsOrders.length > 0 || sdOrders.length > 0) && (
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+                {/* GLS */}
+                <div style={{background:'#0f1419',border:'1px solid #f97316',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,marginBottom:8,fontFamily:'monospace'}}>📦 GLS</div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
+                    <span style={{color:'#94a3b8'}}>Total</span><span style={{color:'#e8edf2',fontFamily:'monospace'}}>{glsOrders.length}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
+                    <span style={{color:'#94a3b8'}}>Livrate</span><span style={{color:'#10b981',fontFamily:'monospace'}}>{glsLivrate}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
+                    <span style={{color:'#94a3b8'}}>Returnate</span><span style={{color:'#f43f5e',fontFamily:'monospace'}}>{glsRetur}</span>
+                  </div>
                 </div>
-              ) : null;
-            })()}
+                {/* SAMEDAY */}
+                <div style={{background:'#0f1419',border:'1px solid #3b82f6',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                    <span style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
+                      🚀 Sameday {sdLoading && <span style={{fontSize:8,color:'#94a3b8'}}>⟳</span>}
+                    </span>
+                    <button onClick={() => checkSameday()}
+                      disabled={sdLoading}
+                      style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:5,padding:'2px 7px',cursor:'pointer'}}>
+                      {sdLoading ? '⟳' : sdDone ? '↺ Refresh' : '⟳ Verifică'}
+                    </button>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
+                    <span style={{color:'#94a3b8'}}>Total</span><span style={{color:'#e8edf2',fontFamily:'monospace'}}>{sdOrders.length}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
+                    <span style={{color:'#94a3b8'}}>Livrate</span>
+                    <span style={{color:'#10b981',fontFamily:'monospace'}}>{sdLivrate}{!sdDone&&sdOrders.length>0?<span style={{color:'#4a5568',fontSize:9}}> *</span>:''}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
+                    <span style={{color:'#94a3b8'}}>Returnate</span>
+                    <span style={{color:'#f43f5e',fontFamily:'monospace'}}>{sdRetur}{!sdDone&&sdOrders.length>0?<span style={{color:'#4a5568',fontSize:9}}> *</span>:''}</span>
+                  </div>
+                  {!sdDone && sdOrders.length>0 && <div style={{fontSize:9,color:'#4a5568',marginTop:4}}>* date din Shopify, apasă Verifică pentru date live</div>}
+                </div>
+              </div>
+            )}
+
+
+
             <div className="stitle">Comenzi</div>
             <div className="frow">
               {['toate','livrat','incurs','outfor','retur','anulat','pending'].map(f=>(
@@ -436,7 +542,7 @@ export default function Dashboard() {
               <div className="tscroll">
                 <table>
                   <thead><tr>
-                    {[['name','Comandă'],['ts','Status'],['fin','Plată'],['client','Client'],['oras','Oraș'],['','Produse'],['total','Total'],['','Factură'],['createdAt','Data'],['fulfilledAt','Livrat']].map(([col,lbl])=>(
+                    {[['name','Comandă'],['ts','Status'],['fin','Plată'],['client','Client'],['oras','Oraș'],['','Produse'],['total','Total'],['','Factură'],['createdAt','Data'],['fulfilledAt','Livrat'],['','Curier']].map(([col,lbl])=>(
                       <th key={lbl} onClick={()=>col&&handleSort(col)}>{lbl} {col?'↕':''}</th>
                     ))}
                   </tr></thead>
@@ -468,6 +574,15 @@ export default function Dashboard() {
                           </td>
                           <td style={{fontSize:'10px',color:'#94a3b8'}}>{fmtD(o.createdAt)}</td>
                           <td style={{fontSize:'10px',color:'#94a3b8'}}>{o.fulfilledAt?fmtD(o.fulfilledAt):<span className="mg mg-m">—</span>}</td>
+                          <td>
+                            {o.courier==='gls' && <span style={{fontSize:9,background:'rgba(249,115,22,.15)',color:'#f97316',border:'1px solid rgba(249,115,22,.2)',padding:'1px 5px',borderRadius:4}}>GLS</span>}
+                            {o.courier==='sameday' && (()=>{
+                              const sdS = getSdStatus(o.trackingNo);
+                              return <span style={{fontSize:9,background:'rgba(59,130,246,.15)',color:sdS==='livrat'?'#10b981':sdS==='retur'?'#f43f5e':'#3b82f6',border:'1px solid rgba(59,130,246,.2)',padding:'1px 5px',borderRadius:4}}>
+                                SD{sdS?` · ${sdS==='livrat'?'✓':sdS==='retur'?'↩':'…'}':''}
+                              </span>;
+                            })()}
+                          </td>
                         </tr>
                       );
                     })}
@@ -494,4 +609,3 @@ export default function Dashboard() {
     </>
   );
 }
-
