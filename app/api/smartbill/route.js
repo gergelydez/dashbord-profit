@@ -6,14 +6,12 @@ export async function GET(request) {
   const token = searchParams.get('token');
   const cif   = searchParams.get('cif');
   const month = searchParams.get('month') || new Date().toISOString().slice(0, 7);
-  const type  = searchParams.get('type') || 'products'; // products | expense | invoice
+  const type  = searchParams.get('type') || 'products';
 
   if (!email || !token || !cif) {
     return NextResponse.json({ error: 'Missing credentials' }, { status: 400 });
   }
 
-  // Token may contain pipe | character (e.g. "003|98fc...") - this is normal for SmartBill
-  // searchParams.get() auto-decodes %7C -> | so token should be correct here
   const cleanToken = token.trim();
   const cleanEmail = email.trim();
   const auth = Buffer.from(`${cleanEmail}:${cleanToken}`).toString('base64');
@@ -24,53 +22,58 @@ export async function GET(request) {
     'Content-Type': 'application/json',
   };
 
+  // SmartBill Cloud API - correct base URL
+  // Docs: https://api.smartbill.ro
+  const BASE = 'https://ws.smartbill.ro/SBORO/api';
+
   try {
-    if (type === 'products') {
-      // ── Fetch product list with prices ──
-      // SmartBill has a products endpoint that returns all products with buying price
-      const res = await fetch(
-        `https://ws.smartbill.ro/SBORO/api/product/list?cif=${cif}&page=1&pageSize=500`,
-        { headers, cache: 'no-store' }
-      );
-      const raw = await res.text();
-
-      // Try to parse as JSON
-      let data;
-      try { data = JSON.parse(raw); }
-      catch { return NextResponse.json({ error: `SmartBill răspuns invalid: ${raw.slice(0, 200)}` }, { status: 502 }); }
-
-      if (!res.ok) return NextResponse.json({ error: `SmartBill ${res.status}: ${JSON.stringify(data)}` }, { status: res.status });
-
-      // Extract product costs from product list
-      const costs = {};
-      const products = data.products || data.list || data.Produse || [];
-      products.forEach(p => {
-        const name = (p.name || p.denumire || p.Name || '').toLowerCase().trim();
-        const sku  = (p.code || p.cod || p.Cod || '').toLowerCase().trim();
-        // buyingPrice = cost de achizitie
-        const cost = parseFloat(p.buyingPrice || p.pretAchizitie || p.costPrice || p.pret || 0);
-        if (name && cost > 0) costs[name] = cost;
-        if (sku  && cost > 0) costs[sku]  = cost;
-      });
-
-      return NextResponse.json({ costs, products, rawCount: products.length });
+    if (type === 'test') {
+      // Test all known SmartBill API endpoint patterns
+      const results = {};
+      const testUrls = [
+        // SmartBill Cloud - ws.smartbill.ro
+        { name: 'ws/invoice-list',  url: `${BASE}/invoice/list?cif=${cif}&seriesname=&from=2026-02-01&to=2026-02-28&page=1&pageSize=3` },
+        { name: 'ws/expense-list',  url: `${BASE}/expense/list?cif=${cif}&seriesname=&from=2026-02-01&to=2026-02-28&page=1&pageSize=3` },
+        { name: 'ws/product-list',  url: `${BASE}/product/list?cif=${cif}&page=1&pageSize=3` },
+        { name: 'ws/taxes',         url: `${BASE}/tax?cif=${cif}` },
+        // Alternative SmartBill API
+        { name: 'api-v1/invoices',  url: `https://api.smartbill.ro/v1/invoice/list?cif=${cif}&from=2026-02-01&to=2026-02-28` },
+        { name: 'api-v1/products',  url: `https://api.smartbill.ro/v1/product/list?cif=${cif}` },
+        // Try without /SBORO/
+        { name: 'ws-direct/invoice', url: `https://ws.smartbill.ro/api/invoice/list?cif=${cif}&from=2026-02-01&to=2026-02-28&page=1&pageSize=3` },
+        { name: 'ws-direct/expense', url: `https://ws.smartbill.ro/api/expense/list?cif=${cif}&from=2026-02-01&to=2026-02-28&page=1&pageSize=3` },
+      ];
+      
+      for (const { name, url } of testUrls) {
+        try {
+          const r = await fetch(url, { headers, cache: 'no-store' });
+          const raw = await r.text();
+          let parsed;
+          try { parsed = JSON.parse(raw); } catch { parsed = null; }
+          results[name] = { 
+            status: r.status, 
+            isJson: !!parsed, 
+            preview: raw.slice(0, 200),
+            url: url
+          };
+        } catch (e) {
+          results[name] = { error: e.message, url };
+        }
+      }
+      return NextResponse.json({ results, auth_used: `${cleanEmail}:***`, token_length: cleanToken.length });
     }
 
     if (type === 'expense') {
-      // ── Fetch purchase invoices ──
       const [year, m] = month.split('-');
       const days = new Date(year, m, 0).getDate();
-      const res = await fetch(
-        `https://ws.smartbill.ro/SBORO/api/expense/list?cif=${cif}&seriesname=&from=${year}-${m}-01&to=${year}-${m}-${days}&page=1&pageSize=500`,
-        { headers, cache: 'no-store' }
-      );
+      const url = `${BASE}/expense/list?cif=${cif}&seriesname=&from=${year}-${m}-01&to=${year}-${m}-${days}&page=1&pageSize=500`;
+      const res = await fetch(url, { headers, cache: 'no-store' });
       const raw = await res.text();
       let data;
       try { data = JSON.parse(raw); }
       catch { return NextResponse.json({ error: `SmartBill răspuns invalid: ${raw.slice(0, 300)}` }, { status: 502 }); }
       if (!res.ok) return NextResponse.json({ error: `SmartBill ${res.status}: ${JSON.stringify(data)}` }, { status: res.status });
 
-      // Extract costs from purchase invoices
       const costs = {};
       const bills = data.list || data.bills || data.expenses || [];
       bills.forEach(bill => {
@@ -83,31 +86,28 @@ export async function GET(request) {
           if (sku  && cost > 0) costs[sku]  = cost;
         });
       });
-
-      return NextResponse.json({ costs, rawCount: bills.length, data });
+      return NextResponse.json({ costs, rawCount: bills.length });
     }
 
-    if (type === 'test') {
-      // Test connection - try multiple endpoints and return raw responses
-      const results = {};
-      const testUrls = [
-        { name: 'product/list', url: `https://ws.smartbill.ro/SBORO/api/product/list?cif=${cif}&page=1&pageSize=3` },
-        { name: 'invoice/list', url: `https://ws.smartbill.ro/SBORO/api/invoice/list?cif=${cif}&seriesname=&from=2026-03-01&to=2026-03-31&page=1&pageSize=3` },
-        { name: 'expense/list', url: `https://ws.smartbill.ro/SBORO/api/expense/list?cif=${cif}&seriesname=&from=2026-03-01&to=2026-03-31&page=1&pageSize=3` },
-        { name: 'company',      url: `https://ws.smartbill.ro/SBORO/api/company/allbyusername` },
-      ];
-      for (const { name, url } of testUrls) {
-        try {
-          const r = await fetch(url, { headers, cache: 'no-store' });
-          const raw = await r.text();
-          let parsed;
-          try { parsed = JSON.parse(raw); } catch { parsed = null; }
-          results[name] = { status: r.status, isJson: !!parsed, preview: raw.slice(0, 150) };
-        } catch (e) {
-          results[name] = { error: e.message };
-        }
-      }
-      return NextResponse.json({ results, auth_used: `${email}:***` });
+    if (type === 'products') {
+      const url = `${BASE}/product/list?cif=${cif}&page=1&pageSize=500`;
+      const res = await fetch(url, { headers, cache: 'no-store' });
+      const raw = await res.text();
+      let data;
+      try { data = JSON.parse(raw); }
+      catch { return NextResponse.json({ error: `SmartBill răspuns invalid: ${raw.slice(0, 200)}` }, { status: 502 }); }
+      if (!res.ok) return NextResponse.json({ error: `SmartBill ${res.status}: ${JSON.stringify(data)}` }, { status: res.status });
+
+      const costs = {};
+      const products = data.products || data.list || data.Produse || [];
+      products.forEach(p => {
+        const name = (p.name || p.denumire || p.Name || '').toLowerCase().trim();
+        const sku  = (p.code || p.cod || p.Cod || '').toLowerCase().trim();
+        const cost = parseFloat(p.buyingPrice || p.pretAchizitie || p.costPrice || p.pret || 0);
+        if (name && cost > 0) costs[name] = cost;
+        if (sku  && cost > 0) costs[sku]  = cost;
+      });
+      return NextResponse.json({ costs, products, rawCount: products.length });
     }
 
     return NextResponse.json({ error: 'Unknown type' }, { status: 400 });
@@ -123,3 +123,4 @@ export async function OPTIONS() {
     headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS' },
   });
 }
+
