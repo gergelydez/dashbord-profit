@@ -268,7 +268,7 @@ export default function ProfitPage() {
     }
   };
 
-  /* ── CALCULATIONS ── */*/
+  /* ── CALCULATIONS ── */
   const deliveredOrders = shopifyOrders.filter(o => o.fulfillment === 'fulfilled' && o.financial === 'paid');
   const totalRevenue = deliveredOrders.reduce((s, o) => s + o.total, 0);
   const totalOrders = deliveredOrders.length;
