@@ -56,7 +56,9 @@ export default function ProfitPage() {
 
   /* Product cost mapping */
   const [productCosts, setProductCosts] = useState({});    // SmartBill costs
-  const [shopifyCosts, setShopifyCosts] = useState({});    // Shopify cost_per_item
+  const [shopifyCosts, setShopifyCosts] = useState({});    // Shopify cost by name
+  const [shopifyVariantCosts, setShopifyVariantCosts] = useState({}); // Shopify cost by variant_id
+  const [shopifySkuCosts, setShopifySkuCosts] = useState({});  // Shopify cost by SKU
   const [shopifyCostsDone, setShopifyCostsDone] = useState(false);
   const [manualCosts, setManualCosts] = useState({});
   const [costSource, setCostSource] = useState({});        // per-product override: 'smartbill'|'shopify'|'manual'
@@ -89,10 +91,11 @@ export default function ProfitPage() {
 
     /* Load saved Shopify product costs */
     const savedShopifyCosts = localStorage.getItem('glamx_shopify_costs');
-    if (savedShopifyCosts) {
-      setShopifyCosts(JSON.parse(savedShopifyCosts));
-      setShopifyCostsDone(true);
-    }
+    if (savedShopifyCosts) { setShopifyCosts(JSON.parse(savedShopifyCosts)); setShopifyCostsDone(true); }
+    const savedVariantCosts = localStorage.getItem('glamx_shopify_variant_costs');
+    if (savedVariantCosts) setShopifyVariantCosts(JSON.parse(savedVariantCosts));
+    const savedSkuCosts = localStorage.getItem('glamx_shopify_sku_costs');
+    if (savedSkuCosts) setShopifySkuCosts(JSON.parse(savedSkuCosts));
   }, []);
 
   /* ── Shopify fetch ── */
@@ -126,7 +129,7 @@ export default function ProfitPage() {
           total: parseFloat(o.total_price) || 0,
           financial: o.financial_status,
           fulfillment: o.fulfillment_status,
-          items: (o.line_items || []).map(i => ({ name: i.name, sku: i.sku || '', qty: i.quantity || 1, price: parseFloat(i.price) || 0 })),
+          items: (o.line_items || []).map(i => ({ name: i.name, sku: i.sku || '', variantId: String(i.variant_id || ''), qty: i.quantity || 1, price: parseFloat(i.price) || 0 })),
           createdAt: o.created_at,
           invoiceNumber,
           hasInvoice,
@@ -142,10 +145,14 @@ export default function ProfitPage() {
       try {
         const costRes = await fetch(`/api/product-costs?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}`);
         const costData = await costRes.json();
-        if (costData.costs) {
-          setShopifyCosts(costData.costs);
+        if (costData.costs || costData.variantCosts) {
+          setShopifyCosts(costData.costs || {});
+          setShopifyVariantCosts(costData.variantCosts || {});
+          setShopifySkuCosts(costData.skuCosts || {});
           setShopifyCostsDone(true);
-          localStorage.setItem('glamx_shopify_costs', JSON.stringify(costData.costs));
+          localStorage.setItem('glamx_shopify_costs', JSON.stringify(costData.costs || {}));
+          localStorage.setItem('glamx_shopify_variant_costs', JSON.stringify(costData.variantCosts || {}));
+          localStorage.setItem('glamx_shopify_sku_costs', JSON.stringify(costData.skuCosts || {}));
         }
       } catch { /* non-critical, continue without Shopify costs */ }
     } catch (e) { alert('Eroare Shopify: ' + e.message); }
@@ -270,11 +277,12 @@ export default function ProfitPage() {
   const totalRevenue = deliveredOrders.reduce((s, o) => s + o.total, 0);
   const totalOrders = deliveredOrders.length;
 
-  /* Resolve cost for a product — respects per-product source override */
+  /* Resolve cost — priority: Manual > SmartBill > Shopify (variant_id > SKU > name) */
   const resolveCost = (item) => {
-    const nameKey = item.name.toLowerCase().trim();
-    const skuKey  = (item.sku || '').toLowerCase().trim();
-    const override = costSource[item.name]; // 'smartbill' | 'shopify' | 'manual'
+    const nameKey    = (item.name || '').toLowerCase().trim();
+    const skuKey     = (item.sku || '').toLowerCase().trim();
+    const variantId  = String(item.variantId || '');
+    const override   = costSource[item.name];
 
     if (override === 'manual' || (!override && manualCosts[item.name] !== undefined && manualCosts[item.name] !== '')) {
       return { cost: parseFloat(manualCosts[item.name]) || 0, src: 'manual' };
@@ -282,8 +290,13 @@ export default function ProfitPage() {
     if (override === 'smartbill' || (!override && (productCosts[nameKey] || productCosts[skuKey]))) {
       return { cost: productCosts[nameKey] || productCosts[skuKey] || 0, src: 'smartbill' };
     }
-    if (override === 'shopify' || (!override && (shopifyCosts[nameKey] || shopifyCosts[skuKey]))) {
-      return { cost: shopifyCosts[nameKey] || shopifyCosts[skuKey] || 0, src: 'shopify' };
+    // Shopify: try variant_id first (most accurate), then SKU, then name
+    const shopifyCostByVariant = variantId ? shopifyVariantCosts[variantId] : null;
+    const shopifyCostBySku     = skuKey ? shopifySkuCosts[skuKey] : null;
+    const shopifyCostByName    = shopifyCosts[nameKey];
+    const shopifyCost = shopifyCostByVariant || shopifyCostBySku || shopifyCostByName;
+    if (override === 'shopify' || (!override && shopifyCost)) {
+      return { cost: shopifyCost || 0, src: 'shopify' };
     }
     return { cost: 0, src: 'none' };
   };
@@ -299,7 +312,7 @@ export default function ProfitPage() {
       });
     });
     return total;
-  }, [deliveredOrders, productCosts, shopifyCosts, manualCosts, costSource]);
+  }, [deliveredOrders, productCosts, shopifyCosts, shopifyVariantCosts, shopifySkuCosts, manualCosts, costSource]);
 
   const cogs = getCOGS();
   const totalMarketing = (parseFloat(metaCost) || 0) + (parseFloat(tikTokCost) || 0) + (parseFloat(googleCost) || 0);
@@ -821,3 +834,4 @@ export default function ProfitPage() {
     </>
   );
 }
+
