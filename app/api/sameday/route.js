@@ -36,6 +36,7 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, message: 'Autentificare Sameday reușită!' });
     }
 
+    const debug = searchParams.get('debug') === '1';
     const results = {};
     for (const awb of awbs.slice(0, 100)) {
       try {
@@ -43,14 +44,24 @@ export async function GET(request) {
           headers: { 'X-AUTH-TOKEN': token, 'Accept': 'application/json' },
           cache: 'no-store',
         });
+        const raw = await res.text();
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { parsed = { raw: raw.slice(0, 300) }; }
+        
         if (res.ok) {
-          results[awb] = await res.json();
+          results[awb] = debug ? { _raw: parsed, _status: res.status } : parsed;
         } else {
+          // Try alternative endpoint
           const res2 = await fetch(`${SD_BASE}/api/awb/${awb.trim()}/status`, {
             headers: { 'X-AUTH-TOKEN': token, 'Accept': 'application/json' },
             cache: 'no-store',
           });
-          results[awb] = res2.ok ? await res2.json() : { httpStatus: res.status };
+          const raw2 = await res2.text();
+          let parsed2;
+          try { parsed2 = JSON.parse(raw2); } catch { parsed2 = { raw: raw2.slice(0, 300) }; }
+          results[awb] = debug 
+            ? { _endpoint1: { status: res.status, body: parsed }, _endpoint2: { status: res2.status, body: parsed2 } }
+            : (res2.ok ? parsed2 : { httpStatus: res.status, body: parsed });
         }
       } catch (e) {
         results[awb] = { error: e.message };
