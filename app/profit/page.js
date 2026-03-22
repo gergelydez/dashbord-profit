@@ -54,6 +54,26 @@ export default function ProfitPage() {
   /* Other variable costs */
   const [otherCosts, setOtherCosts] = useState([]);
 
+  /* Default product costs — editabile, salvate în browser */
+  const DEFAULT_PRODUCT_COSTS = [
+    { id: 'DM56_SIL',      pattern: 'silicon',           excludes: ['metal','protectie','protecție'], name: 'Delta Max Silicon (fără protecție)',          cost: 159 },
+    { id: 'DM56_SIL_PROT', pattern: 'silicon',           excludes: ['metal'],                         name: 'Delta Max Silicon + Protecție ecran',         cost: 159 },
+    { id: 'DM56_MET',      pattern: 'silicon+ metal',    excludes: [],                                name: 'Delta Max Silicon + Metal + Protecție',       cost: 179 },
+    { id: 'DM56_MET2',     pattern: 'silicon+metal',     excludes: [],                                name: 'Delta Max Silicon+Metal',                     cost: 179 },
+    { id: 'HD300',         pattern: 'delta max pro',     excludes: [],                                name: 'Delta Max PRO HD300',                         cost: 181 },
+    { id: 'Z85',           pattern: 'z85',               excludes: [],                                name: 'Z85 (toate modelele)',                        cost: 65  },
+    { id: 'U8',            pattern: 'u8',                excludes: [],                                name: 'U8 Ultra',                                    cost: 208 },
+    { id: 'M99',           pattern: 'delta max ultra',   excludes: [],                                name: 'Delta Max Ultra M99',                         cost: 275 },
+    { id: 'DM58',          pattern: 'delta max plus',    excludes: [],                                name: 'Delta Max Plus DM58',                         cost: 169 },
+    { id: 'DM58B',         pattern: 'dm58',              excludes: [],                                name: 'Delta Max Plus DM58 (SKU)',                   cost: 169 },
+  ];
+  const [stdCosts, setStdCosts] = useState(() => {
+    try {
+      const saved = localStorage.getItem('glamx_std_costs');
+      return saved ? JSON.parse(saved) : DEFAULT_PRODUCT_COSTS;
+    } catch { return DEFAULT_PRODUCT_COSTS; }
+  });
+
   /* Product cost mapping */
   const [productCosts, setProductCosts] = useState({});    // SmartBill costs
   const [shopifyCosts, setShopifyCosts] = useState({});    // Shopify cost by name
@@ -76,6 +96,8 @@ export default function ProfitPage() {
 
     const savedFixed = localStorage.getItem('glamx_fixed_costs');
     if (savedFixed) setFixedCosts(JSON.parse(savedFixed));
+    const savedStd = localStorage.getItem('glamx_std_costs');
+    if (savedStd) { try { setStdCosts(JSON.parse(savedStd)); } catch {} }
     const savedOther = localStorage.getItem('glamx_other_costs');
     if (savedOther) setOtherCosts(JSON.parse(savedOther));
     const savedMeta = localStorage.getItem('glamx_meta_cost');
@@ -298,6 +320,15 @@ export default function ProfitPage() {
     if (override === 'shopify' || (!override && shopifyCost)) {
       return { cost: shopifyCost || 0, src: 'shopify' };
     }
+    // Standard costs — pattern matching on product name
+    const nameLower = nameKey;
+    for (const std of stdCosts) {
+      const pat = std.pattern.toLowerCase();
+      if (nameLower.includes(pat)) {
+        const excluded = (std.excludes || []).some(ex => nameLower.includes(ex.toLowerCase()));
+        if (!excluded) return { cost: std.cost, src: 'standard' };
+      }
+    }
     return { cost: 0, src: 'none' };
   };
 
@@ -312,7 +343,7 @@ export default function ProfitPage() {
       });
     });
     return total;
-  }, [deliveredOrders, productCosts, shopifyCosts, shopifyVariantCosts, shopifySkuCosts, manualCosts, costSource]);
+  }, [deliveredOrders, productCosts, shopifyCosts, shopifyVariantCosts, shopifySkuCosts, manualCosts, costSource, stdCosts]);
 
   const cogs = getCOGS();
   const totalMarketing = (parseFloat(metaCost) || 0) + (parseFloat(tikTokCost) || 0) + (parseFloat(googleCost) || 0);
@@ -336,6 +367,7 @@ export default function ProfitPage() {
     localStorage.setItem('glamx_fixed_costs', JSON.stringify(fixedCosts));
     localStorage.setItem('glamx_other_costs', JSON.stringify(otherCosts));
     localStorage.setItem('glamx_meta_cost', metaCost);
+    localStorage.setItem('glamx_std_costs', JSON.stringify(stdCosts));
     alert('✅ Salvat!');
   };
 
@@ -682,6 +714,42 @@ export default function ProfitPage() {
               <button className="btn btn-gray" onClick={addOther}>+ Adaugă cost variabil</button>
             </div>
 
+            {/* STANDARD COSTS EDITOR */}
+            <div className="st" style={{marginTop:16}}>Costuri standard produse</div>
+            <div className="src-card" style={{marginBottom:14}}>
+              <p style={{fontSize:12,color:'#94a3b8',marginBottom:12,lineHeight:1.5}}>
+                Se aplică automat prin potrivire de nume. Editează și apasă <strong>Salvează setările</strong>.
+              </p>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead><tr>
+                  <th style={{textAlign:'left',padding:'6px 8px',background:'#161d24',color:'#94a3b8',fontSize:10,textTransform:'uppercase',borderBottom:'1px solid #1e2a35'}}>Produs</th>
+                  <th style={{textAlign:'center',padding:'6px 8px',background:'#161d24',color:'#94a3b8',fontSize:10,textTransform:'uppercase',borderBottom:'1px solid #1e2a35',width:100}}>Cost RON</th>
+                  <th style={{width:40,background:'#161d24',borderBottom:'1px solid #1e2a35'}}></th>
+                </tr></thead>
+                <tbody>
+                  {stdCosts.map((s,i) => (
+                    <tr key={s.id} style={{borderBottom:'1px solid #1e2a35'}}>
+                      <td style={{padding:'7px 8px',color:'#94a3b8',fontSize:12}}>{s.name}</td>
+                      <td style={{padding:'7px 8px',textAlign:'center'}}>
+                        <input type="text" inputMode="decimal" value={s.cost}
+                          onChange={e => setStdCosts(p => p.map((x,j) => j===i ? {...x, cost: e.target.value} : x))}
+                          onBlur={e => { const v=parseFloat(String(e.target.value).replace(',','.')); if(!isNaN(v)) setStdCosts(p => p.map((x,j) => j===i ? {...x,cost:v} : x)); }}
+                          style={{background:'#161d24',border:'1px solid #243040',color:'#10b981',borderRadius:6,padding:'4px 8px',fontSize:12,width:80,fontFamily:'monospace',textAlign:'center',outline:'none'}} />
+                      </td>
+                      <td style={{padding:'4px'}}>
+                        <button onClick={() => setStdCosts(p => p.filter((_,j) => j!==i))}
+                          style={{background:'transparent',border:'1px solid rgba(244,63,94,.3)',color:'#f43f5e',borderRadius:5,padding:'2px 6px',fontSize:11,cursor:'pointer'}}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button onClick={() => setStdCosts(p => [...p, {id:'new_'+Date.now(),pattern:'',excludes:[],name:'Produs nou',cost:0}])}
+                style={{marginTop:8,background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'6px 14px',fontSize:12,cursor:'pointer',width:'100%'}}>
+                + Adaugă produs
+              </button>
+            </div>
+
             {/* PRODUCT COST MAPPING */}
             {uniqueProducts.length > 0 && (
               <>
@@ -834,4 +902,3 @@ export default function ProfitPage() {
     </>
   );
 }
-
