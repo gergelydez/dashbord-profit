@@ -252,8 +252,7 @@ export default function Dashboard() {
               for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
                 const tc = await page.getTextContent();
-                fullText += tc.items.map(item => item.str).join(' ') + '
-';
+                fullText += tc.items.map(item => item.str).join(' ') + '\n';
               }
               const awbs = extractAwbsFromText(fullText);
               // Filtrăm AWB-urile de retur inițiate de expeditor (1ONBLR)
@@ -753,5 +752,4 @@ export default function Dashboard() {
     </>
   );
 }
-
 
