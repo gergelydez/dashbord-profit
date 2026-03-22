@@ -61,12 +61,20 @@ function procOrder(o) {
   if (o.cancelled_at) ts = 'anulat';
   const addr = o.shipping_address || o.billing_address || {};
   const prods = (o.line_items || []).map(i => i.name || '').join(' + ');
+  // Extract invoice number from note_attributes
+  const notes = o.note_attributes || [];
+  const invAttr = notes.find(a => (a.name||'').toLowerCase().includes('invoice') && !(a.name||'').toLowerCase().includes('url'));
+  const invUrl  = notes.find(a => (a.name||'').toLowerCase().includes('invoice-url') || (a.name||'').toLowerCase().includes('invoice_url'));
+  const invoiceNumber = invAttr?.value || '';
+  const hasInvoice = !!(invoiceNumber || invUrl);
   return {
     id: o.id, name: o.name || '', fin: o.financial_status || '', ts,
     trackingNo, client: addr.name || '', oras: addr.city || '',
     total: parseFloat(o.total_price) || 0,
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
     createdAt: o.created_at || '', fulfilledAt,
+    invoiceNumber, hasInvoice,
+    invoiceUrl: invUrl?.value || '',
   };
 }
 
@@ -148,7 +156,7 @@ export default function Dashboard() {
     localStorage.setItem('gx_t', token);
     setLoading(true); setError('');
     try {
-      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags';
+      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes';
       // Descarcă toate comenzile din ultimul an (fără filtru dată — filtrăm local)
       const yearAgo = toISO(new Date(new Date().setFullYear(new Date().getFullYear() - 1)));
       const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${yearAgo}T00:00:00&fields=${fields}`;
@@ -397,6 +405,15 @@ export default function Dashboard() {
               {sR>0 && <div className="sc sc3"><div className="si">↩️</div><div><div className="slbl">Pierdut retur/anulat</div><div className="sv">{fmt(sR)} RON</div><div className="ssub">{retur+anulate} comenzi</div></div></div>}
             </div>
 
+            {(() => {
+              const noInvoice = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
+              return noInvoice.length > 0 ? (
+                <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12,color:'#f59e0b',display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:16}}>⚠️</span>
+                  <span><strong>{noInvoice.length} comenzi plătite fără factură:</strong> {noInvoice.map(o=>o.name).join(', ')}</span>
+                </div>
+              ) : null;
+            })()}
             <div className="stitle">Comenzi</div>
             <div className="frow">
               {['toate','livrat','incurs','outfor','retur','anulat','pending'].map(f=>(
@@ -417,7 +434,7 @@ export default function Dashboard() {
               <div className="tscroll">
                 <table>
                   <thead><tr>
-                    {[['name','Comandă'],['ts','Status'],['fin','Plată'],['client','Client'],['oras','Oraș'],['','Produse'],['total','Total'],['createdAt','Data'],['fulfilledAt','Livrat']].map(([col,lbl])=>(
+                    {[['name','Comandă'],['ts','Status'],['fin','Plată'],['client','Client'],['oras','Oraș'],['','Produse'],['total','Total'],['','Factură'],['createdAt','Data'],['fulfilledAt','Livrat']].map(([col,lbl])=>(
                       <th key={lbl} onClick={()=>col&&handleSort(col)}>{lbl} {col?'↕':''}</th>
                     ))}
                   </tr></thead>
@@ -429,7 +446,7 @@ export default function Dashboard() {
                       const bcc = bc[o.ts]||'badge-gray';
                       const mc = o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':'mg-y';
                       return (
-                        <tr key={o.id}>
+                        <tr key={o.id} style={o.fin==='paid'&&!o.hasInvoice?{background:'rgba(245,158,11,0.05)'}:{}}>
                           <td><span className="ref">{o.name}</span></td>
                           <td><span className={`badge ${bcc}`}>{st.label}</span></td>
                           <td><span className={`badge ${o.fin==='paid'?'badge-green':o.fin==='pending'?'badge-yellow':'badge-gray'}`}>{o.fin}</span></td>
@@ -437,6 +454,13 @@ export default function Dashboard() {
                           <td>{o.oras||'—'}</td>
                           <td title={o.prods} className="pc">{o.prodShort||'—'}</td>
                           <td><span className={`mg ${mc}`}>{fmt(o.total)} RON</span></td>
+                          <td>
+                            {o.hasInvoice
+                              ? <span style={{fontSize:10,color:'#10b981',fontFamily:'monospace'}}>{o.invoiceNumber||'✓ Da'}</span>
+                              : o.fin==='paid'
+                                ? <span style={{fontSize:10,color:'#f59e0b',fontWeight:700}}>⚠ Lipsă!</span>
+                                : <span style={{fontSize:10,color:'#4a5568'}}>—</span>}
+                          </td>
                           <td style={{fontSize:'10px',color:'#94a3b8'}}>{fmtD(o.createdAt)}</td>
                           <td style={{fontSize:'10px',color:'#94a3b8'}}>{o.fulfilledAt?fmtD(o.fulfilledAt):<span className="mg mg-m">—</span>}</td>
                         </tr>
