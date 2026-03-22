@@ -34,7 +34,9 @@ export default function ProfitPage() {
 
   /* GLS Excel */
   const [glsCost, setGlsCost] = useState(0);
+  const [glsManual, setGlsManual] = useState('');
   const [glsRows, setGlsRows] = useState([]);
+  const [glsByOrder, setGlsByOrder] = useState({}); // clientRef -> cost
   const [glsDone, setGlsDone] = useState(false);
 
   /* Marketing */
@@ -52,9 +54,14 @@ export default function ProfitPage() {
   /* Other variable costs */
   const [otherCosts, setOtherCosts] = useState([]);
 
-  /* Product cost mapping (from SmartBill) */
-  const [productCosts, setProductCosts] = useState({});
+  /* Product cost mapping */
+  const [productCosts, setProductCosts] = useState({});    // SmartBill costs
+  const [shopifyCosts, setShopifyCosts] = useState({});    // Shopify cost_per_item
+  const [shopifyCostsDone, setShopifyCostsDone] = useState(false);
   const [manualCosts, setManualCosts] = useState({});
+  const [costSource, setCostSource] = useState({});        // per-product override: 'smartbill'|'shopify'|'manual'
+  const [sbDebug, setSbDebug] = useState('');
+  const [sbType, setSbType] = useState('products');
 
   /* Load saved creds */
   useEffect(() => {
@@ -79,6 +86,13 @@ export default function ProfitPage() {
       setShopifyOrders(parsed);
       setShopifyDone(true);
     }
+
+    /* Load saved Shopify product costs */
+    const savedShopifyCosts = localStorage.getItem('glamx_shopify_costs');
+    if (savedShopifyCosts) {
+      setShopifyCosts(JSON.parse(savedShopifyCosts));
+      setShopifyCostsDone(true);
+    }
   }, []);
 
   /* ── Shopify fetch ── */
@@ -92,21 +106,51 @@ export default function ProfitPage() {
       const daysInMonth = new Date(year, m, 0).getDate();
       const from = `${year}-${m}-01`;
       const to = `${year}-${m}-${daysInMonth}`;
-      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,line_items,total_line_items_price';
+      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,line_items,note_attributes,tags';
       const res = await fetch(`/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${from}T00:00:00&created_at_max=${to}T23:59:59&fields=${fields}`);
       const data = await res.json();
       const orders = (data.orders || []).filter(o => !o.cancelled_at && o.financial_status !== 'voided');
-      const processed = orders.map(o => ({
-        id: o.id, name: o.name,
-        total: parseFloat(o.total_price) || 0,
-        financial: o.financial_status,
-        fulfillment: o.fulfillment_status,
-        items: (o.line_items || []).map(i => ({ name: i.name, sku: i.sku || '', qty: i.quantity || 1, price: parseFloat(i.price) || 0 })),
-        createdAt: o.created_at,
-      }));
+      const processed = orders.map(o => {
+        // Extract invoice number from note_attributes (set by xConnector)
+        const notes = o.note_attributes || [];
+        const invoiceAttr = notes.find(a => 
+          (a.name || '').toLowerCase().includes('invoice') || 
+          (a.name || '').toLowerCase().includes('factura') ||
+          (a.name || '').toLowerCase().includes('xconnector-invoice')
+        );
+        // Also check tags for invoice info
+        const tags = (o.tags || '').split(',').map(t => t.trim());
+        const invoiceTag = tags.find(t => t.match(/^(FA|FCA|FCN|FF|factura)/i));
+        const invoiceNumber = invoiceAttr?.value || invoiceTag || '';
+        const hasInvoice = !!(invoiceNumber || notes.some(a => a.name?.includes('invoice-url')));
+        
+        return {
+          id: o.id, name: o.name,
+          total: parseFloat(o.total_price) || 0,
+          financial: o.financial_status,
+          fulfillment: o.fulfillment_status,
+          items: (o.line_items || []).map(i => ({ name: i.name, sku: i.sku || '', qty: i.quantity || 1, price: parseFloat(i.price) || 0 })),
+          createdAt: o.created_at,
+          invoiceNumber,
+          hasInvoice,
+          noteAttributes: notes,
+          tags: o.tags || '',
+        };
+      });
       setShopifyOrders(processed);
       setShopifyDone(true);
       localStorage.setItem('gx_orders_profit', JSON.stringify(processed));
+
+      /* ── Fetch Shopify cost_per_item in parallel ── */
+      try {
+        const costRes = await fetch(`/api/product-costs?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}`);
+        const costData = await costRes.json();
+        if (costData.costs) {
+          setShopifyCosts(costData.costs);
+          setShopifyCostsDone(true);
+          localStorage.setItem('glamx_shopify_costs', JSON.stringify(costData.costs));
+        }
+      } catch { /* non-critical, continue without Shopify costs */ }
     } catch (e) { alert('Eroare Shopify: ' + e.message); }
     finally { setShopifyLoading(false); }
   };
@@ -117,84 +161,148 @@ export default function ProfitPage() {
     localStorage.setItem('sb_email', sbEmail);
     localStorage.setItem('sb_token', sbToken);
     localStorage.setItem('sb_cif', sbCif);
-    setSbLoading(true); setSbError('');
+    setSbLoading(true); setSbError(''); setSbDebug('');
     try {
-      const res = await fetch(`/api/smartbill?email=${encodeURIComponent(sbEmail)}&token=${encodeURIComponent(sbToken)}&cif=${encodeURIComponent(sbCif)}&month=${month}&type=expense`);
+      // Try product list first, fallback to expense invoices
+      const res = await fetch(`/api/smartbill?email=${encodeURIComponent(sbEmail)}&token=${encodeURIComponent(sbToken)}&cif=${encodeURIComponent(sbCif)}&month=${month}&type=${sbType}`);
       const data = await res.json();
+      
+      // Show debug info
+      setSbDebug(JSON.stringify(data, null, 2).slice(0, 500));
+      
       if (data.error) throw new Error(data.error);
-      setSbData(data);
-      /* Extract product costs from purchase invoices */
-      const costs = {};
-      const bills = data.bills || data.list || data.expenses || [];
-      bills.forEach(bill => {
-        (bill.billEntries || bill.products || bill.lines || []).forEach(line => {
-          const name = (line.name || line.productName || '').toLowerCase().trim();
-          const price = parseFloat(line.price || line.unitPrice || line.pretUnitar || 0);
-          if (name && price > 0) costs[name] = price;
-        });
-      });
+      
+      // Costs come pre-extracted from API route
+      const costs = data.costs || {};
       setProductCosts(costs);
+      setSbData(data);
       setSbDone(true);
+      localStorage.setItem('glamx_sb_costs', JSON.stringify(costs));
     } catch (e) { setSbError('Eroare SmartBill: ' + e.message); }
     finally { setSbLoading(false); }
   };
 
-  /* ── GLS Excel parse ── */
+  /* ── GLS Excel parse (CSV + XLSX) ── */
   const parseGLSExcel = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    const isXLSX = /\.xlsx?$/i.test(file.name);
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const text = ev.target.result;
-        const lines = text.split(/\r?\n/).filter(l => l.trim());
-        const hdrs = splitCSV(lines[0]).map(h => h.replace(/"/g, '').trim().toLowerCase());
-        const rows = lines.slice(1).map(l => {
+
+    const processData = (hdrs, dataRows) => {
+      // GLS Settlement Document - known column names
+      const COL_TOTAL    = 'total amount';
+      const COL_CLIENT   = 'client reference';
+      const COL_PARCEL   = 'parcel number';
+      const COL_INVOICE  = 'invoice number';
+
+      // Try exact match first, then partial
+      const findCol = (...names) => hdrs.find(h => names.some(n => h === n)) 
+                                 || hdrs.find(h => names.some(n => h.includes(n)));
+
+      const totalKey   = findCol(COL_TOTAL, 'total', 'amount', 'suma', 'valoare');
+      const clientKey  = findCol(COL_CLIENT, 'client reference', 'referinta', 'reference');
+      const parcelKey  = findCol(COL_PARCEL, 'parcel', 'colet', 'awb', 'tracking');
+      const invoiceKey = findCol(COL_INVOICE, 'invoice number', 'factura');
+
+      let total = 0;
+      const byOrder = {}; // clientRef -> total cost
+      const parsed = [];
+
+      dataRows.forEach(r => {
+        const rawVal = r[totalKey];
+        const cost = typeof rawVal === 'number' ? rawVal : parseFloat(String(rawVal || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) || 0;
+        const clientRef = String(r[clientKey] || '').trim();
+        const parcel = String(r[parcelKey] || '').trim();
+        if (cost > 0) {
+          total += cost;
+          if (clientRef) byOrder[clientRef] = (byOrder[clientRef] || 0) + cost;
+          parsed.push({ parcel, clientRef, cost });
+        }
+      });
+
+      setGlsRows(parsed);
+      setGlsCost(total);
+      setGlsByOrder(byOrder);
+      setGlsDone(true);
+    };
+
+    if (isXLSX) {
+      reader.onload = (ev) => {
+        const loadXLSX = () => {
+          const wb = window.XLSX.read(ev.target.result, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const json = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
+          // Row 0 = headers
+          const hdrs = (json[0] || []).map(h => String(h || '').toLowerCase().trim());
+          const dataRows = json.slice(1).map(row => {
+            const o = {};
+            hdrs.forEach((h, i) => o[h] = row[i] !== undefined ? row[i] : '');
+            return o;
+          }).filter(r => Object.values(r).some(v => v !== '' && v !== null));
+          processData(hdrs, dataRows);
+        };
+        if (window.XLSX) { loadXLSX(); }
+        else {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = loadXLSX;
+          document.head.appendChild(s);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = (ev) => {
+        const lines = ev.target.result.split(/\r?\n/).filter(l => l.trim());
+        const delim = (lines[0].match(/;/g)||[]).length > (lines[0].match(/,/g)||[]).length ? ';' : ',';
+        const hdrs = splitCSV(lines[0]).map(h => h.replace(/"/g,'').trim().toLowerCase());
+        const dataRows = lines.slice(1).map(l => {
           const vals = splitCSV(l);
           const o = {};
-          hdrs.forEach((h, i) => o[h] = (vals[i] || '').replace(/"/g, '').trim());
+          hdrs.forEach((h, i) => o[h] = (vals[i]||'').replace(/"/g,'').trim());
           return o;
         }).filter(r => Object.values(r).some(v => v));
-
-        /* Find cost column — GLS uses various names */
-        const costKey = hdrs.find(h => h.includes('cost') || h.includes('valoare') || h.includes('pret') || h.includes('total') || h.includes('tarif'));
-        const awbKey = hdrs.find(h => h.includes('awb') || h.includes('colet') || h.includes('expeditie'));
-
-        let total = 0;
-        const parsed = rows.map(r => {
-          const cost = parseFloat((r[costKey] || '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
-          total += cost;
-          return { awb: r[awbKey] || '', cost };
-        });
-        setGlsRows(parsed);
-        setGlsCost(total);
-        setGlsDone(true);
-      } catch (err) { alert('Eroare GLS Excel: ' + err.message); }
-    };
-    reader.readAsText(file, 'UTF-8');
+        processData(hdrs, dataRows);
+      };
+      reader.readAsText(file, 'UTF-8');
+    }
   };
 
-  /* ── CALCULATIONS ── */
+  /* ── CALCULATIONS ── */*/
   const deliveredOrders = shopifyOrders.filter(o => o.fulfillment === 'fulfilled' && o.financial === 'paid');
   const totalRevenue = deliveredOrders.reduce((s, o) => s + o.total, 0);
   const totalOrders = deliveredOrders.length;
 
-  /* Cost produse — match by SKU/name with SmartBill or manual */
+  /* Resolve cost for a product — respects per-product source override */
+  const resolveCost = (item) => {
+    const nameKey = item.name.toLowerCase().trim();
+    const skuKey  = (item.sku || '').toLowerCase().trim();
+    const override = costSource[item.name]; // 'smartbill' | 'shopify' | 'manual'
+
+    if (override === 'manual' || (!override && manualCosts[item.name] !== undefined && manualCosts[item.name] !== '')) {
+      return { cost: parseFloat(manualCosts[item.name]) || 0, src: 'manual' };
+    }
+    if (override === 'smartbill' || (!override && (productCosts[nameKey] || productCosts[skuKey]))) {
+      return { cost: productCosts[nameKey] || productCosts[skuKey] || 0, src: 'smartbill' };
+    }
+    if (override === 'shopify' || (!override && (shopifyCosts[nameKey] || shopifyCosts[skuKey]))) {
+      return { cost: shopifyCosts[nameKey] || shopifyCosts[skuKey] || 0, src: 'shopify' };
+    }
+    return { cost: 0, src: 'none' };
+  };
+
+  /* Cost produse — prioritate: Manual → SmartBill → Shopify (sau override per produs) */
   const getCOGS = useCallback(() => {
     if (!shopifyOrders.length) return 0;
     let total = 0;
     deliveredOrders.forEach(order => {
       order.items.forEach(item => {
-        const key = item.name.toLowerCase().trim();
-        const skuKey = (item.sku || '').toLowerCase().trim();
-        const cost = manualCosts[item.name] !== undefined
-          ? parseFloat(manualCosts[item.name]) || 0
-          : productCosts[key] || productCosts[skuKey] || 0;
+        const { cost } = resolveCost(item);
         total += cost * item.qty;
       });
     });
     return total;
-  }, [deliveredOrders, productCosts, manualCosts]);
+  }, [deliveredOrders, productCosts, shopifyCosts, manualCosts, costSource]);
 
   const cogs = getCOGS();
   const totalMarketing = (parseFloat(metaCost) || 0) + (parseFloat(tikTokCost) || 0) + (parseFloat(googleCost) || 0);
@@ -461,26 +569,36 @@ export default function ProfitPage() {
                   <span className="src-title">SmartBill — Cost produse</span>
                   <span className={`src-status ${sbDone ? 'ok' : ''}`}>{sbDone ? `✓ ${Object.keys(productCosts).length} produse` : 'Neconectat'}</span>
                 </div>
-                {!sbDone ? (
-                  <>
+                <>
                     <label className="lbl">Email cont SmartBill</label>
                     <input type="email" value={sbEmail} onChange={e => setSbEmail(e.target.value)} placeholder="email@firma.ro" />
                     <label className="lbl">Token API SmartBill</label>
                     <input type="password" value={sbToken} onChange={e => setSbToken(e.target.value)} placeholder="token..." />
                     <label className="lbl">CIF firmă</label>
                     <input type="text" value={sbCif} onChange={e => setSbCif(e.target.value)} placeholder="RO12345678" />
+                    <label className="lbl">Sursă SmartBill</label>
+                    <div style={{display:'flex',gap:6,marginBottom:4}}>
+                      {[{id:'products',lbl:'Lista produse'},{id:'expense',lbl:'Facturi achiziție'}].map(o=>(
+                        <button key={o.id} onClick={()=>setSbType(o.id)} style={{flex:1,padding:'6px 0',borderRadius:7,border:'1px solid',fontSize:11,cursor:'pointer',background:sbType===o.id?'#f97316':'#161d24',borderColor:sbType===o.id?'#f97316':'#243040',color:sbType===o.id?'white':'#94a3b8'}}>{o.lbl}</button>
+                      ))}
+                    </div>
                     {sbError && <div className="err-msg">{sbError}</div>}
+                    {sbDebug && <pre style={{fontSize:9,color:'#4a5568',background:'#0a0e14',padding:8,borderRadius:6,overflow:'auto',maxHeight:120,marginTop:6}}>{sbDebug}</pre>}
                     <button className="btn btn-orange" onClick={fetchSmartBill} disabled={sbLoading}>
                       {sbLoading && <span className="spinner"></span>}
                       {sbLoading ? 'Se conectează…' : '🔗 Conectează SmartBill'}
                     </button>
+                    {sbDone && (
+                      <div style={{marginTop:8,padding:'7px 10px',background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:7,fontSize:11,color:'#10b981'}}>
+                        ✓ {Object.keys(productCosts).length} produse din SmartBill · COGS: {fmt(cogs)} RON
+                      </div>
+                    )}
+                    {shopifyCostsDone && (
+                      <div style={{marginTop:6,padding:'7px 10px',background:'rgba(59,130,246,.08)',border:'1px solid rgba(59,130,246,.2)',borderRadius:7,fontSize:11,color:'#3b82f6'}}>
+                        ✓ Shopify cost_per_item: {Object.keys(shopifyCosts).length} produse (fallback activ)
+                      </div>
+                    )}
                   </>
-                ) : (
-                  <div style={{ fontSize: 12, color: '#94a3b8' }}>
-                    Produse detectate: <strong style={{ color: '#10b981' }}>{Object.keys(productCosts).length}</strong><br />
-                    Cost total achiziții: <strong style={{ color: '#3b82f6' }}>{fmt(cogs)} RON</strong>
-                  </div>
-                )}
                 {sbDone && <button className="btn btn-gray" style={{ marginTop: 8, width: '100%' }} onClick={() => setSbDone(false)}>↺ Reîncarcă</button>}
               </div>
 
@@ -500,8 +618,8 @@ export default function ProfitPage() {
                 )}
                 {!glsDone && (
                   <>
-                    <label className="lbl">Sau introdu manual</label>
-                    <input type="number" placeholder="Ex: 850" value={glsCost || ''} onChange={e => { setGlsCost(parseFloat(e.target.value) || 0); setGlsDone(true); }} />
+                    <label className="lbl">Sau introdu manual (RON)</label>
+                    <input type="text" inputMode="decimal" placeholder="Ex: 2043.40" value={glsManual} onChange={e => setGlsManual(e.target.value)} onBlur={e => { const v = parseFloat(e.target.value.replace(',','.')); if (!isNaN(v) && v > 0) { setGlsCost(v); setGlsDone(true); }}} />
                   </>
                 )}
               </div>
@@ -568,16 +686,48 @@ export default function ProfitPage() {
                   <table className="pc-table">
                     <thead><tr><th>Produs</th><th>Cost unitar (RON)</th><th>Sursă</th></tr></thead>
                     <tbody>
-                      {uniqueProducts.slice(0, 20).map(prod => {
+                      {uniqueProducts.slice(0, 30).map(prod => {
                         const key = prod.toLowerCase().trim();
-                        const autoVal = productCosts[key];
+                        const sbVal = productCosts[key];
+                        const shVal = shopifyCosts[key];
                         const manualVal = manualCosts[prod];
-                        const val = manualVal !== undefined ? manualVal : (autoVal || '');
+                        const override = costSource[prod];
+                        const { cost: resolvedCost, src: autoSrc } = resolveCost({ name: prod, sku: '' });
+
+                        const srcOptions = [
+                          sbVal ? { id:'smartbill', lbl:`SB: ${sbVal} RON`, color:'#10b981' } : null,
+                          shVal ? { id:'shopify',   lbl:`SH: ${shVal} RON`, color:'#3b82f6' } : null,
+                          { id:'manual', lbl:'Manual', color:'#f59e0b' },
+                        ].filter(Boolean);
+
                         return (
                           <tr key={prod}>
-                            <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#94a3b8' }} title={prod}>{prod}</td>
-                            <td><input type="number" placeholder="0" value={val} onChange={e => setManualCosts(p => ({ ...p, [prod]: e.target.value }))} style={{ width: 100 }} /></td>
-                            <td>{autoVal ? <span className="match-ok">✓ SmartBill</span> : <span className="match-no">⚠ Manual</span>}</td>
+                            <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#94a3b8', fontSize:11 }} title={prod}>{prod}</td>
+                            <td>
+                              <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
+                                {srcOptions.map(opt => (
+                                  <button key={opt.id} onClick={() => setCostSource(p => ({...p, [prod]: opt.id}))}
+                                    style={{padding:'2px 6px',borderRadius:4,border:'1px solid',fontSize:9,cursor:'pointer',
+                                      background:(override||autoSrc)===opt.id?opt.color:'#161d24',
+                                      borderColor:(override||autoSrc)===opt.id?opt.color:'#243040',
+                                      color:(override||autoSrc)===opt.id?'white':'#94a3b8'}}>
+                                    {opt.lbl}
+                                  </button>
+                                ))}
+                              </div>
+                            </td>
+                            <td>
+                              {(override==='manual' || (!override && !sbVal && !shVal)) ? (
+                                <input type="number" placeholder="0" value={manualVal||''} onChange={e=>setManualCosts(p=>({...p,[prod]:e.target.value}))} style={{width:80,padding:'4px 6px',fontSize:11}} />
+                              ) : (
+                                <span style={{fontFamily:'monospace',fontSize:11,color:'#10b981'}}>{resolvedCost} RON</span>
+                              )}
+                            </td>
+                            <td>
+                              {resolvedCost > 0
+                                ? <span style={{fontSize:10,color:'#10b981'}}>✓ OK</span>
+                                : <span style={{fontSize:10,color:'#f59e0b'}}>⚠ Lipsă</span>}
+                            </td>
                           </tr>
                         );
                       })}
@@ -677,4 +827,3 @@ export default function ProfitPage() {
     </>
   );
 }
-
