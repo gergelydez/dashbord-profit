@@ -104,10 +104,16 @@ export default function Dashboard() {
   const [sortCol, setSortCol]   = useState(null);
   const [sortDir, setSortDir]   = useState(1);
 
-  // Sameday status
-  const [sdStatuses, setSdStatuses] = useState({});
-  const [sdLoading, setSdLoading]   = useState(false);
-  const [sdDone, setSdDone]         = useState(false);
+  // Sameday — statusuri corecte din Excel eAWB (borderou) + fallback Shopify
+  // sdReturAwbs = Set de AWB-uri refuzate/returnate de clienți — din PDF borderou Sameday
+  // Salvat permanent în localStorage, nu trebuie re-uploadat la fiecare sesiune
+  const [sdReturAwbs, setSdReturAwbs] = useState(() => {
+    try { const s = localStorage.getItem('sd_retur_awbs'); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
+  });
+  const [sdDone, setSdDone]       = useState(() => { try { return !!localStorage.getItem('sd_retur_awbs'); } catch { return false; } });
+  const [sdError, setSdError]     = useState('');
+  const [sdLoading, setSdLoading] = useState(false);
+  const [sdFiles, setSdFiles]     = useState(() => { try { return JSON.parse(localStorage.getItem('sd_files') || '[]'); } catch { return []; } });
 
   /* Date range — filtrare LOCALĂ, fără request nou */
   const [preset, setPreset]         = useState('last_30');
@@ -122,6 +128,8 @@ export default function Dashboard() {
     const d = localStorage.getItem('gx_d');
     if (t) setToken(t);
     if (d) setDomain(d);
+    // sdReturAwbs și sdFiles se restaurează automat în useState initializer
+
     // Restaurează comenzile salvate din sesiunea anterioară
     const saved = localStorage.getItem('gx_orders_all');
     if (saved) {
@@ -194,34 +202,124 @@ export default function Dashboard() {
     if (id !== 'custom') applyDateFilter(allOrders, id, customFrom, customTo); // filtrare LOCALĂ!
   };
 
-  // Check Sameday statuses — credentials are in Vercel env vars (server-side only)
-  const checkSameday = async (orderList) => {
-    const src = orderList || orders;
-    const samedayOrders = src.filter(o => o.courier === 'sameday' && o.trackingNo);
-    if (!samedayOrders.length) return;
+  // ── Parsează Excel/CSV borderou din contul eAWB Sameday ──
+  // Din eAWB: Lista Expedieri → Export → Excel/CSV
+  // Coloane detectate automat: AWB / Status / Data livrare etc.
+  // ── Parsează PDF borderou retururi Sameday ──
+  // PDF-ul primit de la Sameday cu coletele refuzate/returnate de clienți.
+  // Extrage AWB-urile și le salvează permanent în localStorage.
+  // Suportă și acumulare — poți uploada mai multe PDF-uri (luni diferite).
+  const parseSamedayPDF = (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
     setSdLoading(true);
-    try {
-      const awbs = samedayOrders.map(o => o.trackingNo).join(',');
-      const res = await fetch(`/api/sameday?awbs=${encodeURIComponent(awbs)}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setSdStatuses(data.results || {});
+    setSdError('');
+
+    // Normalizează AWB: elimină sufixul de colet (001, 002 etc.) de la final
+    // Shopify stochează AWB fără sufix: 1ONB24465823866
+    // PDF conține:                      1ONB24465823866001
+    const normalizeAwb = (raw) => {
+      const s = raw.toString().trim().replace(/\s/g, '');
+      // Dacă are 18+ caractere și ultimele 3 sunt cifre → taie sufixul de 3 cifre
+      if (s.length >= 18 && /\d{3}$/.test(s)) return s.slice(0, -3);
+      return s;
+    };
+
+    // Extrage AWB-urile din textul PDF
+    // Formatul AWB Sameday: 1ONB + 14 cifre + opțional 3 cifre sufix colet
+    const extractAwbsFromText = (text) => {
+      // Regex: AWB-uri Sameday — încep cu 1ONB sau IONB (I mare în loc de 1)
+      const matches = text.match(/[1I]ONB[A-Z0-9]{10,17}/gi) || [];
+      return matches.map(normalizeAwb);
+    };
+
+    let processedFiles = 0;
+    const newAwbs = new Set(sdReturAwbs);
+    const newFileNames = [...sdFiles];
+    let totalFound = 0;
+
+    const processFile = (file) => {
+      return new Promise((resolve) => {
+        // Folosim pdf.js via CDN pentru a extrage textul din PDF
+        const loadAndParse = () => {
+          const reader = new FileReader();
+          reader.onload = async (ev) => {
+            try {
+              const pdfjsLib = window.pdfjsLib;
+              pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+              const pdf = await pdfjsLib.getDocument({ data: ev.target.result }).promise;
+              let fullText = '';
+              for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const tc = await page.getTextContent();
+                fullText += tc.items.map(item => item.str).join(' ') + '
+';
+              }
+              const awbs = extractAwbsFromText(fullText);
+              // Filtrăm AWB-urile de retur inițiate de expeditor (1ONBLR)
+              // — păstrăm doar coletele normale refuzate de client
+              const clientRefuze = awbs.filter(awb => !/LR/i.test(awb));
+              clientRefuze.forEach(awb => newAwbs.add(awb));
+              totalFound += clientRefuze.length;
+              if (!newFileNames.includes(file.name)) newFileNames.push(file.name);
+              resolve();
+            } catch(err) {
+              setSdError('Eroare citire PDF: ' + err.message);
+              resolve();
+            }
+          };
+          reader.readAsArrayBuffer(file);
+        };
+
+        if (window.pdfjsLib) {
+          loadAndParse();
+        } else {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          s.onload = loadAndParse;
+          s.onerror = () => { setSdError('Nu s-a putut încărca pdf.js. Verifică conexiunea.'); resolve(); };
+          document.head.appendChild(s);
+        }
+      });
+    };
+
+    Promise.all(files.map(processFile)).then(() => {
+      if (totalFound === 0 && !sdError) {
+        setSdError('Nu am găsit AWB-uri în fișier(ele) selectate. Asigură-te că este borderou Sameday.');
+        setSdLoading(false);
+        return;
+      }
+      setSdReturAwbs(new Set(newAwbs));
+      setSdFiles(newFileNames);
       setSdDone(true);
-      localStorage.setItem('sd_statuses', JSON.stringify(data.results || {}));
-    } catch (e) { console.warn('Sameday check failed:', e.message); }
-    finally { setSdLoading(false); }
+      localStorage.setItem('sd_retur_awbs', JSON.stringify([...newAwbs]));
+      localStorage.setItem('sd_files', JSON.stringify(newFileNames));
+      setSdLoading(false);
+    });
+
+    e.target.value = '';
   };
 
-  // Resolve Sameday display status from API response
-  const getSdStatus = (awb) => {
-    const s = sdStatuses[awb];
-    if (!s) return null;
-    const statusCode = s.statusCode || s.status || s.parcelStatus || s.code || '';
-    const statusName = (s.statusLabel || s.statusName || s.label || String(statusCode)).toLowerCase();
-    if (statusName.includes('livrat') || statusName.includes('delivered') || statusCode === 'OD') return 'livrat';
-    if (statusName.includes('retur') || statusName.includes('return') || statusCode === 'RD') return 'retur';
-    if (statusName.includes('tranzit') || statusName.includes('transit')) return 'incurs';
-    return 'incurs';
+  const clearSamedayData = () => {
+    setSdReturAwbs(new Set());
+    setSdFiles([]);
+    setSdDone(false);
+    setSdError('');
+    localStorage.removeItem('sd_retur_awbs');
+    localStorage.removeItem('sd_files');
+  };
+
+  // Returnează statusul real pentru un ordin Sameday.
+  // Prioritate:
+  // 1. Borderou PDF uploadat — AWB găsit în lista de refuzuri = retur sigur
+  // 2. Shopify shipment_status — pentru livrate/tranzit (corect în general)
+  const getSdStatus = (order) => {
+    if (!order) return null;
+    const awb = (order.trackingNo || '').trim();
+    // 1. Borderou PDF — cel mai precis pentru refuzuri
+    if (awb && sdReturAwbs.has(awb)) return 'retur';
+    // 2. Shopify shipment_status
+    return order.ts !== 'pending' ? order.ts : null;
   };
 
   const disconnect = () => { setOrders([]); setConnected(false); setError(''); localStorage.removeItem('gx_t'); };
@@ -239,13 +337,11 @@ export default function Dashboard() {
   const sdOrders     = orders.filter(o => o.courier === 'sameday');
   const glsLivrate   = glsOrders.filter(o => o.ts === 'livrat').length;
   const glsRetur     = glsOrders.filter(o => o.ts === 'retur').length;
-  const sdLivrate    = sdOrders.filter(o => {
-    const sdS = getSdStatus(o.trackingNo);
-    return sdS === 'livrat' || (o.ts === 'livrat' && !sdS);
-  }).length;
-  const sdRetur      = sdOrders.filter(o => {
-    const sdS = getSdStatus(o.trackingNo);
-    return sdS === 'retur' || (o.ts === 'retur' && !sdS);
+  const sdLivrate    = sdOrders.filter(o => getSdStatus(o) === 'livrat').length;
+  const sdRetur      = sdOrders.filter(o => getSdStatus(o) === 'retur').length;
+  const sdOutfor     = sdOrders.filter(o => getSdStatus(o) === 'outfor').length;
+  const sdIncurs     = sdOrders.filter(o => {
+    const s = getSdStatus(o); return s === 'incurs' || s === null;
   }).length;
   const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
 
@@ -492,30 +588,73 @@ export default function Dashboard() {
                     <span style={{color:'#94a3b8'}}>Returnate</span><span style={{color:'#f43f5e',fontFamily:'monospace'}}>{glsRetur}</span>
                   </div>
                 </div>
-                {/* SAMEDAY */}
-                <div style={{background:'#0f1419',border:'1px solid #3b82f6',borderRadius:10,padding:'12px 14px'}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                {/* SAMEDAY — refuzuri din borderou PDF + statusuri Shopify */}
+                <div style={{background:'#0f1419',border:`1px solid ${sdError?'#f43f5e':sdDone?'#10b981':'#3b82f6'}`,borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <span style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
-                      {'🚀 Sameday'}{sdLoading && <span style={{fontSize:8,color:'#94a3b8'}}> ⟳</span>}
+                      🚀 Sameday
+                      {sdDone
+                        ? <span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {sdReturAwbs.size} AWB-uri</span>
+                        : <span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ fără borderou</span>}
                     </span>
-                    <button onClick={() => checkSameday()}
-                      disabled={sdLoading}
-                      style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:5,padding:'2px 7px',cursor:'pointer'}}>
-                      {sdLoading ? '⟳' : sdDone ? '↺ Refresh' : '⟳ Verifică'}
-                    </button>
+                    <div style={{display:'flex',gap:5,alignItems:'center'}}>
+                      {sdDone && (
+                        <button onClick={clearSamedayData} title="Șterge toate borderou-urile"
+                          style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#4a5568',borderRadius:5,padding:'2px 6px',cursor:'pointer'}}>
+                          ✕
+                        </button>
+                      )}
+                      <label title={sdDone ? 'Adaugă borderou nou (se acumulează)' : 'Importă borderou PDF refuzuri Sameday'}
+                        style={{fontSize:9,background:sdDone?'transparent':'rgba(59,130,246,.15)',border:`1px solid ${sdDone?'#243040':'#3b82f6'}`,color:sdDone?'#94a3b8':'#3b82f6',borderRadius:5,padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap'}}>
+                        {sdLoading ? '⟳ ...' : sdDone ? '+ Adaugă PDF' : '📄 Import borderou PDF'}
+                        <input type="file" accept=".pdf" multiple onChange={parseSamedayPDF} style={{display:'none'}} />
+                      </label>
+                    </div>
                   </div>
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
-                    <span style={{color:'#94a3b8'}}>Total</span><span style={{color:'#e8edf2',fontFamily:'monospace'}}>{sdOrders.length}</span>
+
+                  {/* Lista fișierelor încărcate */}
+                  {sdFiles.length > 0 && (
+                    <div style={{marginBottom:6}}>
+                      {sdFiles.map((f,i) => (
+                        <div key={i} style={{fontSize:8,color:'#4a5568',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={f}>
+                          📄 {f}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {sdError && <div style={{fontSize:9,color:'#f43f5e',marginBottom:5,lineHeight:1.4}}>{sdError}</div>}
+
+                  {!sdDone && sdOrders.length > 0 && !sdError && (
+                    <div style={{fontSize:9,color:'#f59e0b',marginBottom:6,lineHeight:1.5,background:'rgba(245,158,11,.07)',borderRadius:5,padding:'5px 7px'}}>
+                      ⚠️ Fără borderou, refuzurile nu sunt detectate.<br/>
+                      Importă PDF-ul primit de la Sameday cu coletele returnate.
+                    </div>
+                  )}
+
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
+                    <span style={{color:'#94a3b8'}}>Total SD</span>
+                    <span style={{color:'#e8edf2',fontFamily:'monospace'}}>{sdOrders.length}</span>
                   </div>
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
-                    <span style={{color:'#94a3b8'}}>Livrate</span>
-                    <span style={{color:'#10b981',fontFamily:'monospace'}}>{sdLivrate}{!sdDone&&sdOrders.length>0?<span style={{color:'#4a5568',fontSize:9}}> *</span>:''}</span>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
+                    <span style={{color:'#94a3b8'}}>✅ Livrate</span>
+                    <span style={{color:'#10b981',fontFamily:'monospace'}}>{sdLivrate}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
+                    <span style={{color:'#94a3b8'}}>🚚 Tranzit</span>
+                    <span style={{color:'#3b82f6',fontFamily:'monospace'}}>{sdIncurs}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
+                    <span style={{color:'#94a3b8'}}>📬 La curier</span>
+                    <span style={{color:'#a855f7',fontFamily:'monospace'}}>{sdOutfor}</span>
                   </div>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
-                    <span style={{color:'#94a3b8'}}>Returnate</span>
-                    <span style={{color:'#f43f5e',fontFamily:'monospace'}}>{sdRetur}{!sdDone&&sdOrders.length>0?<span style={{color:'#4a5568',fontSize:9}}> *</span>:''}</span>
+                    <span style={{color:'#94a3b8'}}>↩️ Refuzate/Retur</span>
+                    <span style={{color: sdRetur>0?'#f43f5e':'#94a3b8',fontFamily:'monospace',fontWeight:sdRetur>0?700:400}}>
+                      {sdRetur}
+                      {!sdDone && sdOrders.length>0 && <span style={{color:'#4a5568',fontSize:9}}> *</span>}
+                    </span>
                   </div>
-                  {!sdDone && sdOrders.length>0 && <div style={{fontSize:9,color:'#4a5568',marginTop:4}}>* date din Shopify, apasă Verifică pentru date live</div>}
                 </div>
               </div>
             )}
@@ -577,10 +716,15 @@ export default function Dashboard() {
                           <td>
                             {o.courier==='gls' && <span style={{fontSize:9,background:'rgba(249,115,22,.15)',color:'#f97316',border:'1px solid rgba(249,115,22,.2)',padding:'1px 5px',borderRadius:4}}>GLS</span>}
                             {o.courier==='sameday' && (()=>{
-                              const sdS = getSdStatus(o.trackingNo);
-                              return <span style={{fontSize:9,background:'rgba(59,130,246,.15)',color:sdS==='livrat'?'#10b981':sdS==='retur'?'#f43f5e':'#3b82f6',border:'1px solid rgba(59,130,246,.2)',padding:'1px 5px',borderRadius:4}}>
-                                {'SD'+(sdS==='livrat'?' · ✓':sdS==='retur'?' · ↩':sdS?' · …':'')}
-                              </span>;
+                              const sdS = getSdStatus(o);
+                              const sdColor = sdS==='livrat'?'#10b981':sdS==='retur'?'#f43f5e':sdS==='outfor'?'#a855f7':'#3b82f6';
+                              const sdIcon  = sdS==='livrat'?' ✓':sdS==='retur'?' ↩':sdS==='outfor'?' 📬':sdDone?' …':'';
+                              const sdLabel = sdS==='livrat'?'Livrat':sdS==='retur'?'Retur':sdS==='outfor'?'La curier':sdS==='incurs'?'Tranzit':'SD';
+                              return (
+                                <span title={o.trackingNo} style={{fontSize:9,background:`${sdColor}22`,color:sdColor,border:`1px solid ${sdColor}44`,padding:'1px 5px',borderRadius:4,fontWeight:sdS==='retur'?700:400}}>
+                                  SD{sdIcon && ` · ${sdLabel}`}{!sdDone&&<span style={{color:'#4a5568'}}> ?</span>}
+                                </span>
+                              );
                             })()}
                           </td>
                         </tr>
@@ -609,4 +753,5 @@ export default function Dashboard() {
     </>
   );
 }
+
 
