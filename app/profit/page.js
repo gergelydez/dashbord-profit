@@ -573,7 +573,15 @@ export default function ProfitPage() {
                     <label className="lbl">Email cont SmartBill</label>
                     <input type="email" value={sbEmail} onChange={e => setSbEmail(e.target.value)} placeholder="email@firma.ro" />
                     <label className="lbl">Token API SmartBill</label>
-                    <input type="password" value={sbToken} onChange={e => setSbToken(e.target.value)} placeholder="token..." />
+                    <input type="text" value={sbToken} onChange={e => setSbToken(e.target.value)} placeholder="003|98fc69cca..." 
+                      style={{fontFamily:'monospace',fontSize:11,letterSpacing:'0.5px'}}
+                      autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" />
+                    {sbToken && sbToken.includes('|') && (
+                      <div style={{fontSize:10,color:'#10b981',marginTop:3}}>✓ Token cu format corect (conține |)</div>
+                    )}
+                    {sbToken && !sbToken.includes('|') && sbToken.length > 10 && (
+                      <div style={{fontSize:10,color:'#f59e0b',marginTop:3}}>⚠ Tokenul SmartBill conține de obicei caracterul |</div>
+                    )}
                     <label className="lbl">CIF firmă</label>
                     <input type="text" value={sbCif} onChange={e => setSbCif(e.target.value)} placeholder="RO12345678" />
                     <label className="lbl">Sursă SmartBill</label>
@@ -588,6 +596,17 @@ export default function ProfitPage() {
                       {sbLoading && <span className="spinner"></span>}
                       {sbLoading ? 'Se conectează…' : '🔗 Conectează SmartBill'}
                     </button>
+                    {/* Test button */}
+                    <button style={{width:'100%',marginTop:6,padding:'7px',background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,fontSize:11,cursor:'pointer'}}
+                      onClick={async () => {
+                        setSbDebug('Se testează conexiunea…');
+                        try {
+                          const r = await fetch(`/api/smartbill?email=${encodeURIComponent(sbEmail)}&token=${encodeURIComponent(sbToken)}&cif=${encodeURIComponent(sbCif)}&month=${month}&type=test`);
+                          const d = await r.json();
+                          setSbDebug(JSON.stringify(d, null, 2));
+                        } catch(e) { setSbDebug('Eroare: ' + e.message); }
+                      }}>🔬 Testează conexiunea</button>
+
                     {sbDone && (
                       <div style={{marginTop:8,padding:'7px 10px',background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:7,fontSize:11,color:'#10b981'}}>
                         ✓ {Object.keys(productCosts).length} produse din SmartBill · COGS: {fmt(cogs)} RON
