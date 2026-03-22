@@ -111,19 +111,16 @@ export default function ProfitPage() {
       const data = await res.json();
       const orders = (data.orders || []).filter(o => !o.cancelled_at && o.financial_status !== 'voided');
       const processed = orders.map(o => {
-        // Extract invoice number from note_attributes (set by xConnector)
+        // Extract invoice from xConnector note_attributes
         const notes = o.note_attributes || [];
-        const invoiceAttr = notes.find(a => 
-          (a.name || '').toLowerCase().includes('invoice') || 
-          (a.name || '').toLowerCase().includes('factura') ||
-          (a.name || '').toLowerCase().includes('xconnector-invoice')
-        );
-        // Also check tags for invoice info
-        const tags = (o.tags || '').split(',').map(t => t.trim());
-        const invoiceTag = tags.find(t => t.match(/^(FA|FCA|FCN|FF|factura)/i));
-        const invoiceNumber = invoiceAttr?.value || invoiceTag || '';
-        const hasInvoice = !!(invoiceNumber || notes.some(a => a.name?.includes('invoice-url')));
-        
+        const invUrlAttr   = notes.find(a => (a.name||'').toLowerCase().includes('invoice-url') && !(a.name||'').toLowerCase().includes('short'));
+        const invShortAttr = notes.find(a => (a.name||'').toLowerCase().includes('invoice-short-url'));
+        const invoiceUrl   = invUrlAttr?.value || '';
+        const invoiceShort = invShortAttr?.value || '';
+        // Extract invoice number from URL param n=XXXX
+        const invNumMatch  = invoiceUrl.match(/[?&]n=(\d+)/);
+        const invoiceNumber = invNumMatch ? invNumMatch[1] : '';
+        const hasInvoice   = !!(invoiceUrl || invoiceShort);
         return {
           id: o.id, name: o.name,
           total: parseFloat(o.total_price) || 0,
@@ -562,63 +559,41 @@ export default function ProfitPage() {
                 {shopifyDone && <button className="btn btn-gray" style={{ marginTop: 8, width: '100%' }} onClick={() => setShopifyDone(false)}>↺ Reîncarcă</button>}
               </div>
 
-              {/* SMARTBILL */}
-              <div className={`src-card ${sbDone ? 'done' : ''}`}>
+              {/* COST PRODUSE - din Shopify cost_per_item */}
+              <div className={`src-card ${shopifyCostsDone ? 'done' : ''}`}>
                 <div className="src-header">
-                  <span className="src-icon">🧾</span>
-                  <span className="src-title">SmartBill — Cost produse</span>
-                  <span className={`src-status ${sbDone ? 'ok' : ''}`}>{sbDone ? `✓ ${Object.keys(productCosts).length} produse` : 'Neconectat'}</span>
+                  <span className="src-icon">🏷️</span>
+                  <span className="src-title">Cost produse (Shopify)</span>
+                  <span className={`src-status ${shopifyCostsDone ? 'ok' : ''}`}>
+                    {shopifyCostsDone ? `✓ ${Object.keys(shopifyCosts).length} produse` : 'Se încarcă automat'}
+                  </span>
                 </div>
-                <>
-                    <label className="lbl">Email cont SmartBill</label>
-                    <input type="email" value={sbEmail} onChange={e => setSbEmail(e.target.value)} placeholder="email@firma.ro" />
-                    <label className="lbl">Token API SmartBill</label>
-                    <input type="text" value={sbToken} onChange={e => setSbToken(e.target.value)} placeholder="003|98fc69cca..." 
-                      style={{fontFamily:'monospace',fontSize:11,letterSpacing:'0.5px'}}
-                      autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" />
-                    {sbToken && sbToken.includes('|') && (
-                      <div style={{fontSize:10,color:'#10b981',marginTop:3}}>✓ Token cu format corect (conține |)</div>
-                    )}
-                    {sbToken && !sbToken.includes('|') && sbToken.length > 10 && (
-                      <div style={{fontSize:10,color:'#f59e0b',marginTop:3}}>⚠ Tokenul SmartBill conține de obicei caracterul |</div>
-                    )}
-                    <label className="lbl">CIF firmă</label>
-                    <input type="text" value={sbCif} onChange={e => setSbCif(e.target.value)} placeholder="RO12345678" />
-                    <label className="lbl">Sursă SmartBill</label>
-                    <div style={{display:'flex',gap:6,marginBottom:4}}>
-                      {[{id:'products',lbl:'Lista produse'},{id:'expense',lbl:'Facturi achiziție'}].map(o=>(
-                        <button key={o.id} onClick={()=>setSbType(o.id)} style={{flex:1,padding:'6px 0',borderRadius:7,border:'1px solid',fontSize:11,cursor:'pointer',background:sbType===o.id?'#f97316':'#161d24',borderColor:sbType===o.id?'#f97316':'#243040',color:sbType===o.id?'white':'#94a3b8'}}>{o.lbl}</button>
-                      ))}
+                {shopifyCostsDone && Object.keys(shopifyCosts).length > 0 ? (
+                  <div style={{fontSize:12,color:'#94a3b8'}}>
+                    <div>Produse cu cost: <strong style={{color:'#10b981'}}>{Object.keys(shopifyCosts).length}</strong></div>
+                    <div style={{marginTop:4}}>COGS calculat: <strong style={{color:'#3b82f6'}}>{fmt(cogs)} RON</strong></div>
+                    <div style={{marginTop:8,fontSize:11,color:'#4a5568'}}>
+                      Costul se ia automat din <em>Shopify → Products → Cost per item</em>
                     </div>
-                    {sbError && <div className="err-msg">{sbError}</div>}
-                    {sbDebug && <pre style={{fontSize:9,color:'#4a5568',background:'#0a0e14',padding:8,borderRadius:6,overflow:'auto',maxHeight:120,marginTop:6}}>{sbDebug}</pre>}
-                    <button className="btn btn-orange" onClick={fetchSmartBill} disabled={sbLoading}>
-                      {sbLoading && <span className="spinner"></span>}
-                      {sbLoading ? 'Se conectează…' : '🔗 Conectează SmartBill'}
-                    </button>
-                    {/* Test button */}
-                    <button style={{width:'100%',marginTop:6,padding:'7px',background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,fontSize:11,cursor:'pointer'}}
-                      onClick={async () => {
-                        setSbDebug('Se testează conexiunea…');
-                        try {
-                          const r = await fetch(`/api/smartbill?email=${encodeURIComponent(sbEmail)}&token=${encodeURIComponent(sbToken)}&cif=${encodeURIComponent(sbCif)}&month=${month}&type=test`);
-                          const d = await r.json();
-                          setSbDebug(JSON.stringify(d, null, 2));
-                        } catch(e) { setSbDebug('Eroare: ' + e.message); }
-                      }}>🔬 Testează conexiunea</button>
-
-                    {sbDone && (
-                      <div style={{marginTop:8,padding:'7px 10px',background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:7,fontSize:11,color:'#10b981'}}>
-                        ✓ {Object.keys(productCosts).length} produse din SmartBill · COGS: {fmt(cogs)} RON
-                      </div>
-                    )}
-                    {shopifyCostsDone && (
-                      <div style={{marginTop:6,padding:'7px 10px',background:'rgba(59,130,246,.08)',border:'1px solid rgba(59,130,246,.2)',borderRadius:7,fontSize:11,color:'#3b82f6'}}>
-                        ✓ Shopify cost_per_item: {Object.keys(shopifyCosts).length} produse (fallback activ)
-                      </div>
-                    )}
-                  </>
-                {sbDone && <button className="btn btn-gray" style={{ marginTop: 8, width: '100%' }} onClick={() => setSbDone(false)}>↺ Reîncarcă</button>}
+                  </div>
+                ) : (
+                  <div style={{fontSize:12,color:'#94a3b8',lineHeight:1.6}}>
+                    <div style={{marginBottom:8}}>
+                      {shopifyDone
+                        ? '⚠ Nu s-au găsit costuri în Shopify. Completează câmpul Cost per item:'
+                        : 'Costurile se vor încărca automat după ce încarci comenzile Shopify.'}
+                    </div>
+                    <div style={{padding:'8px 10px',background:'rgba(59,130,246,.08)',border:'1px solid rgba(59,130,246,.2)',borderRadius:7,fontSize:11,color:'#3b82f6'}}>
+                      📍 Shopify Admin → Products → click produs → tab <strong>Inventory</strong> → câmp <strong>Cost per item</strong>
+                    </div>
+                  </div>
+                )}
+                {/* Manual cost override per product */}
+                {shopifyDone && Object.keys(shopifyCosts).length === 0 && (
+                  <div style={{marginTop:10,fontSize:11,color:'#94a3b8'}}>
+                    Sau introdu costul manual în tabelul de mai jos ↓
+                  </div>
+                )}
               </div>
 
               {/* GLS */}
