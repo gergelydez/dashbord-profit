@@ -496,7 +496,7 @@ export default function Dashboard() {
                 <div style={{background:'#0f1419',border:'1px solid #3b82f6',borderRadius:10,padding:'12px 14px'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
                     <span style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
-                      🚀 Sameday {sdLoading && <span style={{fontSize:8,color:'#94a3b8'}}>⟳</span>}
+                      {'🚀 Sameday'}{sdLoading && <span style={{fontSize:8,color:'#94a3b8'}}> ⟳</span>}
                     </span>
                     <button onClick={() => checkSameday()}
                       disabled={sdLoading}
@@ -609,3 +609,4 @@ export default function Dashboard() {
     </>
   );
 }
+
