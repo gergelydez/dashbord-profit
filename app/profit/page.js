@@ -763,21 +763,33 @@ export default function ProfitPage() {
                     <tbody>
                       {uniqueProducts.slice(0, 30).map(prod => {
                         const key = prod.toLowerCase().trim();
-                        const sbVal = productCosts[key];
-                        const shVal = shopifyCosts[key];
+                        const sbVal  = productCosts[key];
+                        const shVal  = shopifyCosts[key];
                         const manualVal = manualCosts[prod];
-                        const override = costSource[prod];
-                        const { cost: resolvedCost, src: autoSrc } = resolveCost({ name: prod, sku: '' });
+                        const override  = costSource[prod];
+                        const { cost: resolvedCost, src: autoSrc } = resolveCost({ name: prod, sku: '', variantId: '' });
+
+                        // Find matching stdCost for display
+                        const matchedStd = stdCosts.find(s => {
+                          const pat = s.pattern.toLowerCase();
+                          if (!pat) return false;
+                          if (!key.includes(pat)) return false;
+                          return !(s.excludes||[]).some(ex => key.includes(ex.toLowerCase()));
+                        });
+                        const stdVal = matchedStd ? matchedStd.cost : null;
 
                         const srcOptions = [
-                          sbVal ? { id:'smartbill', lbl:`SB: ${sbVal} RON`, color:'#10b981' } : null,
-                          shVal ? { id:'shopify',   lbl:`SH: ${shVal} RON`, color:'#3b82f6' } : null,
+                          sbVal  ? { id:'smartbill', lbl:`SB: ${sbVal} RON`,   color:'#10b981' } : null,
+                          shVal  ? { id:'shopify',   lbl:`SH: ${shVal} RON`,   color:'#3b82f6' } : null,
+                          stdVal ? { id:'standard',  lbl:`STD: ${stdVal} RON`, color:'#a855f7' } : null,
                           { id:'manual', lbl:'Manual', color:'#f59e0b' },
                         ].filter(Boolean);
 
+                        const showManualInput = override === 'manual' || (!override && !sbVal && !shVal && !stdVal);
+
                         return (
                           <tr key={prod}>
-                            <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#94a3b8', fontSize:11 }} title={prod}>{prod}</td>
+                            <td style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#94a3b8',fontSize:11}} title={prod}>{prod}</td>
                             <td>
                               <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
                                 {srcOptions.map(opt => (
@@ -792,10 +804,13 @@ export default function ProfitPage() {
                               </div>
                             </td>
                             <td>
-                              {(override==='manual' || (!override && !sbVal && !shVal)) ? (
-                                <input type="number" placeholder="0" value={manualVal||''} onChange={e=>setManualCosts(p=>({...p,[prod]:e.target.value}))} style={{width:80,padding:'4px 6px',fontSize:11}} />
+                              {showManualInput ? (
+                                <input type="text" inputMode="decimal" placeholder="0"
+                                  value={manualVal||''}
+                                  onChange={e => setManualCosts(p => ({...p,[prod]:e.target.value}))}
+                                  style={{width:80,padding:'4px 6px',fontSize:11,background:'#161d24',border:'1px solid #243040',color:'#e8edf2',borderRadius:6,outline:'none'}} />
                               ) : (
-                                <span style={{fontFamily:'monospace',fontSize:11,color:'#10b981'}}>{resolvedCost} RON</span>
+                                <span style={{fontFamily:'monospace',fontSize:12,color:'#10b981',fontWeight:600}}>{resolvedCost} RON</span>
                               )}
                             </td>
                             <td>
