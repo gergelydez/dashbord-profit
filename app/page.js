@@ -579,7 +579,7 @@ export default function Dashboard() {
                             {o.courier==='sameday' && (()=>{
                               const sdS = getSdStatus(o.trackingNo);
                               return <span style={{fontSize:9,background:'rgba(59,130,246,.15)',color:sdS==='livrat'?'#10b981':sdS==='retur'?'#f43f5e':'#3b82f6',border:'1px solid rgba(59,130,246,.2)',padding:'1px 5px',borderRadius:4}}>
-                                SD{sdS?` · ${sdS==='livrat'?'✓':sdS==='retur'?'↩':'…'}':''}
+                                {'SD'+(sdS==='livrat'?' · ✓':sdS==='retur'?' · ↩':sdS?' · …':'')}
                               </span>;
                             })()}
                           </td>
