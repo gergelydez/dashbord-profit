@@ -61,20 +61,22 @@ function procOrder(o) {
   if (o.cancelled_at) ts = 'anulat';
   const addr = o.shipping_address || o.billing_address || {};
   const prods = (o.line_items || []).map(i => i.name || '').join(' + ');
-  // Extract invoice number from note_attributes
+  // Extract invoice from xConnector note_attributes
   const notes = o.note_attributes || [];
-  const invAttr = notes.find(a => (a.name||'').toLowerCase().includes('invoice') && !(a.name||'').toLowerCase().includes('url'));
-  const invUrl  = notes.find(a => (a.name||'').toLowerCase().includes('invoice-url') || (a.name||'').toLowerCase().includes('invoice_url'));
-  const invoiceNumber = invAttr?.value || '';
-  const hasInvoice = !!(invoiceNumber || invUrl);
+  const invUrlAttr   = notes.find(a => (a.name||'').toLowerCase().includes('invoice-url') && !(a.name||'').toLowerCase().includes('short'));
+  const invShortAttr = notes.find(a => (a.name||'').toLowerCase().includes('invoice-short-url'));
+  const invoiceUrl   = invUrlAttr?.value || '';
+  const invoiceShort = invShortAttr?.value || '';
+  const invNumMatch  = invoiceUrl.match(/[?&]n=(\d+)/);
+  const invoiceNumber = invNumMatch ? invNumMatch[1] : '';
+  const hasInvoice   = !!(invoiceUrl || invoiceShort);
   return {
     id: o.id, name: o.name || '', fin: o.financial_status || '', ts,
     trackingNo, client: addr.name || '', oras: addr.city || '',
     total: parseFloat(o.total_price) || 0,
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
     createdAt: o.created_at || '', fulfilledAt,
-    invoiceNumber, hasInvoice,
-    invoiceUrl: invUrl?.value || '',
+    invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
   };
 }
 
@@ -456,7 +458,10 @@ export default function Dashboard() {
                           <td><span className={`mg ${mc}`}>{fmt(o.total)} RON</span></td>
                           <td>
                             {o.hasInvoice
-                              ? <span style={{fontSize:10,color:'#10b981',fontFamily:'monospace'}}>{o.invoiceNumber||'✓ Da'}</span>
+                              ? <a href={o.invoiceShort||o.invoiceUrl} target="_blank" rel="noopener noreferrer"
+                                  style={{fontSize:10,color:'#10b981',fontFamily:'monospace',textDecoration:'none'}}>
+                                  {o.invoiceNumber ? `#${o.invoiceNumber}` : '✓ Vezi'} ↗
+                                </a>
                               : o.fin==='paid'
                                 ? <span style={{fontSize:10,color:'#f59e0b',fontWeight:700}}>⚠ Lipsă!</span>
                                 : <span style={{fontSize:10,color:'#4a5568'}}>—</span>}
@@ -489,3 +494,4 @@ export default function Dashboard() {
     </>
   );
 }
+
