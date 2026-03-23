@@ -105,15 +105,17 @@ export default function Dashboard() {
   const [sortDir, setSortDir]   = useState(1);
 
   // Sameday — statusuri corecte din Excel eAWB (borderou) + fallback Shopify
-  // sdReturAwbs = Set de AWB-uri refuzate/returnate de clienți — din PDF borderou Sameday
-  // Salvat permanent în localStorage, nu trebuie re-uploadat la fiecare sesiune
-  const [sdReturAwbs, setSdReturAwbs] = useState(() => {
-    try { const s = localStorage.getItem('sd_retur_awbs'); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
+  // sdAwbMap = { [awb]: 'livrat'|'retur'|'incurs' } — din Excel export Sameday eAWB
+  // Salvat permanent în localStorage, acumulează date din mai multe exporturi
+  const [sdAwbMap, setSdAwbMap] = useState(() => {
+    try { const s = localStorage.getItem('sd_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
   });
-  const [sdDone, setSdDone]       = useState(() => { try { return !!localStorage.getItem('sd_retur_awbs'); } catch { return false; } });
-  const [sdError, setSdError]     = useState('');
+  const [sdDone, setSdDone]     = useState(() => { try { return !!localStorage.getItem('sd_awb_map'); } catch { return false; } });
+  const [sdError, setSdError]   = useState('');
   const [sdLoading, setSdLoading] = useState(false);
-  const [sdFiles, setSdFiles]     = useState(() => { try { return JSON.parse(localStorage.getItem('sd_files') || '[]'); } catch { return []; } });
+  const [sdFiles, setSdFiles]   = useState(() => { try { return JSON.parse(localStorage.getItem('sd_files') || '[]'); } catch { return []; } });
+  // Filtru curier pentru tabel
+  const [courierFilter, setCourierFilter] = useState('toate');
 
   /* Date range — filtrare LOCALĂ, fără request nou */
   const [preset, setPreset]         = useState('last_30');
@@ -157,9 +159,10 @@ export default function Dashboard() {
     setRangeLabel(`${fmtD(from+'T00:00:00')} — ${fmtD(to+'T00:00:00')}`);
   }, []);
 
-  const applyFilters = useCallback((ords, f, q, sc, sd) => {
+  const applyFilters = useCallback((ords, f, q, sc, sd, cf) => {
     let result = ords.filter(o => {
       if (f !== 'toate' && o.ts !== f) return false;
+      if (cf && cf !== 'toate' && o.courier !== cf) return false;
       if (!q) return true;
       return [o.name,o.client,o.oras,o.prods,o.trackingNo].some(v => (v||'').toLowerCase().includes(q.toLowerCase()));
     });
@@ -168,7 +171,7 @@ export default function Dashboard() {
     setPg(1);
   }, []);
 
-  useEffect(() => { applyFilters(orders, filter, search, sortCol, sortDir); }, [orders, filter, search, sortCol, sortDir, applyFilters]);
+  useEffect(() => { applyFilters(orders, filter, search, sortCol, sortDir, courierFilter); }, [orders, filter, search, sortCol, sortDir, courierFilter, applyFilters]);
 
   /* Descarcă TOATE comenzile o singură dată (fără filtru dată) */
   const fetchOrders = async () => {
@@ -205,119 +208,99 @@ export default function Dashboard() {
   // ── Parsează Excel/CSV borderou din contul eAWB Sameday ──
   // Din eAWB: Lista Expedieri → Export → Excel/CSV
   // Coloane detectate automat: AWB / Status / Data livrare etc.
-  // ── Parsează PDF borderou retururi Sameday ──
-  // PDF-ul primit de la Sameday cu coletele refuzate/returnate de clienți.
-  // Extrage AWB-urile și le salvează permanent în localStorage.
-  // Suportă și acumulare — poți uploada mai multe PDF-uri (luni diferite).
-  const parseSamedayPDF = (e) => {
+  // ── Parsează Excel export din eAWB Sameday ──
+  // Din contul eAWB: Listă AWB → Export Excel
+  // Coloane folosite: AWB (col 0) + Status (col 4)
+  // Statusuri Sameday → intern:
+  //   "Ți-am returnat coletul cu succes." → retur
+  //   "Rambursul a fost transferat."      → livrat
+  //   orice altceva cu livrare            → livrat
+  const parseSamedayExcel = (e) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
     setSdLoading(true);
     setSdError('');
 
-    // Normalizează AWB: elimină sufixul de colet (001, 002 etc.) de la final
-    // Shopify stochează AWB fără sufix: 1ONB24465823866
-    // PDF conține:                      1ONB24465823866001
-    const normalizeAwb = (raw) => {
-      const s = raw.toString().trim().replace(/\s/g, '');
-      // Dacă are 18+ caractere și ultimele 3 sunt cifre → taie sufixul de 3 cifre
-      if (s.length >= 18 && /\d{3}$/.test(s)) return s.slice(0, -3);
-      return s;
+    const normalizeStatus = (raw) => {
+      const s = (raw || '').toString().toLowerCase();
+      if (s.includes('returnat') || s.includes('retur') || s.includes('refuzat') || s.includes('nepreluat')) return 'retur';
+      if (s.includes('transferat') || s.includes('livrat') || s.includes('livr')) return 'livrat';
+      if (s.includes('curier') || s.includes('out for')) return 'outfor';
+      if (s.includes('tranzit') || s.includes('hub') || s.includes('preluat') || s.includes('expediat')) return 'incurs';
+      return null;
     };
 
-    // Extrage AWB-urile din textul PDF
-    // Formatul AWB Sameday: 1ONB + 14 cifre + opțional 3 cifre sufix colet
-    const extractAwbsFromText = (text) => {
-      // Regex: AWB-uri Sameday — încep cu 1ONB sau IONB (I mare în loc de 1)
-      const matches = text.match(/[1I]ONB[A-Z0-9]{10,17}/gi) || [];
-      return matches.map(normalizeAwb);
-    };
+    const loadXLSX = () => {
+      const newMap = { ...sdAwbMap };
+      const newFiles = [...sdFiles];
+      let processed = 0;
 
-    let processedFiles = 0;
-    const newAwbs = new Set(sdReturAwbs);
-    const newFileNames = [...sdFiles];
-    let totalFound = 0;
-
-    const processFile = (file) => {
-      return new Promise((resolve) => {
-        // Folosim pdf.js via CDN pentru a extrage textul din PDF
-        const loadAndParse = () => {
-          const reader = new FileReader();
-          reader.onload = async (ev) => {
-            try {
-              const pdfjsLib = window.pdfjsLib;
-              pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-              const pdf = await pdfjsLib.getDocument({ data: ev.target.result }).promise;
-              let fullText = '';
-              for (let i = 1; i <= pdf.numPages; i++) {
-                const page = await pdf.getPage(i);
-                const tc = await page.getTextContent();
-                fullText += tc.items.map(item => item.str).join(' ') + '\n';
-              }
-              const awbs = extractAwbsFromText(fullText);
-              // Filtrăm AWB-urile de retur inițiate de expeditor (1ONBLR)
-              // — păstrăm doar coletele normale refuzate de client
-              const clientRefuze = awbs.filter(awb => !/LR/i.test(awb));
-              clientRefuze.forEach(awb => newAwbs.add(awb));
-              totalFound += clientRefuze.length;
-              if (!newFileNames.includes(file.name)) newFileNames.push(file.name);
-              resolve();
-            } catch(err) {
-              setSdError('Eroare citire PDF: ' + err.message);
-              resolve();
-            }
-          };
-          reader.readAsArrayBuffer(file);
+      const processFile = (file) => new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const wb = window.XLSX.read(ev.target.result, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+            // Găsim indexul coloanelor AWB și Status din header
+            const header = (rows[0] || []).map(h => (h||'').toString().toLowerCase());
+            const awbIdx    = header.findIndex(h => h.includes('awb'));
+            const statusIdx = header.findIndex(h => h.includes('status'));
+            if (awbIdx === -1) { setSdError('Coloana AWB negăsită. Exportă din eAWB → Listă AWB.'); resolve(); return; }
+            if (statusIdx === -1) { setSdError('Coloana Status negăsită.'); resolve(); return; }
+            rows.slice(1).forEach(row => {
+              const awb = (row[awbIdx] || '').toString().trim();
+              if (!awb) return;
+              const status = normalizeStatus(row[statusIdx]);
+              if (status) { newMap[awb] = status; processed++; }
+            });
+            if (!newFiles.includes(file.name)) newFiles.push(file.name);
+            resolve();
+          } catch(err) { setSdError('Eroare Excel: ' + err.message); resolve(); }
         };
+        reader.readAsArrayBuffer(file);
+      });
 
-        if (window.pdfjsLib) {
-          loadAndParse();
-        } else {
-          const s = document.createElement('script');
-          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-          s.onload = loadAndParse;
-          s.onerror = () => { setSdError('Nu s-a putut încărca pdf.js. Verifică conexiunea.'); resolve(); };
-          document.head.appendChild(s);
+      Promise.all(files.map(processFile)).then(() => {
+        if (processed === 0 && !sdError) {
+          setSdError('Niciun AWB cu status recunoscut. Verifică fișierul.');
+          setSdLoading(false); return;
         }
+        setSdAwbMap(newMap);
+        setSdFiles(newFiles);
+        setSdDone(true);
+        localStorage.setItem('sd_awb_map', JSON.stringify(newMap));
+        localStorage.setItem('sd_files', JSON.stringify(newFiles));
+        setSdLoading(false);
       });
     };
 
-    Promise.all(files.map(processFile)).then(() => {
-      if (totalFound === 0 && !sdError) {
-        setSdError('Nu am găsit AWB-uri în fișier(ele) selectate. Asigură-te că este borderou Sameday.');
-        setSdLoading(false);
-        return;
-      }
-      setSdReturAwbs(new Set(newAwbs));
-      setSdFiles(newFileNames);
-      setSdDone(true);
-      localStorage.setItem('sd_retur_awbs', JSON.stringify([...newAwbs]));
-      localStorage.setItem('sd_files', JSON.stringify(newFileNames));
-      setSdLoading(false);
-    });
-
+    if (window.XLSX) { loadXLSX(); }
+    else {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = loadXLSX;
+      s.onerror = () => { setSdError('Nu s-a putut încărca library-ul XLSX.'); setSdLoading(false); };
+      document.head.appendChild(s);
+    }
     e.target.value = '';
   };
 
   const clearSamedayData = () => {
-    setSdReturAwbs(new Set());
+    setSdAwbMap({});
     setSdFiles([]);
     setSdDone(false);
     setSdError('');
-    localStorage.removeItem('sd_retur_awbs');
+    localStorage.removeItem('sd_awb_map');
     localStorage.removeItem('sd_files');
   };
 
   // Returnează statusul real pentru un ordin Sameday.
-  // Prioritate:
-  // 1. Borderou PDF uploadat — AWB găsit în lista de refuzuri = retur sigur
-  // 2. Shopify shipment_status — pentru livrate/tranzit (corect în general)
+  // Prioritate: Excel eAWB (exact) > Shopify shipment_status (aproximativ)
   const getSdStatus = (order) => {
     if (!order) return null;
     const awb = (order.trackingNo || '').trim();
-    // 1. Borderou PDF — cel mai precis pentru refuzuri
-    if (awb && sdReturAwbs.has(awb)) return 'retur';
-    // 2. Shopify shipment_status
+    if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
     return order.ts !== 'pending' ? order.ts : null;
   };
 
@@ -344,13 +327,18 @@ export default function Dashboard() {
   }).length;
   const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
 
+  // Retururi reale = Shopify retur + comenzi Sameday detectate ca retur din Excel
+  // (Shopify nu preia refuzurile Sameday, deci le adăugăm manual din Excel)
+  const sdReturDetectat = sdOrders.filter(o => getSdStatus(o) === 'retur' && o.ts !== 'retur');
+  const returTotal = retur + sdReturDetectat.length;
+
   const kpis = [
-    {v:n,           lbl:'Total comenzi',  e:'📦',color:'#f97316',p:100},
-    {v:livrate,     lbl:'Livrate',        e:'✅',color:'#10b981',p:pct(livrate,n)},
-    {v:incurs+outfor,lbl:'În tranzit',    e:'🚚',color:'#3b82f6',p:pct(incurs+outfor,n)},
-    {v:retur,       lbl:'Retur',          e:'↩️',color:'#f43f5e',p:pct(retur,n)},
-    {v:anulate,     lbl:'Anulate',        e:'❌',color:'#4a5568',p:pct(anulate,n)},
-    {v:pend,        lbl:'Neexpediate',    e:'⏳',color:'#f59e0b',p:pct(pend,n)},
+    {v:n,              lbl:'Total comenzi',  e:'📦',color:'#f97316',p:100},
+    {v:livrate,        lbl:'Livrate',        e:'✅',color:'#10b981',p:pct(livrate,n)},
+    {v:incurs+outfor,  lbl:'În tranzit',     e:'🚚',color:'#3b82f6',p:pct(incurs+outfor,n)},
+    {v:returTotal,     lbl:'Retur',          e:'↩️',color:'#f43f5e',p:pct(returTotal,n)},
+    {v:anulate,        lbl:'Anulate',        e:'❌',color:'#4a5568',p:pct(anulate,n)},
+    {v:pend,           lbl:'Neexpediate',    e:'⏳',color:'#f59e0b',p:pct(pend,n)},
   ];
 
   const slice = filtered.slice((pg-1)*PS, pg*PS);
@@ -564,7 +552,7 @@ export default function Dashboard() {
               <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
                 <span style={{fontSize:16}}>⚠️</span>
                 <span style={{color:'#f59e0b',flex:1}}><strong>{noInvoicePaid.length} comenzi plătite fără factură:</strong> {noInvoicePaid.map(o=>o.name).join(', ')}</span>
-                <a href="https://app.smartbill.ro" target="_blank" rel="noopener noreferrer"
+                <a href="https://cloud.smartbill.ro/auth/login/?next=/core/integrari/" target="_blank" rel="noopener noreferrer"
                   style={{background:'#f59e0b',color:'#000',padding:'5px 12px',borderRadius:7,fontSize:11,fontWeight:700,textDecoration:'none',whiteSpace:'nowrap'}}>
                   📄 Deschide SmartBill
                 </a>
@@ -587,71 +575,53 @@ export default function Dashboard() {
                     <span style={{color:'#94a3b8'}}>Returnate</span><span style={{color:'#f43f5e',fontFamily:'monospace'}}>{glsRetur}</span>
                   </div>
                 </div>
-                {/* SAMEDAY — refuzuri din borderou PDF + statusuri Shopify */}
+                {/* SAMEDAY — statusuri din Excel eAWB + fallback Shopify */}
                 <div style={{background:'#0f1419',border:`1px solid ${sdError?'#f43f5e':sdDone?'#10b981':'#3b82f6'}`,borderRadius:10,padding:'12px 14px'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <span style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
                       🚀 Sameday
                       {sdDone
-                        ? <span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {sdReturAwbs.size} AWB-uri</span>
-                        : <span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ fără borderou</span>}
+                        ? <span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {Object.keys(sdAwbMap).length} AWB</span>
+                        : <span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ fără export</span>}
                     </span>
                     <div style={{display:'flex',gap:5,alignItems:'center'}}>
                       {sdDone && (
-                        <button onClick={clearSamedayData} title="Șterge toate borderou-urile"
-                          style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#4a5568',borderRadius:5,padding:'2px 6px',cursor:'pointer'}}>
-                          ✕
-                        </button>
+                        <button onClick={clearSamedayData} title="Șterge datele importate"
+                          style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#4a5568',borderRadius:5,padding:'2px 6px',cursor:'pointer'}}>✕</button>
                       )}
-                      <label title={sdDone ? 'Adaugă borderou nou (se acumulează)' : 'Importă borderou PDF refuzuri Sameday'}
+                      <label title="Import Excel din eAWB → Listă AWB → Export"
                         style={{fontSize:9,background:sdDone?'transparent':'rgba(59,130,246,.15)',border:`1px solid ${sdDone?'#243040':'#3b82f6'}`,color:sdDone?'#94a3b8':'#3b82f6',borderRadius:5,padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap'}}>
-                        {sdLoading ? '⟳ ...' : sdDone ? '+ Adaugă PDF' : '📄 Import borderou PDF'}
-                        <input type="file" accept=".pdf" multiple onChange={parseSamedayPDF} style={{display:'none'}} />
+                        {sdLoading ? '⟳' : sdDone ? '+ Excel' : '📊 Import Excel'}
+                        <input type="file" accept=".xlsx,.xls" multiple onChange={parseSamedayExcel} style={{display:'none'}} />
                       </label>
                     </div>
                   </div>
-
-                  {/* Lista fișierelor încărcate */}
-                  {sdFiles.length > 0 && (
-                    <div style={{marginBottom:6}}>
-                      {sdFiles.map((f,i) => (
-                        <div key={i} style={{fontSize:8,color:'#4a5568',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={f}>
-                          📄 {f}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
+                  {sdFiles.length > 0 && sdFiles.map((f,i) => (
+                    <div key={i} style={{fontSize:8,color:'#4a5568',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={f}>📄 {f}</div>
+                  ))}
                   {sdError && <div style={{fontSize:9,color:'#f43f5e',marginBottom:5,lineHeight:1.4}}>{sdError}</div>}
-
                   {!sdDone && sdOrders.length > 0 && !sdError && (
                     <div style={{fontSize:9,color:'#f59e0b',marginBottom:6,lineHeight:1.5,background:'rgba(245,158,11,.07)',borderRadius:5,padding:'5px 7px'}}>
-                      ⚠️ Fără borderou, refuzurile nu sunt detectate.<br/>
-                      Importă PDF-ul primit de la Sameday cu coletele returnate.
+                      ⚠️ Fără export, refuzurile nu sunt detectate.<br/>
+                      <strong>eAWB → Listă AWB → Export Excel</strong>
                     </div>
                   )}
-
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
-                    <span style={{color:'#94a3b8'}}>Total SD</span>
-                    <span style={{color:'#e8edf2',fontFamily:'monospace'}}>{sdOrders.length}</span>
+                    <span style={{color:'#94a3b8'}}>Total SD</span><span style={{color:'#e8edf2',fontFamily:'monospace'}}>{sdOrders.length}</span>
                   </div>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
-                    <span style={{color:'#94a3b8'}}>✅ Livrate</span>
-                    <span style={{color:'#10b981',fontFamily:'monospace'}}>{sdLivrate}</span>
+                    <span style={{color:'#94a3b8'}}>✅ Livrate</span><span style={{color:'#10b981',fontFamily:'monospace'}}>{sdLivrate}</span>
                   </div>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
-                    <span style={{color:'#94a3b8'}}>🚚 Tranzit</span>
-                    <span style={{color:'#3b82f6',fontFamily:'monospace'}}>{sdIncurs}</span>
+                    <span style={{color:'#94a3b8'}}>🚚 Tranzit</span><span style={{color:'#3b82f6',fontFamily:'monospace'}}>{sdIncurs}</span>
                   </div>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
-                    <span style={{color:'#94a3b8'}}>📬 La curier</span>
-                    <span style={{color:'#a855f7',fontFamily:'monospace'}}>{sdOutfor}</span>
+                    <span style={{color:'#94a3b8'}}>📬 La curier</span><span style={{color:'#a855f7',fontFamily:'monospace'}}>{sdOutfor}</span>
                   </div>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
-                    <span style={{color:'#94a3b8'}}>↩️ Refuzate/Retur</span>
-                    <span style={{color: sdRetur>0?'#f43f5e':'#94a3b8',fontFamily:'monospace',fontWeight:sdRetur>0?700:400}}>
-                      {sdRetur}
-                      {!sdDone && sdOrders.length>0 && <span style={{color:'#4a5568',fontSize:9}}> *</span>}
+                    <span style={{color:'#94a3b8'}}>↩️ Refuzate</span>
+                    <span style={{color:sdRetur>0?'#f43f5e':'#94a3b8',fontFamily:'monospace',fontWeight:sdRetur>0?700:400}}>
+                      {sdRetur}{!sdDone&&sdOrders.length>0&&<span style={{color:'#4a5568',fontSize:9}}> *</span>}
                     </span>
                   </div>
                 </div>
@@ -670,6 +640,24 @@ export default function Dashboard() {
               <div className="sw">
                 <input type="text" placeholder="Caută…" value={search} onChange={e=>setSearch(e.target.value)} />
               </div>
+            </div>
+            <div className="frow" style={{marginTop:-4}}>
+              <span style={{fontSize:10,color:'#4a5568',marginRight:2}}>Curier:</span>
+              {[
+                {id:'toate', label:'Toți'},
+                {id:'sameday', label:'🚀 Sameday'},
+                {id:'gls', label:'📦 GLS'},
+                {id:'other', label:'Altul'},
+                {id:'unknown', label:'Necunoscut'},
+              ].map(({id,label}) => (
+                <button key={id} className={`fb ${courierFilter===id?'active':''}`}
+                  style={{fontSize:10,padding:'4px 10px'}}
+                  onClick={() => setCourierFilter(id)}>
+                  {label}
+                  {id==='sameday' && sdOrders.length > 0 && <span style={{marginLeft:4,opacity:.7,fontSize:9}}>{sdOrders.length}</span>}
+                  {id==='gls' && glsOrders.length > 0 && <span style={{marginLeft:4,opacity:.7,fontSize:9}}>{glsOrders.length}</span>}
+                </button>
+              ))}
             </div>
 
             <div className="tcard">
@@ -752,4 +740,5 @@ export default function Dashboard() {
     </>
   );
 }
+
 
