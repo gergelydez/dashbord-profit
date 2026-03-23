@@ -307,18 +307,29 @@ export default function Dashboard() {
   const disconnect = () => { setOrders([]); setConnected(false); setError(''); localStorage.removeItem('gx_t'); };
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
-  const n = orders.length;
-  const cnt = s => orders.filter(o=>o.ts===s).length;
-  const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
+  // KPI-urile se calculează pe `filtered` — se actualizează când filtrezi după curier sau status
+  const n = filtered.length;
+  const cnt = s => filtered.filter(o=>o.ts===s).length;
+  const sum = ss => filtered.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
   const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sI=sum(['livrat']), sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
-  // Courier breakdown
+  // Courier breakdown — pe `orders` (toate din perioadă, fără filtru status/curier)
   const glsOrders    = orders.filter(o => o.courier === 'gls');
   const sdOrders     = orders.filter(o => o.courier === 'sameday');
   const glsLivrate   = glsOrders.filter(o => o.ts === 'livrat').length;
   const glsRetur     = glsOrders.filter(o => o.ts === 'retur').length;
+
+  // Numărul afișat pe badge-ul curierului = comenzile din filtrul de status curent
+  // Ex: dacă ești pe filtrul "Retur" → badge GLS arată câte retururi GLS există
+  const courierBadgeCount = (courierId) => {
+    return orders.filter(o => {
+      if (courierId !== 'toate' && o.courier !== courierId) return false;
+      if (filter !== 'toate' && o.ts !== filter) return false;
+      return true;
+    }).length;
+  };
   const sdLivrate    = sdOrders.filter(o => getSdStatus(o) === 'livrat').length;
   const sdRetur      = sdOrders.filter(o => getSdStatus(o) === 'retur').length;
   const sdOutfor     = sdOrders.filter(o => getSdStatus(o) === 'outfor').length;
@@ -327,9 +338,8 @@ export default function Dashboard() {
   }).length;
   const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
 
-  // Retururi reale = Shopify retur + comenzi Sameday detectate ca retur din Excel
-  // (Shopify nu preia refuzurile Sameday, deci le adăugăm manual din Excel)
-  const sdReturDetectat = sdOrders.filter(o => getSdStatus(o) === 'retur' && o.ts !== 'retur');
+  // Retururi reale în filtered = Shopify retur + Sameday detectate din Excel
+  const sdReturDetectat = filtered.filter(o => o.courier==='sameday' && getSdStatus(o) === 'retur' && o.ts !== 'retur');
   const returTotal = retur + sdReturDetectat.length;
 
   const kpis = [
@@ -460,7 +470,49 @@ export default function Dashboard() {
         .pb.dis{opacity:.3;pointer-events:none;}
         .pi{font-size:10px;color:#4a5568;padding:0 4px;}
         .empty{text-align:center;padding:40px;color:#4a5568;}
-        @media(max-width:600px){.kgrid{grid-template-columns:1fr 1fr;}.sw{width:100%;margin-left:0;}.sw input{width:100%;}.frow{flex-direction:column;align-items:flex-start;}}
+        /* ── MOBILE OPTIMIZAT ── */
+        @media(max-width:640px){
+          :root{--mob-hide:none;}
+          .wrap{padding:12px 10px 60px;}
+          /* Header */
+          header{gap:7px;margin-bottom:14px;padding-bottom:12px;}
+          .h1{font-size:15px;} .hsub{font-size:10px;}
+          .hr{gap:5px;}
+          .live{padding:4px 8px;font-size:10px;}
+          .bsm{padding:4px 8px;font-size:10px;}
+          /* KPI grid — 2 coloane pe mobil */
+          .kgrid{grid-template-columns:1fr 1fr;gap:7px;}
+          .kv{font-size:22px;}
+          .kpi{padding:10px 9px;}
+          /* Sume — 1 coloană pe mobil */
+          .srow{grid-template-columns:1fr;}
+          .sc{padding:12px 14px;}
+          .sv{font-size:18px;}
+          /* Date bar */
+          .date-bar{padding:10px 10px;}
+          .presets{gap:4px;}
+          .preset-btn{padding:5px 9px;font-size:10px;}
+          /* Filtre */
+          .frow{gap:4px;margin-bottom:7px;}
+          .fb{padding:4px 9px;font-size:10px;}
+          .sw{width:100%;margin-left:0;margin-top:2px;}
+          .sw input{width:100%;font-size:11px;}
+          /* Tabel — scroll orizontal pe mobil, coloane esențiale vizibile */
+          .tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+          table{min-width:520px;}
+          td,th{padding:6px 7px;}
+          /* Courier cards */
+          .courier-grid{grid-template-columns:1fr 1fr !important;}
+          /* Secțiunea de factură */
+          .inv-warn{flex-direction:column;gap:6px;}
+          .inv-warn a{width:100%;text-align:center;}
+        }
+        @media(max-width:400px){
+          .kgrid{grid-template-columns:1fr 1fr;}
+          .kv{font-size:20px;}
+          .preset-btn{padding:4px 7px;font-size:9px;}
+          table{min-width:460px;}
+        }
       `}</style>
 
       <div className="wrap">
@@ -549,7 +601,7 @@ export default function Dashboard() {
 
             {/* INVOICE WARNING */}
             {noInvoicePaid.length > 0 && (
-              <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+              <div className="inv-warn" style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
                 <span style={{fontSize:16}}>⚠️</span>
                 <span style={{color:'#f59e0b',flex:1}}><strong>{noInvoicePaid.length} comenzi plătite fără factură:</strong> {noInvoicePaid.map(o=>o.name).join(', ')}</span>
                 <a href="https://cloud.smartbill.ro/auth/login/?next=/core/integrari/" target="_blank" rel="noopener noreferrer"
@@ -561,7 +613,7 @@ export default function Dashboard() {
 
             {/* COURIER BREAKDOWN */}
             {(glsOrders.length > 0 || sdOrders.length > 0) && (
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+              <div className="courier-grid" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
                 {/* GLS */}
                 <div style={{background:'#0f1419',border:'1px solid #f97316',borderRadius:10,padding:'12px 14px'}}>
                   <div style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,marginBottom:8,fontFamily:'monospace'}}>📦 GLS</div>
@@ -649,15 +701,24 @@ export default function Dashboard() {
                 {id:'gls', label:'📦 GLS'},
                 {id:'other', label:'Altul'},
                 {id:'unknown', label:'Necunoscut'},
-              ].map(({id,label}) => (
-                <button key={id} className={`fb ${courierFilter===id?'active':''}`}
-                  style={{fontSize:10,padding:'4px 10px'}}
-                  onClick={() => setCourierFilter(id)}>
-                  {label}
-                  {id==='sameday' && sdOrders.length > 0 && <span style={{marginLeft:4,opacity:.7,fontSize:9}}>{sdOrders.length}</span>}
-                  {id==='gls' && glsOrders.length > 0 && <span style={{marginLeft:4,opacity:.7,fontSize:9}}>{glsOrders.length}</span>}
-                </button>
-              ))}
+              ].map(({id,label}) => {
+                const cnt = id === 'toate' ? null : courierBadgeCount(id);
+                return (
+                  <button key={id} className={`fb ${courierFilter===id?'active':''}`}
+                    style={{fontSize:10,padding:'4px 10px'}}
+                    onClick={() => setCourierFilter(id)}>
+                    {label}
+                    {cnt > 0 && (
+                      <span style={{
+                        marginLeft:4, fontSize:9,
+                        background: courierFilter===id ? 'rgba(255,255,255,.25)' : 'rgba(249,115,22,.2)',
+                        color: courierFilter===id ? 'white' : '#f97316',
+                        borderRadius:10, padding:'0 5px', fontWeight:700,
+                      }}>{cnt}</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="tcard">
@@ -668,8 +729,22 @@ export default function Dashboard() {
               <div className="tscroll">
                 <table>
                   <thead><tr>
-                    {[['name','Comandă'],['ts','Status'],['fin','Plată'],['client','Client'],['oras','Oraș'],['','Produse'],['total','Total'],['','Factură'],['createdAt','Data'],['fulfilledAt','Livrat'],['','Curier']].map(([col,lbl])=>(
-                      <th key={lbl} onClick={()=>col&&handleSort(col)}>{lbl} {col?'↕':''}</th>
+                    {[
+                      ['name','Comandă',false],
+                      ['ts','Status',false],
+                      ['fin','Plată',true],
+                      ['client','Client',false],
+                      ['oras','Oraș',true],
+                      ['','Produse',true],
+                      ['total','Total',false],
+                      ['','Factură',true],
+                      ['createdAt','Data',true],
+                      ['fulfilledAt','Livrat',true],
+                      ['','Curier',false],
+                    ].map(([col,lbl,hideMob])=>(
+                      <th key={lbl}
+                        style={hideMob?{display:'var(--mob-hide,table-cell)'}:{}}
+                        onClick={()=>col&&handleSort(col)}>{lbl} {col?'↕':''}</th>
                     ))}
                   </tr></thead>
                   <tbody>
@@ -679,16 +754,17 @@ export default function Dashboard() {
                       const st = STATUS_MAP[o.ts]||{label:o.ts};
                       const bcc = bc[o.ts]||'badge-gray';
                       const mc = o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':'mg-y';
+                      const mobH = {display:'var(--mob-hide,table-cell)'};
                       return (
                         <tr key={o.id} style={o.fin==='paid'&&!o.hasInvoice?{background:'rgba(245,158,11,0.05)'}:{}}>
                           <td><span className="ref">{o.name}</span></td>
                           <td><span className={`badge ${bcc}`}>{st.label}</span></td>
-                          <td><span className={`badge ${o.fin==='paid'?'badge-green':o.fin==='pending'?'badge-yellow':'badge-gray'}`}>{o.fin}</span></td>
+                          <td style={mobH}><span className={`badge ${o.fin==='paid'?'badge-green':o.fin==='pending'?'badge-yellow':'badge-gray'}`}>{o.fin}</span></td>
                           <td title={o.client}>{o.client||'—'}</td>
-                          <td>{o.oras||'—'}</td>
-                          <td title={o.prods} className="pc">{o.prodShort||'—'}</td>
+                          <td style={mobH}>{o.oras||'—'}</td>
+                          <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
                           <td><span className={`mg ${mc}`}>{fmt(o.total)} RON</span></td>
-                          <td>
+                          <td style={mobH}>
                             {o.hasInvoice
                               ? <a href={o.invoiceShort||o.invoiceUrl} target="_blank" rel="noopener noreferrer"
                                   style={{fontSize:10,color:'#10b981',fontFamily:'monospace',textDecoration:'none'}}>
@@ -698,8 +774,8 @@ export default function Dashboard() {
                                 ? <span style={{fontSize:10,color:'#f59e0b',fontWeight:700}}>⚠ Lipsă!</span>
                                 : <span style={{fontSize:10,color:'#4a5568'}}>—</span>}
                           </td>
-                          <td style={{fontSize:'10px',color:'#94a3b8'}}>{fmtD(o.createdAt)}</td>
-                          <td style={{fontSize:'10px',color:'#94a3b8'}}>{o.fulfilledAt?fmtD(o.fulfilledAt):<span className="mg mg-m">—</span>}</td>
+                          <td style={{...mobH,fontSize:'10px',color:'#94a3b8'}}>{fmtD(o.createdAt)}</td>
+                          <td style={{...mobH,fontSize:'10px',color:'#94a3b8'}}>{o.fulfilledAt?fmtD(o.fulfilledAt):<span className="mg mg-m">—</span>}</td>
                           <td>
                             {o.courier==='gls' && <span style={{fontSize:9,background:'rgba(249,115,22,.15)',color:'#f97316',border:'1px solid rgba(249,115,22,.2)',padding:'1px 5px',borderRadius:4}}>GLS</span>}
                             {o.courier==='sameday' && (()=>{
@@ -740,5 +816,4 @@ export default function Dashboard() {
     </>
   );
 }
-
 
