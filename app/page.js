@@ -309,8 +309,8 @@ export default function Dashboard() {
 
   // KPI-urile se calculează pe `filtered` — se actualizează când filtrezi după curier sau status
   const n = filtered.length;
-  const cnt = s => filtered.filter(o=>o.ts===s).length;
-  const sum = ss => filtered.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
+  const cnt = s => orders.filter(o=>o.ts===s).length;
+  const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
   const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sI=sum(['livrat']), sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
