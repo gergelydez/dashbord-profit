@@ -308,11 +308,9 @@ export default function Dashboard() {
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
   // KPI-urile se calculează pe `filtered` — se actualizează când filtrezi după curier sau status
-  // Sumarul folosește `orders` (toate comenzile din perioada selectată)
-  // NU `filtered` — astfel KPI-urile nu se schimbă când filtrezi după status/curier
-  const n = orders.length;
-  const cnt = s => orders.filter(o=>o.ts===s).length;
-  const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
+  const n = filtered.length;
+  const cnt = s => filtered.filter(o=>o.ts===s).length;
+  const sum = ss => filtered.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
   const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sI=sum(['livrat']), sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
@@ -343,7 +341,7 @@ export default function Dashboard() {
   const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
 
   // Retururi reale în filtered = Shopify retur + Sameday detectate din Excel
-  const sdReturDetectat = orders.filter(o => o.courier==='sameday' && getSdStatus(o) === 'retur' && o.ts !== 'retur');
+  const sdReturDetectat = filtered.filter(o => o.courier==='sameday' && getSdStatus(o) === 'retur' && o.ts !== 'retur');
   const returTotal = retur + sdReturDetectat.length;
 
   const kpis = [
