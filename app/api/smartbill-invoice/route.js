@@ -179,7 +179,7 @@ export async function POST(request) {
       currency: order.currency || 'RON',
       language: 'RO',
       precision: 2,
-      useStock: true,  // ← descărcare gestiune activată
+      useStock: order.useStock === true,  // descărcare stoc — activat doar dacă setat explicit
       observations: `Comanda Shopify ${order.name}`,
       mentions: '',
       products,
@@ -280,3 +280,4 @@ export async function OPTIONS() {
     headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' },
   });
 }
+
