@@ -112,20 +112,52 @@ export async function POST(request) {
 
     const issueDate = new Date().toISOString().slice(0, 10);
 
-    const buildProduct = (item) => ({
-      name: (item.name || 'Produs').slice(0, 255),
-      code: item.sku || '',        // SKU = cod produs în gestiune SmartBill
-      isDiscount: false,
-      measuringUnitName: 'buc',
-      currency: order.currency || 'RON',
-      quantity: Math.max(1, parseInt(item.qty) || 1),
-      price: parseFloat(item.price) || 0,
-      isTaxIncluded: true,
-      taxName: 'Normala',
-      taxPercentage: 21,
-      isService: false,
-      saveToDb: true,              // salvează produsul în SmartBill dacă nu există
-    });
+    // Dacă useStock=true, preluăm produsele din gestiunea SmartBill după SKU
+    // Astfel numele de pe factură = numele din gestiune (nu din Shopify)
+    let warehouseProducts = {};
+    if (useStock && order.warehouseName) {
+      try {
+        const wpRes = await fetch(
+          `${BASE}/product/list?cif=${encodeURIComponent(cif)}&warehouseName=${encodeURIComponent(order.warehouseName)}&page=1&pageSize=500`,
+          { headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' }, cache: 'no-store' }
+        );
+        if (wpRes.ok) {
+          const wpData = await wpRes.json();
+          const list = wpData.products || wpData.list || [];
+          list.forEach(p => {
+            const code = (p.code || p.cod || '').trim();
+            if (code) warehouseProducts[code] = p;
+          });
+        }
+      } catch { /* non-critical */ }
+    }
+
+    const buildProduct = (item) => {
+      const sku = (item.sku || '').trim();
+      // Dacă avem gestiune și SKU → căutăm produsul în gestiune
+      const warehouseProd = (useStock && sku) ? warehouseProducts[sku] : null;
+
+      return {
+        // Dacă produsul există în gestiune → folosim NUMELE LUI (nu cel din Shopify)
+        // Altfel SmartBill nu poate face match și nu scade stocul
+        name: warehouseProd
+          ? (warehouseProd.name || warehouseProd.denumire || item.name || 'Produs').slice(0, 255)
+          : (item.name || 'Produs').slice(0, 255),
+        code: sku || '',
+        isDiscount: false,
+        measuringUnitName: warehouseProd
+          ? (warehouseProd.measuringUnitName || warehouseProd.unitateMasura || 'buc')
+          : 'buc',
+        currency: order.currency || 'RON',
+        quantity: Math.max(1, parseInt(item.qty) || 1),
+        price: parseFloat(item.price) || 0,
+        isTaxIncluded: true,
+        taxName: 'Normala',
+        taxPercentage: 21,
+        isService: false,
+        saveToDb: false,
+      };
+    };
 
     let products = (order.items || [])
       .filter(i => i.name && parseFloat(i.price) > 0)
@@ -297,3 +329,4 @@ export async function OPTIONS() {
     headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' },
   });
 }
+
