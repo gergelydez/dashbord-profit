@@ -319,6 +319,9 @@ export default function Dashboard() {
         body: JSON.stringify({
           email: sbEmail, token: sbToken, cif: sbCif,
           seriesName: order._seriesOverride || sbInvSeries || undefined,
+          // Date Shopify pentru marcare automată post-generare
+          shopifyDomain: ls.get('gx_d') || '',
+          shopifyToken:  ls.get('gx_t') || '',
           order: {
             id: order.id, name: order.name, client: order.client,
             address: order.address || '', city: order.oras || '',
@@ -327,6 +330,8 @@ export default function Dashboard() {
             currency: order.currency || 'RON',
             total: order.total,
             items: customItems || order.items || [],
+            // isPaid: dacă e paid cu card online, încasăm automat în SmartBill
+            isPaid: order.fin === 'paid',
           },
         }),
       });
@@ -339,9 +344,22 @@ export default function Dashboard() {
           : { error: `Server error ${res.status}` };
       }
       if (data.ok) {
-        setSbInvResults(prev => ({ ...prev, [order.id]: { ok: true, number: data.number, series: data.series } }));
+        setSbInvResults(prev => ({ ...prev, [order.id]: {
+          ok: true, number: data.number, series: data.series,
+          collected: data.collected, shopifyMarked: data.shopifyMarked,
+          invoiceUrl: data.invoiceUrl,
+        }}));
         setAllOrders(prev => prev.map(o => o.id === order.id
-          ? { ...o, hasInvoice: true, invoiceNumber: data.number, invoiceSeries: data.series } : o));
+          ? {
+              ...o,
+              hasInvoice: true,
+              invoiceNumber: data.number,
+              invoiceSeries: data.series,
+              invoiceUrl: data.invoiceUrl || o.invoiceUrl,
+              invoiceShort: data.invoiceUrl || o.invoiceShort,
+            }
+          : o
+        ));
       } else {
         setSbInvResults(prev => ({ ...prev, [order.id]: { ok: false, error: data.error } }));
       }
@@ -382,7 +400,9 @@ export default function Dashboard() {
   const disconnect = () => { setOrders([]); setConnected(false); setError(''); ls.del('gx_t'); };
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
-  // ── KPI — pe toate comenzile din perioadă (nu filtrate) ──
+  // ── KPI — pe toate comenzile din perioadă ──
+  // orders = comenzi create SAU livrate în intervalul selectat
+  // n = total distinct (pentru Azi poate include comenzi din alte zile livrate azi)
   const n = orders.length;
   const cnt = s => orders.filter(o=>o.ts===s).length;
   const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
@@ -394,20 +414,34 @@ export default function Dashboard() {
   const now = new Date();
   const todayStr = toISO(now);
 
-  // COD de încasat azi = comenzi LIVRATE în ultimele 48h GLS / 24h Sameday
-  // (rambursul ajunge la tine în această fereastră de timp)
+  // Ziua de acum 2 zile (ex: dacă azi e 26 → data = 24)
+  const twoDaysAgo = new Date(now); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  const twoDaysAgoStr = toISO(twoDaysAgo);
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = toISO(yesterday);
+
+  // isCOD = exclude comenzile plătite cu Shopify Payments (card online)
+  // financial_status 'paid' cu gateway 'shopify_payments' → plătit online
+  // Simplificat: exclude dacă fin==='paid' ȘI nu este ramburs (COD)
+  // GLS plătește rambursul după 2 zile lucrătoare de la livrare
+  // Dacă azi e 26, coletele livrate pe 24 → ramburs ajunge azi
   const codIncasatAzi = allOrders.filter(o => {
     if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
-    const diff = (now - new Date(o.fulfilledAt)) / 3600000;
-    if (o.courier === 'gls')     return diff <= 48;
-    if (o.courier === 'sameday') return diff <= 24;
-    return diff <= 48; // default
+    if (o.fin === 'paid') return false; // plătit online — nu e COD
+    const livrareStr = (o.fulfilledAt||'').slice(0,10);
+    // GLS: ramburs la 2 zile după livrare
+    if (o.courier === 'gls')     return livrareStr === twoDaysAgoStr;
+    // Sameday: ramburs la 1 zi după livrare
+    if (o.courier === 'sameday') return livrareStr === yesterdayStr;
+    return livrareStr === twoDaysAgoStr;
   });
   const sumCodIncasatAzi = codIncasatAzi.reduce((a,o) => a+o.total, 0);
 
-  // COD colete livrate azi = comenzi cu fulfilledAt = azi
+  // COD livrate azi = colete cu fulfilledAt = azi, exclude plătite online
   const codLivrateAzi = allOrders.filter(o =>
-    o.ts === 'livrat' && (o.fulfilledAt||'').slice(0,10) === todayStr
+    o.ts === 'livrat' &&
+    o.fin !== 'paid' &&
+    (o.fulfilledAt||'').slice(0,10) === todayStr
   );
   const sumCodLivrateAzi = codLivrateAzi.reduce((a,o) => a+o.total, 0);
 
@@ -675,16 +709,20 @@ export default function Dashboard() {
                   <div className="slbl">COD de încasat azi</div>
                   <div className="sv" style={{color:'#a855f7'}}>{fmt(sumCodIncasatAzi)} RON</div>
                   <div className="ssub">
-                    Livrate {'<'}48h GLS / {'<'}24h SD<br/>
-                    {codIncasatAzi.length} colete livrate recent
+                    GLS livrate pe {twoDaysAgoStr.split('-').reverse().join('.')}<br/>
+                    SD livrate pe {yesterdayStr.split('-').reverse().join('.')}<br/>
+                    {codIncasatAzi.length} colete · exclude plătite online
                   </div>
                 </div></div>
               )}
-              {sumCodLivrateAzi>0 && (
+              {(sumCodLivrateAzi>0||codLivrateAzi.length>0) && (
                 <div className="sc" style={{border:'1px solid #10b981',background:'#0f1419'}}><div className="si">📅</div><div>
                   <div className="slbl">COD livrate azi</div>
                   <div className="sv" style={{color:'#10b981'}}>{fmt(sumCodLivrateAzi)} RON</div>
-                  <div className="ssub">{codLivrateAzi.length} colete livrate în {todayStr.split('-').reverse().join('.')}</div>
+                  <div className="ssub">
+                    {codLivrateAzi.length} colete livrate în {todayStr.split('-').reverse().join('.')}<br/>
+                    Ramburs vine pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}
+                  </div>
                 </div></div>
               )}
               {sR>0 && (
@@ -852,7 +890,17 @@ export default function Dashboard() {
                           <td style={mobH}>{(()=>{
                             const invRes=sbInvResults[o.id];
                             const invLoading=sbInvLoading[o.id];
-                            if(invRes?.ok) return <span style={{fontSize:10,color:'#10b981',fontFamily:'monospace',fontWeight:700}}>✓ {invRes.series}{invRes.number}</span>;
+                            if(invRes?.ok) return (
+                              <div style={{display:'flex',flexDirection:'column',gap:1}}>
+                                <a href={invRes.invoiceUrl||'#'} target="_blank" rel="noopener noreferrer"
+                                  style={{fontSize:10,color:'#10b981',fontFamily:'monospace',fontWeight:700,textDecoration:'none'}}>
+                                  ✓ {invRes.series}{invRes.number} ↗
+                                </a>
+                                <span style={{fontSize:8,color:'#4a5568'}}>
+                                  {invRes.collected&&'💰 încasat · '}{invRes.shopifyMarked&&'🔗 Shopify ✓'}
+                                </span>
+                              </div>
+                            );
                             if(invRes?.error) return <div style={{display:'flex',flexDirection:'column',gap:2}}>
                               <span style={{fontSize:9,color:'#f43f5e',lineHeight:1.3}}>✗ {invRes.error.slice(0,60)}{invRes.error.length>60?'…':''}</span>
                               <button onClick={()=>openInvoiceModal(o)} style={{fontSize:8,background:'transparent',border:'1px solid #f43f5e',color:'#f43f5e',borderRadius:4,padding:'1px 5px',cursor:'pointer'}}>↺ Retry</button>
@@ -1026,4 +1074,3 @@ export default function Dashboard() {
     </>
   );
 }
-
