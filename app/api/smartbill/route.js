@@ -6,7 +6,6 @@ function makeAuth(email, token) {
   return Buffer.from(`${email.trim()}:${token.trim()}`).toString('base64');
 }
 
-// Obține seria implicită de facturi pentru un CIF
 async function getDefaultSeries(auth, cif) {
   const res = await fetch(`${BASE}/invoice/series?cif=${cif}`, {
     headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
@@ -15,19 +14,16 @@ async function getDefaultSeries(auth, cif) {
   if (!res.ok) return null;
   const data = await res.json();
   const list = data.list || data.invoiceSeries || [];
-  // Returnează prima serie activă
   return list.find(s => s.nextNumber)?.name || list[0]?.name || null;
 }
 
-// POST /api/smartbill-invoice
-// Body: { email, token, cif, seriesName?, order: { id, name, client, address, city, county, email, items, total, currency, createdAt } }
 export async function POST(request) {
   try {
     const body = await request.json();
     const { email, token, cif, seriesName, order } = body;
 
     if (!email || !token || !cif) {
-      return NextResponse.json({ error: 'Credențiale SmartBill lipsă (email, token, cif).' }, { status: 400 });
+      return NextResponse.json({ error: 'Credențiale SmartBill lipsă.' }, { status: 400 });
     }
     if (!order) {
       return NextResponse.json({ error: 'Date comandă lipsă.' }, { status: 400 });
@@ -35,37 +31,38 @@ export async function POST(request) {
 
     const auth = makeAuth(email, token);
 
-    // Dacă nu s-a specificat seria, o preluăm din API
     let series = seriesName;
     if (!series) {
       series = await getDefaultSeries(auth, cif);
       if (!series) {
-        return NextResponse.json({ error: 'Nu am putut detecta seria de facturi. Specifică seriesName în setări.' }, { status: 400 });
+        return NextResponse.json({ error: 'Nu am putut detecta seria de facturi.' }, { status: 400 });
       }
     }
 
     const issueDate = new Date().toISOString().slice(0, 10);
 
-    // Construiește produsele din line_items Shopify
-    const products = (order.items || []).map(item => ({
-      name: item.name || 'Produs',
+    const buildProduct = (item) => ({
+      name: (item.name || 'Produs').slice(0, 255),
       code: item.sku || '',
       isDiscount: false,
       measuringUnitName: 'buc',
       currency: order.currency || 'RON',
-      quantity: item.qty || item.quantity || 1,
+      quantity: Math.max(1, parseInt(item.qty) || 1),
       price: parseFloat(item.price) || 0,
       isTaxIncluded: true,
       taxName: 'Normala',
-      taxPercentage: 19,
+      taxPercentage: 21,
       isService: false,
       saveToDb: false,
-    }));
+    });
 
-    // Dacă nu există produse, adaugă comanda ca o linie cu totalul
+    let products = (order.items || [])
+      .filter(i => i.name && parseFloat(i.price) > 0)
+      .map(buildProduct);
+
     if (!products.length) {
-      products.push({
-        name: `Comandă ${order.name}`,
+      products = [{
+        name: `Comanda Shopify ${order.name}`,
         code: '',
         isDiscount: false,
         measuringUnitName: 'buc',
@@ -74,23 +71,23 @@ export async function POST(request) {
         price: parseFloat(order.total) || 0,
         isTaxIncluded: true,
         taxName: 'Normala',
-        taxPercentage: 19,
+        taxPercentage: 21,
         isService: false,
         saveToDb: false,
-      });
+      }];
     }
 
     const invoiceBody = {
       companyVatCode: cif,
       client: {
-        name: order.client || 'Client',
+        name: (order.client || 'Client').slice(0, 100),
         vatCode: '',
         regCom: '',
-        address: order.address || '',
+        address: (order.address || '').slice(0, 255),
         isTaxPayer: false,
         city: order.city || '',
         county: order.county || '',
-        country: order.country || 'Romania',
+        country: 'Romania',
         email: order.clientEmail || '',
         saveToDb: false,
       },
@@ -101,15 +98,9 @@ export async function POST(request) {
       language: 'RO',
       precision: 2,
       useStock: false,
-      observations: `Comandă Shopify ${order.name}`,
+      observations: `Comanda Shopify ${order.name}`,
       mentions: '',
       products,
-      // Plată ramburs (COD)
-      payment: {
-        isCash: false,
-        type: 'Ordin plata',
-        value: 0,
-      },
     };
 
     const res = await fetch(`${BASE}/invoice`, {
@@ -125,30 +116,24 @@ export async function POST(request) {
 
     const raw = await res.text();
     let data;
-    try { data = JSON.parse(raw); } catch { data = { raw: raw.slice(0, 300) }; }
+    try { data = JSON.parse(raw); } catch { data = { raw: raw.slice(0, 500) }; }
 
     if (!res.ok) {
+      const errMsg = data.errorText || data.message || data.error
+        || (data.raw ? data.raw : JSON.stringify(data).slice(0, 300));
       return NextResponse.json(
-        { error: `SmartBill ${res.status}: ${data.errorText || data.message || JSON.stringify(data).slice(0, 200)}` },
+        { error: `SmartBill ${res.status}: ${errMsg}` },
         { status: res.status }
       );
     }
 
-    // Răspuns succes: { series, number, ... }
-    return NextResponse.json({
-      ok: true,
-      series: data.series,
-      number: data.number,
-      invoiceNumber: data.number,
-      invoiceSeries: data.series,
-    });
+    return NextResponse.json({ ok: true, series: data.series, number: data.number });
 
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
 
-// GET /api/smartbill-invoice?email=&token=&cif= — listează seriile disponibile
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const email = searchParams.get('email');
@@ -169,11 +154,9 @@ export async function GET(request) {
     const raw = await res.text();
     let data;
     try { data = JSON.parse(raw); } catch { data = {}; }
-
     if (!res.ok) {
       return NextResponse.json({ error: `SmartBill ${res.status}` }, { status: res.status });
     }
-
     const list = data.list || data.invoiceSeries || [];
     return NextResponse.json({ series: list.map(s => s.name || s) });
   } catch (e) {
