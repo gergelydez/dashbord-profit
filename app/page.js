@@ -908,9 +908,15 @@ export default function Dashboard() {
                               );
                               // Eroare generare
                               if (invRes?.error) return (
-                                <span title={invRes.error} style={{fontSize:9,color:'#f43f5e',cursor:'help'}}>
-                                  ✗ Eroare
-                                </span>
+                                <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                                  <span style={{fontSize:9,color:'#f43f5e',lineHeight:1.3}}>
+                                    ✗ {invRes.error.slice(0, 60)}{invRes.error.length > 60 ? '…' : ''}
+                                  </span>
+                                  <button onClick={() => openInvoiceModal(o)}
+                                    style={{fontSize:8,background:'transparent',border:'1px solid #f43f5e',color:'#f43f5e',borderRadius:4,padding:'1px 5px',cursor:'pointer'}}>
+                                    ↺ Retry
+                                  </button>
+                                </div>
                               );
                               // Are deja factură din xConnector
                               if (o.hasInvoice) return (
@@ -1158,5 +1164,6 @@ export default function Dashboard() {
     </>
   );
 }
+
 
 
