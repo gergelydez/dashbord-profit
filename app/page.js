@@ -453,25 +453,26 @@ export default function Dashboard() {
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
   // isOnlinePayment — detectează comenzile plătite cu card online (Shopify Payments)
-  // SINGURA sursă 100% fiabilă: payment_gateway din Shopify
-  // Fallback pentru cache vechi (fără gateway):
-  //   fin='pending' → COD (Shopify Payments e mereu 'paid' instant)
-  //   fin='paid' + are fulfilledAt → COD confirmat de xConnector după livrare
-  //   fin='paid' + fără fulfilledAt → Shopify Payments (plătit dar nelivrat încă)
-  // IMPORTANT: după Resincronizează, gateway e disponibil și e 100% corect
+  // Logică finală confirmată:
+  // - gateway='shopify_payments' → Card (dacă disponibil)
+  // - fin='pending' → COD mereu
+  // - tag 'dispatched' (xConnector) → COD mereu (xConnector adaugă DOAR pe COD)
+  // - fin='paid' fără tag 'dispatched' → Shopify Payments
   const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
-    // 1. Gateway explicit — singurul 100% corect
+    // 1. Gateway explicit
     const gw = (o.gateway || '').toLowerCase();
     if (gw) return ONLINE_GW.some(g => gw.includes(g));
 
     // 2. pending → mereu COD
     if (o.fin === 'pending') return false;
 
-    // 3. paid fără gateway (cache vechi)
-    //    Cu fulfilledAt → COD (xConnector a marcat paid la livrare)
-    //    Fără fulfilledAt → Shopify Payments (plătit dar nelivrat)
-    if (o.fin === 'paid') return !o.fulfilledAt;
+    // 3. Tag 'dispatched' → COD (xConnector îl pune DOAR pe comenzile COD)
+    const tags = (o.tags || '').toLowerCase();
+    if (tags.includes('dispatched')) return false;
+
+    // 4. paid fără 'dispatched' → Shopify Payments
+    if (o.fin === 'paid') return true;
 
     return false;
   };
@@ -808,7 +809,7 @@ export default function Dashboard() {
                 {/* Debug temporar — arată fiecare comandă livrată azi */}
                 {allOrders.filter(o => o.ts==='livrat' && (o.fulfilledAt||'').slice(0,10)===todayStr).map(o => (
                   <div key={o.id} style={{fontSize:8,color:'#4a5568',marginTop:2,lineHeight:1.4}}>
-                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · gw:{o.gateway||'?'} · fin:{o.fin} · cr:{(o.createdAt||'').slice(5,10)}
+                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · {(o.tags||'').toLowerCase().includes('dispatched')?'🏷dispatched':'no-tag'} · fin:{o.fin}
                   </div>
                 ))}
               </div></div>
