@@ -451,29 +451,6 @@ export default function Dashboard() {
   const { from: rangeFrom, to: rangeTo } = getRange(preset, customFrom, customTo);
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
-  const livrateOrders = allOrders.filter(o =>
-    o.ts === 'livrat' && o.fulfilledAt &&
-    new Date(o.fulfilledAt) >= rangeFromD &&
-    new Date(o.fulfilledAt) <= rangeToD
-  );
-  const livrate = livrateOrders.length;
-  const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
-  const sICOD  = livrateOrders.filter(o => !isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
-  const sIPaid = livrateOrders.filter(o =>  isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
-
-  // ── COD calculations ──
-  const now = new Date();
-  const todayStr = toISO(now);
-
-  // Ziua de acum 2 zile (ex: dacă azi e 26 → data = 24)
-  const twoDaysAgo = new Date(now); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-  const twoDaysAgoStr = toISO(twoDaysAgo);
-  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = toISO(yesterday);
-
-  // isCOD: exclude comenzi plătite cu card online la checkout
-  // COD = xConnector captured → gateway: 'cash', 'cod', 'manual', sau altele non-Shopify
-  // Card online = gateway: 'shopify_payments'
   // isOnlinePayment — detectează comenzile plătite cu card online (Shopify Payments)
   // Logică în ordine de precizie:
   // 1. Gateway explicit (după resincronizare) → cel mai sigur
@@ -507,6 +484,30 @@ export default function Dashboard() {
 
     return false;
   };
+
+  const livrateOrders = allOrders.filter(o =>
+    o.ts === 'livrat' && o.fulfilledAt &&
+    new Date(o.fulfilledAt) >= rangeFromD &&
+    new Date(o.fulfilledAt) <= rangeToD
+  );
+  const livrate = livrateOrders.length;
+  const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
+  const sICOD  = livrateOrders.filter(o => !isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
+  const sIPaid = livrateOrders.filter(o =>  isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
+
+  // ── COD calculations ──
+  const now = new Date();
+  const todayStr = toISO(now);
+
+  // Ziua de acum 2 zile (ex: dacă azi e 26 → data = 24)
+  const twoDaysAgo = new Date(now); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  const twoDaysAgoStr = toISO(twoDaysAgo);
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = toISO(yesterday);
+
+  // isCOD: exclude comenzi plătite cu card online la checkout
+  // COD = xConnector captured → gateway: 'cash', 'cod', 'manual', sau altele non-Shopify
+  // Card online = gateway: 'shopify_payments'
 
   // COD de încasat azi:
   // GLS: livrate pe data de 2 zile în urmă (ex: azi 26 → livrate pe 24)
