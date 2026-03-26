@@ -3,9 +3,9 @@ import { useState, useEffect, useCallback } from 'react';
 
 // Helper safe pentru localStorage — returnează null pe server (SSR/prerender)
 const ls = {
-  get: (k) => { try { return typeof window !== 'undefined' ? ls.get(k) : null; } catch { return null; } },
-  set: (k, v) => { try { if (typeof window !== 'undefined') ls.set(k, v); } catch {} },
-  del: (k) => { try { if (typeof window !== 'undefined') ls.del(k); } catch {} },
+  get: (k) => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
+  set: (k, v) => { try { if (typeof window !== 'undefined') localStorage.setItem(k, v); } catch {} },
+  del: (k) => { try { if (typeof window !== 'undefined') localStorage.removeItem(k); } catch {} },
 };
 
 const PS = 25;
@@ -143,6 +143,11 @@ export default function Dashboard() {
   const [sbBulkLoading, setSbBulkLoading] = useState(false);
   // Modal editare produse înainte de generare factură
   const [invoiceModal, setInvoiceModal] = useState(null); // { order, editItems }
+  // Credențiale SmartBill — inline, aceleași chei ca pagina Profit
+  const [sbEmail, setSbEmail] = useState(() => ls.get('sb_email') || '');
+  const [sbToken, setSbToken] = useState(() => ls.get('sb_token') || '');
+  const [sbCif, setSbCif]     = useState(() => ls.get('sb_cif')   || '');
+  const [sbCredsOpen, setSbCredsOpen] = useState(false);
 
   /* Date range — filtrare LOCALĂ, fără request nou */
   const [preset, setPreset]         = useState('last_30');
@@ -335,11 +340,8 @@ export default function Dashboard() {
 
   // ── Deschide modalul de editare produse înainte de generare ──
   const openInvoiceModal = (order) => {
-    const email = ls.get('sb_email');
-    const token = ls.get('sb_token');
-    const cif   = ls.get('sb_cif');
-    if (!email || !token || !cif) {
-      alert('Configurează credențialele SmartBill în pagina Profit mai întâi!');
+    if (!sbEmail || !sbToken || !sbCif) {
+      setSbCredsOpen(true);
       return;
     }
     // Pregătește items editabili — clone deep ca să nu modificăm originalul
@@ -351,10 +353,7 @@ export default function Dashboard() {
 
   // ── Generează factura cu items (editați sau originali) ──
   const generateInvoice = async (order, customItems) => {
-    const email = ls.get('sb_email');
-    const token = ls.get('sb_token');
-    const cif   = ls.get('sb_cif');
-    if (!email || !token || !cif) return;
+    if (!sbEmail || !sbToken || !sbCif) { setSbCredsOpen(true); return; }
 
     setInvoiceModal(null);
     setSbInvLoading(prev => ({ ...prev, [order.id]: true }));
@@ -365,7 +364,7 @@ export default function Dashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email, token, cif,
+          email: sbEmail, token: sbToken, cif: sbCif,
           seriesName: sbInvSeries || undefined,
           order: {
             id: order.id,
@@ -417,6 +416,8 @@ export default function Dashboard() {
     const token = ls.get('sb_token');
     const cif   = ls.get('sb_cif');
     if (!email || !token || !cif) return;
+    // Sincronizează state-ul dacă credențialele există în localStorage
+    setSbEmail(email); setSbToken(token); setSbCif(cif);
     try {
       const res = await fetch(`/api/smartbill-invoice?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&cif=${encodeURIComponent(cif)}`);
       const data = await res.json();
@@ -1111,9 +1112,51 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* ── MODAL CREDENȚIALE SMARTBILL ── */}
+      {sbCredsOpen && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.8)',zIndex:1100,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={e => { if(e.target===e.currentTarget) setSbCredsOpen(false); }}>
+          <div style={{background:'#0f1419',border:'1px solid #f97316',borderRadius:14,width:'100%',maxWidth:420,padding:24}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+              <div style={{fontSize:14,fontWeight:700,color:'#e8edf2'}}>🔑 Credențiale SmartBill</div>
+              <button onClick={() => setSbCredsOpen(false)}
+                style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'3px 9px',cursor:'pointer'}}>✕</button>
+            </div>
+            <div style={{fontSize:11,color:'#94a3b8',marginBottom:14,lineHeight:1.6,background:'rgba(59,130,246,.07)',borderRadius:7,padding:'8px 11px'}}>
+              Aceleași credențiale ca în pagina <strong style={{color:'#3b82f6'}}>Profit → SmartBill</strong>.<br/>
+              Se salvează automat și sunt reutilizate.
+            </div>
+            {[
+              {label:'Email cont SmartBill', val:sbEmail, set:setSbEmail, key:'sb_email', type:'text', ph:'email@firma.ro'},
+              {label:'Token API SmartBill', val:sbToken, set:setSbToken, key:'sb_token', type:'password', ph:'token din contul SmartBill'},
+              {label:'CIF firmă', val:sbCif, set:setSbCif, key:'sb_cif', type:'text', ph:'RO12345678'},
+            ].map(({label,val,set,key,type,ph}) => (
+              <div key={key} style={{marginBottom:12}}>
+                <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{label}</div>
+                <input type={type} value={val} placeholder={ph}
+                  onChange={e => set(e.target.value)}
+                  style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'8px 11px',borderRadius:7,fontSize:12,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}
+                />
+              </div>
+            ))}
+            <button
+              onClick={() => {
+                ls.set('sb_email', sbEmail);
+                ls.set('sb_token', sbToken);
+                ls.set('sb_cif', sbCif);
+                setSbCredsOpen(false);
+                loadSbSeries();
+              }}
+              disabled={!sbEmail || !sbToken || !sbCif}
+              style={{width:'100%',background:'#f97316',color:'white',border:'none',borderRadius:9,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer',marginTop:4,opacity:(!sbEmail||!sbToken||!sbCif)?.5:1}}>
+              💾 Salvează și continuă
+            </button>
+          </div>
+        </div>
+      )}
+
     </>
   );
 }
-
 
 
