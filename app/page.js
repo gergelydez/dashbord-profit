@@ -822,6 +822,12 @@ export default function Dashboard() {
                     ? <>{codLivrateAzi.length} COD din {codLivrateAziTotal} livrate · ramburs pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}</>
                     : `Nicio livrare COD pe ${todayStr.split('-').reverse().join('.')}`}
                 </div>
+                {/* Debug temporar — arată fiecare comandă livrată azi */}
+                {allOrders.filter(o => o.ts==='livrat' && (o.fulfilledAt||'').slice(0,10)===todayStr).map(o => (
+                  <div key={o.id} style={{fontSize:8,color:'#4a5568',marginTop:2,lineHeight:1.4}}>
+                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · fin:{o.fin} · paid:{(o.paidAt||'').slice(5,10)} · cr:{(o.createdAt||'').slice(5,10)}
+                  </div>
+                ))}
               </div></div>
               {sR>0 && (
                 <div className="sc sc3"><div className="si">↩️</div><div>
@@ -1008,7 +1014,7 @@ export default function Dashboard() {
                           <td title={o.client}>{o.client||'—'}</td>
                           <td style={mobH}>{o.oras||'—'}</td>
                           <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
-                          <td><span className={`mg ${mc}`} title={`gateway: ${o.gateway||'N/A'} | fin: ${o.fin}`}>{fmt(o.total)} RON</span></td>
+                          <td><span className={`mg ${mc}`} title={`fin:${o.fin} | paidAt:${(o.paidAt||'').slice(0,10)} | created:${(o.createdAt||'').slice(0,10)} | fulfilled:${(o.fulfilledAt||'').slice(0,10)} | gw:${o.gateway||'?'} | COD:${!isOnlinePayment(o)}`}>{fmt(o.total)} RON</span></td>
                           <td style={mobH}>{(()=>{
                             const invRes=sbInvResults[o.id];
                             const invLoading=sbInvLoading[o.id];
@@ -1232,3 +1238,4 @@ export default function Dashboard() {
     </>
   );
 }
+
