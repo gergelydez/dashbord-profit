@@ -458,8 +458,8 @@ export default function Dashboard() {
   );
   const livrate = livrateOrders.length;
   const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
-  const sICOD  = livrateOrders.filter(o => o.gateway !== 'shopify_payments').reduce((a,o)=>a+o.total,0);
-  const sIPaid = livrateOrders.filter(o => o.gateway === 'shopify_payments').reduce((a,o)=>a+o.total,0);
+  const sICOD  = livrateOrders.filter(o => !isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
+  const sIPaid = livrateOrders.filter(o =>  isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
 
   // ── COD calculations ──
   const now = new Date();
@@ -474,10 +474,38 @@ export default function Dashboard() {
   // isCOD: exclude comenzi plătite cu card online la checkout
   // COD = xConnector captured → gateway: 'cash', 'cod', 'manual', sau altele non-Shopify
   // Card online = gateway: 'shopify_payments'
+  // isOnlinePayment — detectează comenzile plătite cu card online (Shopify Payments)
+  // Logică în ordine de precizie:
+  // 1. Gateway explicit (după resincronizare) → cel mai sigur
+  // 2. Logică temporală (funcționează și cu cache vechi):
+  //    - fin==='pending' → mereu COD (Shopify Payments e imediat 'paid')
+  //    - fin==='paid' + createdAt și fulfilledAt în aceeași zi (±1 zi) → Shopify Payments
+  //    - fin==='paid' + fulfilledAt la mai mult de 1 zi după createdAt → COD confirmat
+  //    - fin==='paid' + fără fulfilledAt → probabil Shopify Payments
+  const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
+    // 1. Gateway explicit
     const gw = (o.gateway || '').toLowerCase();
-    if (!gw) return false; // date vechi fără gateway → nu excludem
-    return gw === 'shopify_payments' || gw === 'stripe' || gw === 'paypal';
+    if (gw) return ONLINE_GW.some(g => gw.includes(g));
+
+    // 2. pending = mereu COD
+    if (o.fin === 'pending') return false;
+
+    // 3. paid + logică temporală
+    if (o.fin === 'paid' && o.createdAt) {
+      const createdDate = (o.createdAt||'').slice(0,10);
+      if (o.fulfilledAt) {
+        const fulfilledDate = (o.fulfilledAt||'').slice(0,10);
+        const diffZile = (new Date(fulfilledDate) - new Date(createdDate)) / 86400000;
+        // COD: livrat la 2+ zile după plasare
+        // Shopify Payments: livrat în aceeași zi sau ziua următoare
+        return diffZile <= 1;
+      }
+      // paid fără fulfilledAt → Shopify Payments (nu a ajuns la curier)
+      return true;
+    }
+
+    return false;
   };
 
   // COD de încasat azi:
