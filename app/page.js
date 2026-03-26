@@ -344,11 +344,10 @@ export default function Dashboard() {
       setSbCredsOpen(true);
       return;
     }
-    // Pregătește items editabili — clone deep ca să nu modificăm originalul
     const editItems = (order.items && order.items.length)
       ? order.items.map(i => ({ ...i }))
       : [{ name: order.prods || 'Produs', sku: '', qty: 1, price: order.total }];
-    setInvoiceModal({ order, editItems });
+    setInvoiceModal({ order, editItems, seriesInput: sbInvSeries });
   };
 
   // ── Generează factura cu items (editați sau originali) ──
@@ -365,7 +364,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: sbEmail, token: sbToken, cif: sbCif,
-          seriesName: sbInvSeries || undefined,
+          seriesName: order._seriesOverride || sbInvSeries || undefined,
           order: {
             id: order.id,
             name: order.name,
@@ -453,6 +452,29 @@ export default function Dashboard() {
   const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sI=sum(['livrat']), sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
+
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0,10);
+  // COD așteptat = comenzi în tranzit/outfor create în ultimele 48h (GLS) sau 24h (Sameday)
+  const codGls48h = orders.filter(o => {
+    if (!['incurs','outfor'].includes(o.ts)) return false;
+    if (o.courier !== 'gls') return false;
+    const diff = (now - new Date(o.createdAt)) / 3600000;
+    return diff <= 48;
+  });
+  const codSd24h = orders.filter(o => {
+    if (!['incurs','outfor'].includes(o.ts)) return false;
+    if (o.courier !== 'sameday') return false;
+    const diff = (now - new Date(o.createdAt)) / 3600000;
+    return diff <= 24;
+  });
+  const codAzi = orders.filter(o => {
+    if (!['incurs','outfor','livrat'].includes(o.ts)) return false;
+    return (o.createdAt||'').slice(0,10) === todayStr;
+  });
+  const sumCodGls = codGls48h.reduce((a,o) => a+o.total, 0);
+  const sumCodSd  = codSd24h.reduce((a,o) => a+o.total, 0);
+  const sumCodAzi = codAzi.reduce((a,o) => a+o.total, 0);
 
   // Courier breakdown — pe `orders` (toate din perioadă, fără filtru status/curier)
   const glsOrders    = orders.filter(o => o.courier === 'gls');
@@ -739,20 +761,80 @@ export default function Dashboard() {
 
             <div className="srow">
               {sI>0 && <div className="sc sc1"><div className="si">💰</div><div><div className="slbl">Încasat</div><div className="sv">{fmt(sI)} RON</div><div className="ssub">{livrate} comenzi livrate</div></div></div>}
-              {sA>0 && <div className="sc sc2"><div className="si">🚚</div><div><div className="slbl">COD în așteptare</div><div className="sv">{fmt(sA)} RON</div><div className="ssub">{incurs+outfor} comenzi în drum</div></div></div>}
+              {sA>0 && <div className="sc sc2"><div className="si">🚚</div><div>
+                <div className="slbl">COD total în drum</div>
+                <div className="sv">{fmt(sA)} RON</div>
+                <div className="ssub">{incurs+outfor} comenzi</div>
+              </div></div>}
+              {(sumCodGls>0||sumCodSd>0) && <div className="sc" style={{border:'1px solid #f59e0b',background:'#0f1419'}}><div className="si">⏰</div><div>
+                <div className="slbl">COD sosește în curând</div>
+                <div className="sv" style={{color:'#f59e0b'}}>{fmt(sumCodGls+sumCodSd)} RON</div>
+                <div className="ssub">
+                  {sumCodGls>0 && <span>GLS 48h: <strong>{fmt(sumCodGls)}</strong> ({codGls48h.length} cmd)</span>}
+                  {sumCodGls>0 && sumCodSd>0 && ' · '}
+                  {sumCodSd>0 && <span>SD 24h: <strong>{fmt(sumCodSd)}</strong> ({codSd24h.length} cmd)</span>}
+                </div>
+              </div></div>}
+              {sumCodAzi>0 && <div className="sc" style={{border:'1px solid #10b981',background:'#0f1419'}}><div className="si">📅</div><div>
+                <div className="slbl">COD comenzi azi</div>
+                <div className="sv" style={{color:'#10b981'}}>{fmt(sumCodAzi)} RON</div>
+                <div className="ssub">{codAzi.length} comenzi create azi</div>
+              </div></div>}
               {sR>0 && <div className="sc sc3"><div className="si">↩️</div><div><div className="slbl">Pierdut retur/anulat</div><div className="sv">{fmt(sR)} RON</div><div className="ssub">{retur+anulate} comenzi</div></div></div>}
             </div>
 
 
             {/* INVOICE WARNING */}
             {noInvoicePaid.length > 0 && (
-              <div className="inv-warn" style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-                <span style={{fontSize:16}}>⚠️</span>
-                <span style={{color:'#f59e0b',flex:1}}><strong>{noInvoicePaid.length} comenzi plătite fără factură:</strong> {noInvoicePaid.map(o=>o.name).join(', ')}</span>
-                <a href="https://cloud.smartbill.ro/auth/login/?next=/core/integrari/" target="_blank" rel="noopener noreferrer"
-                  style={{background:'#f59e0b',color:'#000',padding:'5px 12px',borderRadius:7,fontSize:11,fontWeight:700,textDecoration:'none',whiteSpace:'nowrap'}}>
-                  📄 Deschide SmartBill
-                </a>
+              <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12}}>
+                <div style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+                  <span style={{fontSize:16}}>⚠️</span>
+                  <span style={{color:'#f59e0b',flex:1,lineHeight:1.5}}>
+                    <strong>{noInvoicePaid.length} comenzi plătite fără factură: </strong>
+                    {noInvoicePaid.map(o => (
+                      <button key={o.id} onClick={() => {
+                        setFilter('toate'); setCourierFilter('toate'); setSearch(o.name);
+                        setTimeout(() => { document.querySelector('.tscroll')?.scrollIntoView({behavior:'smooth',block:'start'}); }, 100);
+                      }} style={{background:'transparent',border:'none',color:'#f97316',fontWeight:700,cursor:'pointer',fontSize:12,padding:'0 2px',textDecoration:'underline'}}>
+                        {o.name}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:5}}>
+                    <span style={{fontSize:10,color:'#94a3b8'}}>Serie:</span>
+                    {sbInvSeriesList.length > 0
+                      ? <select value={sbInvSeries}
+                          onChange={e => { setSbInvSeries(e.target.value); ls.set('sb_inv_series', e.target.value); }}
+                          style={{background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'4px 8px',borderRadius:6,fontSize:11}}>
+                          {sbInvSeriesList.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      : <input value={sbInvSeries} placeholder="ex: GLA"
+                          onChange={e => { setSbInvSeries(e.target.value); ls.set('sb_inv_series', e.target.value); }}
+                          style={{width:70,background:'#161d24',border:'1px solid #f59e0b',color:'#e8edf2',padding:'4px 8px',borderRadius:6,fontSize:11,outline:'none'}} />
+                    }
+                  </div>
+                  <button onClick={generateAllInvoices} disabled={sbBulkLoading||!sbInvSeries}
+                    style={{background:'#f59e0b',color:'#000',padding:'5px 14px',borderRadius:7,fontSize:11,fontWeight:700,border:'none',cursor:'pointer',opacity:(sbBulkLoading||!sbInvSeries)?.5:1}}>
+                    {sbBulkLoading ? '⟳ Generare...' : `⚡ Generează toate (${noInvoicePaid.filter(o=>!sbInvResults[o.id]?.ok).length})`}
+                  </button>
+                  <a href="https://cloud.smartbill.ro/auth/login/?next=/core/integrari/" target="_blank" rel="noopener noreferrer"
+                    style={{color:'#f59e0b',padding:'5px 8px',fontSize:11,textDecoration:'none',border:'1px solid rgba(245,158,11,.3)',borderRadius:7}}>
+                    📄 SmartBill
+                  </a>
+                </div>
+                {Object.values(sbInvResults).some(r=>r) && (
+                  <div style={{marginTop:8,fontSize:10,display:'flex',flexWrap:'wrap',gap:4}}>
+                    {noInvoicePaid.map(o => {
+                      const r = sbInvResults[o.id];
+                      if (!r) return null;
+                      return <span key={o.id} style={{padding:'2px 7px',borderRadius:10,background:r.ok?'rgba(16,185,129,.15)':'rgba(244,63,94,.15)',color:r.ok?'#10b981':'#f43f5e'}}>
+                        {o.name}: {r.ok ? `✓ ${r.series}${r.number}` : `✗ ${(r.error||'').slice(0,50)}`}
+                      </span>;
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -996,13 +1078,29 @@ export default function Dashboard() {
           <div style={{background:'#0f1419',border:'1px solid #243040',borderRadius:14,width:'100%',maxWidth:560,maxHeight:'90vh',overflow:'auto',padding:'20px'}}>
 
             {/* Header modal */}
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
               <div>
                 <div style={{fontSize:14,fontWeight:700,color:'#e8edf2'}}>📄 Factură {invoiceModal.order.name}</div>
                 <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{invoiceModal.order.client} · {fmt(invoiceModal.order.total)} RON</div>
               </div>
               <button onClick={() => setInvoiceModal(null)}
                 style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:13}}>✕</button>
+            </div>
+            {/* Serie factură — editabilă direct în modal */}
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,padding:'8px 10px',background:'#080c10',borderRadius:8,border:'1px solid #243040'}}>
+              <span style={{fontSize:11,color:'#94a3b8',whiteSpace:'nowrap'}}>Serie factură:</span>
+              {sbInvSeriesList.length > 0
+                ? <select value={invoiceModal.seriesInput||sbInvSeries}
+                    onChange={e => setInvoiceModal(prev=>({...prev,seriesInput:e.target.value}))}
+                    style={{flex:1,background:'#161d24',border:'1px solid #3b82f6',color:'#e8edf2',padding:'5px 8px',borderRadius:6,fontSize:12}}>
+                    {sbInvSeriesList.map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                : <input value={invoiceModal.seriesInput||''}
+                    onChange={e => setInvoiceModal(prev=>({...prev,seriesInput:e.target.value}))}
+                    placeholder="ex: GLA, FACT..."
+                    style={{flex:1,background:'#161d24',border:'1px solid #3b82f6',color:'#e8edf2',padding:'5px 8px',borderRadius:6,fontSize:12,outline:'none'}} />
+              }
+              {!(invoiceModal.seriesInput||sbInvSeries) && <span style={{fontSize:9,color:'#f43f5e'}}>⚠ obligatoriu</span>}
             </div>
 
             {/* Info client */}
@@ -1120,8 +1218,18 @@ export default function Dashboard() {
                   Anulează
                 </button>
                 <button
-                  onClick={() => generateInvoice(invoiceModal.order, invoiceModal.editItems)}
-                  style={{background:'#f97316',color:'white',border:'none',borderRadius:8,padding:'8px 20px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                  onClick={() => {
+                    if (invoiceModal.seriesInput) {
+                      setSbInvSeries(invoiceModal.seriesInput);
+                      ls.set('sb_inv_series', invoiceModal.seriesInput);
+                    }
+                    generateInvoice(
+                      {...invoiceModal.order, _seriesOverride: invoiceModal.seriesInput || sbInvSeries},
+                      invoiceModal.editItems
+                    );
+                  }}
+                  disabled={!(invoiceModal.seriesInput||sbInvSeries)}
+                  style={{background:'#f97316',color:'white',border:'none',borderRadius:8,padding:'8px 20px',cursor:'pointer',fontSize:12,fontWeight:700,opacity:!(invoiceModal.seriesInput||sbInvSeries)?.5:1}}>
                   ⚡ Generează Factura
                 </button>
               </div>
