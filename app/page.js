@@ -381,7 +381,20 @@ export default function Dashboard() {
           },
         }),
       });
-      const data = await res.json();
+
+      // Prinde HTML în loc de JSON (404 = ruta lipsă din repo)
+      const rawText = await res.text();
+      let data;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        if (res.status === 404) {
+          data = { error: 'Ruta /api/smartbill-invoice lipsește. Adaugă fișierul app/api/smartbill-invoice/route.js în repo și redeploy.' };
+        } else {
+          data = { error: `Server error ${res.status} — răspuns invalid (nu JSON)` };
+        }
+      }
+
       if (data.ok) {
         setSbInvResults(prev => ({ ...prev, [order.id]: { ok: true, number: data.number, series: data.series } }));
         setAllOrders(prev => prev.map(o => o.id === order.id
