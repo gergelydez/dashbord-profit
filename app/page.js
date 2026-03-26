@@ -142,6 +142,8 @@ export default function Dashboard() {
   const [sbUseStock, setSbUseStock]         = useState(() => ls.get('sb_use_stock') === 'true');
   const [sbWarehouse, setSbWarehouse]       = useState(() => ls.get('sb_warehouse') || '');
   const [sbWarehouseList, setSbWarehouseList] = useState([]);
+  // livreazaMode: 'create' (implicit) | 'fulfilled' (livrate în perioadă)
+  const [deliveryMode, setDeliveryMode] = useState('create');
 
   const [preset, setPreset]         = useState('last_30');
   const [customFrom, setCustomFrom] = useState('');
@@ -195,7 +197,29 @@ export default function Dashboard() {
     setPg(1);
   }, []);
 
+  // Filtrare specială după fulfilledAt — pentru butonul "Livrate azi/ieri"
+  // orders = comenzile create în perioadă
+  // livrateInPeriod = toate comenzile livrate în perioada selectată (din allOrders)
+  const getLivrateInPeriod = useCallback((p, cf, ct) => {
+    const { from, to } = getRange(p, cf, ct);
+    const fromD = new Date(from + 'T00:00:00');
+    const toD   = new Date(to   + 'T23:59:59');
+    return allOrders.filter(o => {
+      if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
+      const f = new Date(o.fulfilledAt);
+      return f >= fromD && f <= toD;
+    });
+  }, [allOrders]);
+
   useEffect(() => { applyFilters(orders, filter, search, sortCol, sortDir, courierFilter); }, [orders, filter, search, sortCol, sortDir, courierFilter, applyFilters]);
+
+  // Când modul e 'fulfilled', recalculează tabelul după fulfilledAt
+  useEffect(() => {
+    if (deliveryMode === 'fulfilled') {
+      const livrate = getLivrateInPeriod(preset, customFrom, customTo);
+      applyFilters(livrate, 'livrat', search, sortCol, sortDir, courierFilter);
+    }
+  }, [deliveryMode, preset, customFrom, customTo, getLivrateInPeriod, search, sortCol, sortDir, courierFilter, applyFilters]);
 
   const fetchOrders = async () => {
     if (!domain || !token) { setError('Completează domeniul și tokenul!'); return; }
@@ -223,6 +247,7 @@ export default function Dashboard() {
 
   const handlePreset = (id) => {
     setPreset(id);
+    setDeliveryMode('create'); // resetează modul la schimbarea perioadei
     if (id !== 'custom') applyDateFilter(allOrders, id, customFrom, customTo);
   };
 
@@ -863,9 +888,28 @@ export default function Dashboard() {
             )}
 
             <div className="stitle">Comenzi</div>
-            <div className="frow">
+            <div className="frow" style={{marginBottom:5}}>
+              {/* Toggle mod: comenzi create vs livrate în perioadă */}
+              <div style={{display:'flex',gap:4,background:'#0a0f14',border:'1px solid #1e2a35',borderRadius:20,padding:'3px 4px',marginRight:4}}>
+                <button
+                  className={`fb ${deliveryMode==='create'?'active':''}`}
+                  style={{padding:'3px 10px',fontSize:10,borderRadius:16}}
+                  onClick={()=>{setDeliveryMode('create'); applyFilters(orders,filter,search,sortCol,sortDir,courierFilter);}}>
+                  📦 Create
+                </button>
+                <button
+                  className={`fb ${deliveryMode==='fulfilled'?'active':''}`}
+                  style={{padding:'3px 10px',fontSize:10,borderRadius:16}}
+                  onClick={()=>setDeliveryMode('fulfilled')}>
+                  🚚 Livrate
+                </button>
+              </div>
               {['toate','livrat','incurs','outfor','retur','anulat','pending'].map(f=>(
-                <button key={f} className={`fb ${filter===f?'active':''}`} onClick={()=>setFilter(f)}>
+                <button key={f} className={`fb ${filter===f?'active':''}`}
+                  onClick={()=>{
+                    setFilter(f);
+                    if(deliveryMode==='create') applyFilters(orders,f,search,sortCol,sortDir,courierFilter);
+                  }}>
                   {f==='toate'?'Toate':STATUS_MAP[f]?.label||f}
                 </button>
               ))}
@@ -873,6 +917,11 @@ export default function Dashboard() {
                 <input type="text" placeholder="Caută…" value={search} onChange={e=>setSearch(e.target.value)} />
               </div>
             </div>
+            {deliveryMode==='fulfilled' && (
+              <div style={{fontSize:10,color:'#f59e0b',marginBottom:7,padding:'4px 10px',background:'rgba(245,158,11,.07)',borderRadius:7}}>
+                📬 Afișezi comenzile <strong>livrate</strong> în {rangeLabel} — {filtered.length} comenzi
+              </div>
+            )}
             <div className="courier-row">
               <span className="courier-lbl">🚚</span>
               {[{id:'toate',label:'Toți'},{id:'sameday',label:'🚀 SD'},{id:'gls',label:'📦 GLS'},{id:'other',label:'Altul'},{id:'unknown',label:'?'}].map(({id,label})=>{
@@ -1012,9 +1061,9 @@ export default function Dashboard() {
                 </span>
               </label>
               {sbUseStock && <span style={{fontSize:9,color:'#f59e0b'}}>⚠ necesită gestiune configurată</span>}
-            </label>
+            </div>
             {sbUseStock && (
-              <div style={{marginTop:6,display:'flex',alignItems:'center',gap:8}}>
+              <div style={{marginTop:-8,marginBottom:12,display:'flex',alignItems:'center',gap:8,padding:'6px 10px',background:'#080c10',borderRadius:8,border:'1px solid #243040'}}>
                 <span style={{fontSize:10,color:'#94a3b8',whiteSpace:'nowrap'}}>Gestiune:</span>
                 {sbWarehouseList.length > 0
                   ? <select value={sbWarehouse}
@@ -1028,7 +1077,6 @@ export default function Dashboard() {
                 }
               </div>
             )}
-            </div>
             <div style={{background:'#080c10',borderRadius:8,padding:'10px 12px',marginBottom:16,fontSize:11,color:'#94a3b8',lineHeight:1.7}}>
               <strong style={{color:'#e8edf2'}}>Client:</strong> {invoiceModal.order.client}<br/>
               {invoiceModal.order.oras&&<><strong style={{color:'#e8edf2'}}>Oraș:</strong> {invoiceModal.order.oras}<br/></>}
@@ -1132,4 +1180,3 @@ export default function Dashboard() {
     </>
   );
 }
-
