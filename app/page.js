@@ -453,27 +453,16 @@ export default function Dashboard() {
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
   // isOnlinePayment — detectează comenzile plătite cu card online (Shopify Payments)
-  // Logică finală confirmată:
-  // - gateway='shopify_payments' → Card (dacă disponibil)
-  // - fin='pending' → COD mereu
-  // - tag 'dispatched' (xConnector) → COD mereu (xConnector adaugă DOAR pe COD)
-  // - fin='paid' fără tag 'dispatched' → Shopify Payments
+  // payment_gateway = singura sursă 100% fiabilă
+  // Acum vine corect din orders route (request individual per comandă paid)
   const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
-    // 1. Gateway explicit
     const gw = (o.gateway || '').toLowerCase();
+    // Gateway disponibil → folosim direct
     if (gw) return ONLINE_GW.some(g => gw.includes(g));
-
-    // 2. pending → mereu COD
+    // Fallback: pending = COD mereu
     if (o.fin === 'pending') return false;
-
-    // 3. Tag 'dispatched' → COD (xConnector îl pune DOAR pe comenzile COD)
-    const tags = (o.tags || '').toLowerCase();
-    if (tags.includes('dispatched')) return false;
-
-    // 4. paid fără 'dispatched' → Shopify Payments
-    if (o.fin === 'paid') return true;
-
+    // paid fără gateway → nu știm, tratăm ca COD (mai bine să includem decât să excludem)
     return false;
   };
 
@@ -809,7 +798,7 @@ export default function Dashboard() {
                 {/* Debug temporar — arată fiecare comandă livrată azi */}
                 {allOrders.filter(o => o.ts==='livrat' && (o.fulfilledAt||'').slice(0,10)===todayStr).map(o => (
                   <div key={o.id} style={{fontSize:8,color:'#4a5568',marginTop:2,lineHeight:1.4}}>
-                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · {(o.tags||'').toLowerCase().includes('dispatched')?'🏷dispatched':'no-tag'} · fin:{o.fin}
+                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · gw:{o.gateway||'?'} · fin:{o.fin}
                   </div>
                 ))}
               </div></div>
