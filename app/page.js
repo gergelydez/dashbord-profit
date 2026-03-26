@@ -139,7 +139,9 @@ export default function Dashboard() {
   const [sbToken, setSbToken] = useState(() => ls.get('sb_token') || '');
   const [sbCif, setSbCif]     = useState(() => ls.get('sb_cif')   || '');
   const [sbCredsOpen, setSbCredsOpen] = useState(false);
-  const [sbUseStock, setSbUseStock] = useState(() => ls.get('sb_use_stock') === 'true');
+  const [sbUseStock, setSbUseStock]         = useState(() => ls.get('sb_use_stock') === 'true');
+  const [sbWarehouse, setSbWarehouse]       = useState(() => ls.get('sb_warehouse') || '');
+  const [sbWarehouseList, setSbWarehouseList] = useState([]);
 
   const [preset, setPreset]         = useState('last_30');
   const [customFrom, setCustomFrom] = useState('');
@@ -329,7 +331,8 @@ export default function Dashboard() {
             items: customItems || order.items || [],
             // isPaid: dacă e paid cu card online, încasăm automat în SmartBill
             isPaid: order.fin === 'paid',
-            useStock: sbUseStock,  // descărcare gestiune SmartBill
+            useStock: sbUseStock,
+            warehouseName: sbUseStock ? sbWarehouse : '',
           },
         }),
       });
@@ -392,25 +395,39 @@ export default function Dashboard() {
         setSbInvSeriesList(data.series);
         if (!sbInvSeries) setSbInvSeries(data.series[0]);
       }
+      if (data.warehouses?.length) {
+        setSbWarehouseList(data.warehouses);
+        if (!sbWarehouse) setSbWarehouse(data.warehouses[0]);
+      }
     } catch {}
   };
 
   const disconnect = () => { setOrders([]); setConnected(false); setError(''); ls.del('gx_t'); };
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
-  // ── KPI — pe toate comenzile din perioadă ──
-  // orders = comenzi create SAU livrate în intervalul selectat
-  // n = total distinct (pentru Azi poate include comenzi din alte zile livrate azi)
+  // ── KPI ──
+  // orders = comenzi CREATE în intervalul selectat (pentru Total, Tranzit, Retur, Neexpediate)
   const n = orders.length;
   const cnt = s => orders.filter(o=>o.ts===s).length;
   const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
-  const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
+  const incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
-  const sI    = sum(['livrat']);
-  // Split COD vs card online — folosește gateway dacă disponibil
-  const sICOD = orders.filter(o => o.ts==='livrat' && o.gateway !== 'shopify_payments').reduce((a,o)=>a+o.total,0);
-  const sIPaid= orders.filter(o => o.ts==='livrat' && o.gateway === 'shopify_payments').reduce((a,o)=>a+o.total,0);
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
+
+  // "Livrate" = comenzi cu fulfilledAt în intervalul selectat (nu createdAt!)
+  // Astfel "Azi" arată 8 colete livrate azi, "Ieri" arată 5 livrate ieri
+  const { from: rangeFrom, to: rangeTo } = getRange(preset, customFrom, customTo);
+  const rangeFromD = new Date(rangeFrom + 'T00:00:00');
+  const rangeToD   = new Date(rangeTo   + 'T23:59:59');
+  const livrateOrders = allOrders.filter(o =>
+    o.ts === 'livrat' && o.fulfilledAt &&
+    new Date(o.fulfilledAt) >= rangeFromD &&
+    new Date(o.fulfilledAt) <= rangeToD
+  );
+  const livrate = livrateOrders.length;
+  const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
+  const sICOD  = livrateOrders.filter(o => o.gateway !== 'shopify_payments').reduce((a,o)=>a+o.total,0);
+  const sIPaid = livrateOrders.filter(o => o.gateway === 'shopify_payments').reduce((a,o)=>a+o.total,0);
 
   // ── COD calculations ──
   const now = new Date();
@@ -423,13 +440,12 @@ export default function Dashboard() {
   const yesterdayStr = toISO(yesterday);
 
   // isCOD: exclude comenzi plătite cu card online la checkout
-  // Detectare precisă: gateway === 'shopify_payments'
-  // Fallback pentru date vechi (fără gateway): financial_status === 'paid' AND fulfillment_status === 'fulfilled'
-  // COD = ramburs = clientul plătește la livrare → gateway !== 'shopify_payments'
+  // COD = xConnector captured → gateway: 'cash', 'cod', 'manual', sau altele non-Shopify
+  // Card online = gateway: 'shopify_payments'
   const isOnlinePayment = (o) => {
-    if (o.gateway) return o.gateway === 'shopify_payments';
-    // Fallback: dacă nu avem gateway, nu excludem (mai bine să arătăm mai mult decât să pierdem)
-    return false;
+    const gw = (o.gateway || '').toLowerCase();
+    if (!gw) return false; // date vechi fără gateway → nu excludem
+    return gw === 'shopify_payments' || gw === 'stripe' || gw === 'paypal';
   };
 
   // COD de încasat azi:
@@ -452,6 +468,11 @@ export default function Dashboard() {
     (o.fulfilledAt||'').slice(0,10) === todayStr
   );
   const sumCodLivrateAzi = codLivrateAzi.reduce((a,o) => a+o.total, 0);
+  // Și pentru cardul "Livrate azi" COD (folosit în cardul verde din srow)
+  const codLivrateAziTotal = allOrders.filter(o =>
+    o.ts === 'livrat' &&
+    (o.fulfilledAt||'').slice(0,10) === todayStr
+  ).length;
 
   // COD total în drum (din perioada selectată)
   const codInDrum = orders.filter(o => ['incurs','outfor'].includes(o.ts));
@@ -729,7 +750,7 @@ export default function Dashboard() {
                 <div className="sv" style={{color: sumCodLivrateAzi>0?'#10b981':'#4a5568'}}>{fmt(sumCodLivrateAzi)} RON</div>
                 <div className="ssub">
                   {codLivrateAzi.length > 0
-                    ? <>{codLivrateAzi.length} colete · ramburs pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}</>
+                    ? <>{codLivrateAzi.length} COD din {codLivrateAziTotal} livrate · ramburs pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}</>
                     : `Nicio livrare COD pe ${todayStr.split('-').reverse().join('.')}`}
                 </div>
               </div></div>
@@ -990,7 +1011,23 @@ export default function Dashboard() {
                   Descarcă stoc din gestiune SmartBill
                 </span>
               </label>
-              {sbUseStock && <span style={{fontSize:9,color:'#f59e0b'}}>⚠ necesită gestiune configurată în SmartBill</span>}
+              {sbUseStock && <span style={{fontSize:9,color:'#f59e0b'}}>⚠ necesită gestiune configurată</span>}
+            </label>
+            {sbUseStock && (
+              <div style={{marginTop:6,display:'flex',alignItems:'center',gap:8}}>
+                <span style={{fontSize:10,color:'#94a3b8',whiteSpace:'nowrap'}}>Gestiune:</span>
+                {sbWarehouseList.length > 0
+                  ? <select value={sbWarehouse}
+                      onChange={e=>{setSbWarehouse(e.target.value);ls.set('sb_warehouse',e.target.value);}}
+                      style={{flex:1,background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'4px 8px',borderRadius:6,fontSize:11}}>
+                      {sbWarehouseList.map(w=><option key={w} value={w}>{w}</option>)}
+                    </select>
+                  : <input value={sbWarehouse} placeholder="ex: Depozit principal"
+                      onChange={e=>{setSbWarehouse(e.target.value);ls.set('sb_warehouse',e.target.value);}}
+                      style={{flex:1,background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'4px 8px',borderRadius:6,fontSize:11,outline:'none'}} />
+                }
+              </div>
+            )}
             </div>
             <div style={{background:'#080c10',borderRadius:8,padding:'10px 12px',marginBottom:16,fontSize:11,color:'#94a3b8',lineHeight:1.7}}>
               <strong style={{color:'#e8edf2'}}>Client:</strong> {invoiceModal.order.client}<br/>
@@ -1095,3 +1132,4 @@ export default function Dashboard() {
     </>
   );
 }
+
