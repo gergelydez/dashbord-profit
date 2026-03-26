@@ -167,6 +167,10 @@ export default function Dashboard() {
         const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
         applyDateFilter(parsed, 'last_30', '', '');
+        // Verifică dacă datele vechi au câmpul gateway
+        // Dacă nu → arată avertisment să resincronizeze
+        const hasGateway = parsed.some(o => o.gateway !== undefined);
+        if (!hasGateway) setError('⚠️ Date vechi în cache — apasă Resincronizează pentru detecție corectă COD vs card online.');
       } catch {}
     }
   }, []);
@@ -236,6 +240,7 @@ export default function Dashboard() {
       const processed = data.orders.map(procOrder);
       setAllOrders(processed);
       setConnected(true);
+      setError(''); // șterge avertismentul de cache vechi
       const now = new Date();
       setLastFetch(now);
       ls.set('gx_orders_all', JSON.stringify(processed));
@@ -964,7 +969,7 @@ export default function Dashboard() {
                           <td title={o.client}>{o.client||'—'}</td>
                           <td style={mobH}>{o.oras||'—'}</td>
                           <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
-                          <td><span className={`mg ${mc}`}>{fmt(o.total)} RON</span></td>
+                          <td><span className={`mg ${mc}`} title={`gateway: ${o.gateway||'N/A'} | fin: ${o.fin}`}>{fmt(o.total)} RON</span></td>
                           <td style={mobH}>{(()=>{
                             const invRes=sbInvResults[o.id];
                             const invLoading=sbInvLoading[o.id];
