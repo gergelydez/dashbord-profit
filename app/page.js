@@ -87,6 +87,7 @@ function procOrder(o) {
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
+    gateway: o.payment_gateway || '',  // 'shopify_payments' = card online
     currency: o.presentment_currency || o.currency || 'RON',
     address: [addr.address1, addr.address2].filter(Boolean).join(', '),
     county: addr.province || '',
@@ -200,7 +201,7 @@ export default function Dashboard() {
     ls.set('gx_t', token);
     setLoading(true); setError('');
     try {
-      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes';
+      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes,payment_gateway';
       const yearAgo = toISO(new Date(new Date().setFullYear(new Date().getFullYear() - 1)));
       const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${yearAgo}T00:00:00&fields=${fields}`;
       const res = await fetch(url);
@@ -405,12 +406,10 @@ export default function Dashboard() {
   const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
   const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
-  // sI = total încasat (livrate) — include și plătite online și COD
-  // sICOD = doar rambursuri (COD) — exclude plătite cu card online
-  // sIPaid = plătite online deja încasate
   const sI    = sum(['livrat']);
-  const sICOD = orders.filter(o => o.ts==='livrat' && o.fin!=='paid').reduce((a,o)=>a+o.total,0);
-  const sIPaid= orders.filter(o => o.ts==='livrat' && o.fin==='paid').reduce((a,o)=>a+o.total,0);
+  // Split COD vs card online — folosește gateway dacă disponibil
+  const sICOD = orders.filter(o => o.ts==='livrat' && o.gateway !== 'shopify_payments').reduce((a,o)=>a+o.total,0);
+  const sIPaid= orders.filter(o => o.ts==='livrat' && o.gateway === 'shopify_payments').reduce((a,o)=>a+o.total,0);
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
   // ── COD calculations ──
@@ -423,18 +422,24 @@ export default function Dashboard() {
   const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = toISO(yesterday);
 
-  // isCOD = exclude comenzile plătite cu Shopify Payments (card online)
-  // financial_status 'paid' cu gateway 'shopify_payments' → plătit online
-  // Simplificat: exclude dacă fin==='paid' ȘI nu este ramburs (COD)
-  // GLS plătește rambursul după 2 zile lucrătoare de la livrare
-  // Dacă azi e 26, coletele livrate pe 24 → ramburs ajunge azi
+  // isCOD: exclude comenzi plătite cu card online la checkout
+  // Detectare precisă: gateway === 'shopify_payments'
+  // Fallback pentru date vechi (fără gateway): financial_status === 'paid' AND fulfillment_status === 'fulfilled'
+  // COD = ramburs = clientul plătește la livrare → gateway !== 'shopify_payments'
+  const isOnlinePayment = (o) => {
+    if (o.gateway) return o.gateway === 'shopify_payments';
+    // Fallback: dacă nu avem gateway, nu excludem (mai bine să arătăm mai mult decât să pierdem)
+    return false;
+  };
+
+  // COD de încasat azi:
+  // GLS: livrate pe data de 2 zile în urmă (ex: azi 26 → livrate pe 24)
+  // Sameday: livrate ieri (ex: azi 26 → livrate pe 25)
   const codIncasatAzi = allOrders.filter(o => {
     if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
-    if (o.fin === 'paid') return false; // plătit online — nu e COD
+    if (isOnlinePayment(o)) return false;
     const livrareStr = (o.fulfilledAt||'').slice(0,10);
-    // GLS: ramburs la 2 zile după livrare
     if (o.courier === 'gls')     return livrareStr === twoDaysAgoStr;
-    // Sameday: ramburs la 1 zi după livrare
     if (o.courier === 'sameday') return livrareStr === yesterdayStr;
     return livrareStr === twoDaysAgoStr;
   });
@@ -443,7 +448,7 @@ export default function Dashboard() {
   // COD livrate azi = colete cu fulfilledAt = azi, exclude plătite online
   const codLivrateAzi = allOrders.filter(o =>
     o.ts === 'livrat' &&
-    o.fin !== 'paid' &&
+    !isOnlinePayment(o) &&
     (o.fulfilledAt||'').slice(0,10) === todayStr
   );
   const sumCodLivrateAzi = codLivrateAzi.reduce((a,o) => a+o.total, 0);
@@ -698,9 +703,9 @@ export default function Dashboard() {
                   <div className="slbl">Încasat total</div>
                   <div className="sv">{fmt(sI)} RON</div>
                   <div className="ssub">
-                    {livrate} livrate · {sICOD>0&&<span>COD: <strong>{fmt(sICOD)}</strong></span>}
-                    {sIPaid>0&&sICOD>0&&' · '}
-                    {sIPaid>0&&<span>Card: <strong>{fmt(sIPaid)}</strong></span>}
+                    {livrate} livrate
+                    {sICOD>0 && <> · COD: <strong style={{color:'#f97316'}}>{fmt(sICOD)}</strong></>}
+                    {sIPaid>0 && <> · Card: <strong style={{color:'#10b981'}}>{fmt(sIPaid)}</strong></>}
                   </div>
                 </div></div>
               )}
@@ -1090,4 +1095,3 @@ export default function Dashboard() {
     </>
   );
 }
-
