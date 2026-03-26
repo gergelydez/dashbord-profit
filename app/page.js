@@ -138,6 +138,7 @@ export default function Dashboard() {
   const [sbToken, setSbToken] = useState(() => ls.get('sb_token') || '');
   const [sbCif, setSbCif]     = useState(() => ls.get('sb_cif')   || '');
   const [sbCredsOpen, setSbCredsOpen] = useState(false);
+  const [sbUseStock, setSbUseStock] = useState(() => ls.get('sb_use_stock') === 'true');
 
   const [preset, setPreset]         = useState('last_30');
   const [customFrom, setCustomFrom] = useState('');
@@ -327,6 +328,7 @@ export default function Dashboard() {
             items: customItems || order.items || [],
             // isPaid: dacă e paid cu card online, încasăm automat în SmartBill
             isPaid: order.fin === 'paid',
+            useStock: sbUseStock,  // descărcare gestiune SmartBill
           },
         }),
       });
@@ -972,6 +974,19 @@ export default function Dashboard() {
               }
               {!(invoiceModal.seriesInput||sbInvSeries)&&<span style={{fontSize:9,color:'#f43f5e'}}>⚠ obligatoriu</span>}
             </div>
+            {/* Toggle descărcare stoc */}
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,padding:'8px 10px',background:'#080c10',borderRadius:8,border:'1px solid #243040'}}>
+              <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',flex:1}}>
+                <div onClick={()=>{setSbUseStock(v=>{ls.set('sb_use_stock',String(!v));return !v;})}}
+                  style={{width:32,height:18,borderRadius:9,background:sbUseStock?'#10b981':'#243040',position:'relative',cursor:'pointer',transition:'background .2s',flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:7,background:'white',position:'absolute',top:2,left:sbUseStock?16:2,transition:'left .2s'}}/>
+                </div>
+                <span style={{fontSize:11,color:sbUseStock?'#10b981':'#94a3b8'}}>
+                  Descarcă stoc din gestiune SmartBill
+                </span>
+              </label>
+              {sbUseStock && <span style={{fontSize:9,color:'#f59e0b'}}>⚠ necesită gestiune configurată în SmartBill</span>}
+            </div>
             <div style={{background:'#080c10',borderRadius:8,padding:'10px 12px',marginBottom:16,fontSize:11,color:'#94a3b8',lineHeight:1.7}}>
               <strong style={{color:'#e8edf2'}}>Client:</strong> {invoiceModal.order.client}<br/>
               {invoiceModal.order.oras&&<><strong style={{color:'#e8edf2'}}>Oraș:</strong> {invoiceModal.order.oras}<br/></>}
@@ -1075,3 +1090,4 @@ export default function Dashboard() {
     </>
   );
 }
+
