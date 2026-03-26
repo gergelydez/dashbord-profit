@@ -453,36 +453,43 @@ export default function Dashboard() {
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
   // isOnlinePayment — detectează comenzile plătite cu card online (Shopify Payments)
-  // Logică în ordine de precizie:
-  // 1. Gateway explicit (după resincronizare) → cel mai sigur
-  // 2. Logică temporală (funcționează și cu cache vechi):
-  //    - fin==='pending' → mereu COD (Shopify Payments e imediat 'paid')
-  //    - fin==='paid' + createdAt și fulfilledAt în aceeași zi (±1 zi) → Shopify Payments
-  //    - fin==='paid' + fulfilledAt la mai mult de 1 zi după createdAt → COD confirmat
-  //    - fin==='paid' + fără fulfilledAt → probabil Shopify Payments
+  // Regula exactă (confirmată de utilizator):
+  // - Shopify Payments: processed_at (paidAt) = data plasării comenzii (createdAt)
+  //   clientul a plătit cu cardul la checkout → paid imediat
+  // - COD: processed_at (paidAt) = data livrării (fulfilledAt)
+  //   xConnector marchează paid când GLS confirmă rambursul, deci la livrare
+  // Concluzie: dacă paidAt ≈ createdAt → card online / dacă paidAt ≈ fulfilledAt → COD
   const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
-    // 1. Gateway explicit
+    // 1. Gateway explicit (cel mai sigur, după resincronizare)
     const gw = (o.gateway || '').toLowerCase();
     if (gw) return ONLINE_GW.some(g => gw.includes(g));
 
-    // 2. pending = mereu COD
+    // 2. pending → mereu COD
     if (o.fin === 'pending') return false;
 
-    // 3. paid + logică temporală
-    if (o.fin === 'paid' && o.createdAt) {
-      const createdDate = (o.createdAt||'').slice(0,10);
-      if (o.fulfilledAt) {
-        const fulfilledDate = (o.fulfilledAt||'').slice(0,10);
-        const diffZile = (new Date(fulfilledDate) - new Date(createdDate)) / 86400000;
-        // COD: livrat la 2+ zile după plasare
-        // Shopify Payments: livrat în aceeași zi sau ziua următoare
-        return diffZile <= 1;
-      }
-      // paid fără fulfilledAt → Shopify Payments (nu a ajuns la curier)
-      return true;
+    // 3. Logica paidAt: compară data plății cu data creării vs data livrării
+    if (o.fin === 'paid' && o.paidAt && o.createdAt) {
+      const paidDate      = o.paidAt.slice(0, 10);
+      const createdDate   = o.createdAt.slice(0, 10);
+      const fulfilledDate = (o.fulfilledAt || '').slice(0, 10);
+
+      // paidAt = ziua creării → plătit la checkout = Shopify Payments
+      if (paidDate === createdDate) return true;
+
+      // paidAt = ziua livrării → COD confirmat de xConnector
+      if (fulfilledDate && paidDate === fulfilledDate) return false;
+
+      // paidAt diferit de ambele → ziua mai apropiată decide
+      const diffCreare  = Math.abs(new Date(paidDate) - new Date(createdDate)) / 86400000;
+      const diffLivrare = fulfilledDate
+        ? Math.abs(new Date(paidDate) - new Date(fulfilledDate)) / 86400000
+        : Infinity;
+      return diffCreare <= diffLivrare;
     }
 
+    // 4. paid fără paidAt (cache vechi fără processed_at)
+    // → nu avem suficiente date, presupunem COD (mai bine să over-count COD)
     return false;
   };
 
