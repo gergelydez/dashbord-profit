@@ -1,6 +1,13 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 
+// Helper safe pentru localStorage — returnează null pe server (SSR/prerender)
+const ls = {
+  get: (k) => { try { return typeof window !== 'undefined' ? ls.get(k) : null; } catch { return null; } },
+  set: (k, v) => { try { if (typeof window !== 'undefined') ls.set(k, v); } catch {} },
+  del: (k) => { try { if (typeof window !== 'undefined') ls.del(k); } catch {} },
+};
+
 const PS = 25;
 const STATUS_MAP = {
   livrat:  { label: '✅ Livrat' },
@@ -119,19 +126,19 @@ export default function Dashboard() {
   // sdAwbMap = { [awb]: 'livrat'|'retur'|'incurs' } — din Excel export Sameday eAWB
   // Salvat permanent în localStorage, acumulează date din mai multe exporturi
   const [sdAwbMap, setSdAwbMap] = useState(() => {
-    try { const s = localStorage.getItem('sd_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+    try { const s = ls.get('sd_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
   });
-  const [sdDone, setSdDone]     = useState(() => { try { return !!localStorage.getItem('sd_awb_map'); } catch { return false; } });
+  const [sdDone, setSdDone]     = useState(() => { try { return !!ls.get('sd_awb_map'); } catch { return false; } });
   const [sdError, setSdError]   = useState('');
   const [sdLoading, setSdLoading] = useState(false);
-  const [sdFiles, setSdFiles]   = useState(() => { try { return JSON.parse(localStorage.getItem('sd_files') || '[]'); } catch { return []; } });
+  const [sdFiles, setSdFiles]   = useState(() => { try { return JSON.parse(ls.get('sd_files') || '[]'); } catch { return []; } });
   // Filtru curier pentru tabel
   const [courierFilter, setCourierFilter] = useState('toate');
 
   // Generare facturi SmartBill
   const [sbInvLoading, setSbInvLoading] = useState({}); // { [orderId]: true/false }
   const [sbInvResults, setSbInvResults] = useState({}); // { [orderId]: { ok, number, series, error } }
-  const [sbInvSeries, setSbInvSeries]   = useState(() => localStorage.getItem('sb_inv_series') || '');
+  const [sbInvSeries, setSbInvSeries]   = useState(() => ls.get('sb_inv_series') || '');
   const [sbInvSeriesList, setSbInvSeriesList] = useState([]);
   const [sbBulkLoading, setSbBulkLoading] = useState(false);
   // Modal editare produse înainte de generare factură
@@ -146,8 +153,8 @@ export default function Dashboard() {
   const [lastFetch, setLastFetch]   = useState(null);
 
   useEffect(() => {
-    const t = localStorage.getItem('gx_t');
-    const d = localStorage.getItem('gx_d');
+    const t = ls.get('gx_t');
+    const d = ls.get('gx_d');
     if (t) setToken(t);
     if (d) setDomain(d);
     // sdReturAwbs și sdFiles se restaurează automat în useState initializer
@@ -155,13 +162,13 @@ export default function Dashboard() {
     setTimeout(loadSbSeries, 500);
 
     // Restaurează comenzile salvate din sesiunea anterioară
-    const saved = localStorage.getItem('gx_orders_all');
+    const saved = ls.get('gx_orders_all');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         setAllOrders(parsed);
         setConnected(true);
-        const ts = localStorage.getItem('gx_fetch_time');
+        const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
         applyDateFilter(parsed, 'last_30', '', '');
       } catch {}
@@ -198,8 +205,8 @@ export default function Dashboard() {
   /* Descarcă TOATE comenzile o singură dată (fără filtru dată) */
   const fetchOrders = async () => {
     if (!domain || !token) { setError('Completează domeniul și tokenul!'); return; }
-    localStorage.setItem('gx_d', domain);
-    localStorage.setItem('gx_t', token);
+    ls.set('gx_d', domain);
+    ls.set('gx_t', token);
     setLoading(true); setError('');
     try {
       const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes';
@@ -214,8 +221,8 @@ export default function Dashboard() {
       setConnected(true);
       const now = new Date();
       setLastFetch(now);
-      localStorage.setItem('gx_orders_all', JSON.stringify(processed));
-      localStorage.setItem('gx_fetch_time', now.toISOString());
+      ls.set('gx_orders_all', JSON.stringify(processed));
+      ls.set('gx_fetch_time', now.toISOString());
       // Aplică filtrul curent pe datele proaspăt descărcate
       applyDateFilter(processed, preset, customFrom, customTo);
     } catch (e) { setError('Eroare: ' + e.message); }
@@ -291,8 +298,8 @@ export default function Dashboard() {
         setSdAwbMap(newMap);
         setSdFiles(newFiles);
         setSdDone(true);
-        localStorage.setItem('sd_awb_map', JSON.stringify(newMap));
-        localStorage.setItem('sd_files', JSON.stringify(newFiles));
+        ls.set('sd_awb_map', JSON.stringify(newMap));
+        ls.set('sd_files', JSON.stringify(newFiles));
         setSdLoading(false);
       });
     };
@@ -313,8 +320,8 @@ export default function Dashboard() {
     setSdFiles([]);
     setSdDone(false);
     setSdError('');
-    localStorage.removeItem('sd_awb_map');
-    localStorage.removeItem('sd_files');
+    ls.del('sd_awb_map');
+    ls.del('sd_files');
   };
 
   // Returnează statusul real pentru un ordin Sameday.
@@ -328,9 +335,9 @@ export default function Dashboard() {
 
   // ── Deschide modalul de editare produse înainte de generare ──
   const openInvoiceModal = (order) => {
-    const email = localStorage.getItem('sb_email');
-    const token = localStorage.getItem('sb_token');
-    const cif   = localStorage.getItem('sb_cif');
+    const email = ls.get('sb_email');
+    const token = ls.get('sb_token');
+    const cif   = ls.get('sb_cif');
     if (!email || !token || !cif) {
       alert('Configurează credențialele SmartBill în pagina Profit mai întâi!');
       return;
@@ -344,9 +351,9 @@ export default function Dashboard() {
 
   // ── Generează factura cu items (editați sau originali) ──
   const generateInvoice = async (order, customItems) => {
-    const email = localStorage.getItem('sb_email');
-    const token = localStorage.getItem('sb_token');
-    const cif   = localStorage.getItem('sb_cif');
+    const email = ls.get('sb_email');
+    const token = ls.get('sb_token');
+    const cif   = ls.get('sb_cif');
     if (!email || !token || !cif) return;
 
     setInvoiceModal(null);
@@ -406,9 +413,9 @@ export default function Dashboard() {
 
   // Încarcă seriile disponibile când se detectează credențiale SmartBill
   const loadSbSeries = async () => {
-    const email = localStorage.getItem('sb_email');
-    const token = localStorage.getItem('sb_token');
-    const cif   = localStorage.getItem('sb_cif');
+    const email = ls.get('sb_email');
+    const token = ls.get('sb_token');
+    const cif   = ls.get('sb_cif');
     if (!email || !token || !cif) return;
     try {
       const res = await fetch(`/api/smartbill-invoice?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&cif=${encodeURIComponent(cif)}`);
@@ -420,7 +427,7 @@ export default function Dashboard() {
     } catch {}
   };
 
-  const disconnect = () => { setOrders([]); setConnected(false); setError(''); localStorage.removeItem('gx_t'); };
+  const disconnect = () => { setOrders([]); setConnected(false); setError(''); ls.del('gx_t'); };
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
   // KPI-urile se calculează pe `filtered` — se actualizează când filtrezi după curier sau status
