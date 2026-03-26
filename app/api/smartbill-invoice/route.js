@@ -17,7 +17,22 @@ async function getDefaultSeries(auth, cif) {
   return list.find(s => s.nextNumber)?.name || list[0]?.name || null;
 }
 
-// Încearcă să colecteze (încaseze) o factură
+// Construiește URL-ul facturii din răspunsul API SmartBill
+// SmartBill returnează în răspuns câmpul 'url' sau 'documentUrl' — îl folosim direct
+// Fallback: construim URL-ul de vizualizare din cloud
+function buildInvoiceUrl(invData, cif) {
+  // 1. URL direct din răspunsul SmartBill (cel mai fiabil)
+  if (invData.url) return invData.url;
+  if (invData.documentUrl) return invData.documentUrl;
+  if (invData.invoiceUrl) return invData.invoiceUrl;
+  // 2. Fallback — URL de vizualizare din cloud SmartBill
+  // Format corect: /core/factura/vizualizeaza/?cif=X&series=Y&number=Z
+  if (invData.series && invData.number) {
+    return `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(cif)}&series=${encodeURIComponent(invData.series)}&number=${encodeURIComponent(invData.number)}`;
+  }
+  return '';
+}
+
 async function collectInvoice(auth, cif, series, number, value) {
   const body = {
     companyVatCode: cif,
@@ -25,7 +40,7 @@ async function collectInvoice(auth, cif, series, number, value) {
     number: String(number),
     paymentDate: new Date().toISOString().slice(0, 10),
     paymentValue: parseFloat(value) || 0,
-    isCash: false, // ramburs = numerar, dar în SmartBill marcăm ca "altă metodă"
+    isCash: false,
     type: 'Chitanta',
   };
   const res = await fetch(`${BASE}/invoice/paymentlist`, {
@@ -43,14 +58,9 @@ async function collectInvoice(auth, cif, series, number, value) {
   return { ok: res.ok, data };
 }
 
-// Notează factura în Shopify ca note_attribute (identic cu xConnector)
-async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invoiceSeries, invoiceNumber, smartbillCif }) {
+async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invoiceSeries, invoiceNumber, invoiceUrl }) {
   if (!shopifyDomain || !shopifyToken || !orderId) return { ok: false, error: 'Date Shopify lipsă' };
 
-  // Construim URL-ul facturii SmartBill (format standard)
-  const invoiceUrl = `https://cloud.smartbill.ro/document/factura?cif=${smartbillCif}&series=${invoiceSeries}&number=${invoiceNumber}`;
-
-  // Obținem note_attributes existente
   const getRes = await fetch(`https://${shopifyDomain}/admin/api/2024-01/orders/${orderId}.json?fields=note_attributes,tags`, {
     headers: { 'X-Shopify-Access-Token': shopifyToken },
     cache: 'no-store',
@@ -59,17 +69,18 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
   const orderData = await getRes.json();
   const existingAttrs = orderData.order?.note_attributes || [];
 
-  // Construim note_attributes noi (păstrăm existente, adăugăm/actualizăm facturile)
-  const newAttrs = existingAttrs.filter(a =>
-    !['xconnector-invoice-url','xconnector-invoice-short-url','invoice-number','invoice-series'].includes((a.name||'').toLowerCase())
-  );
+  // Păstrăm atributele existente, actualizăm doar cele legate de factură
+  const newAttrs = existingAttrs.filter(a => {
+    const n = (a.name||'').toLowerCase();
+    return !['xconnector-invoice-url','xconnector-invoice-short-url','invoice-number','invoice-series'].includes(n);
+  });
+
   newAttrs.push(
     { name: 'xconnector-invoice-url', value: invoiceUrl },
     { name: 'invoice-number', value: String(invoiceNumber) },
     { name: 'invoice-series', value: invoiceSeries },
   );
 
-  // Adăugăm tag 'invoiced' dacă nu există
   const existingTags = (orderData.order?.tags || '').split(',').map(t => t.trim()).filter(Boolean);
   if (!existingTags.includes('invoiced')) existingTags.push('invoiced');
 
@@ -88,10 +99,9 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
     }),
     cache: 'no-store',
   });
-  const updateData = await updateRes.json();
-  if (!updateRes.ok) return { ok: false, error: `Shopify PUT ${updateRes.status}` };
 
-  return { ok: true, invoiceUrl };
+  if (!updateRes.ok) return { ok: false, error: `Shopify PUT ${updateRes.status}` };
+  return { ok: true };
 }
 
 export async function POST(request) {
@@ -112,13 +122,14 @@ export async function POST(request) {
     if (!series) {
       series = await getDefaultSeries(auth, cif);
       if (!series) {
-        return NextResponse.json({ error: 'Nu am putut detecta seria de facturi. Completează câmpul "Serie" înainte de generare.' }, { status: 400 });
+        return NextResponse.json({
+          error: 'Nu am putut detecta seria de facturi. Completează câmpul "Serie" înainte de generare.'
+        }, { status: 400 });
       }
     }
 
     const issueDate = new Date().toISOString().slice(0, 10);
 
-    // Construiește produsele cu SKU pentru descărcare gestiune
     const buildProduct = (item) => {
       const prod = {
         name: (item.name || 'Produs').slice(0, 255),
@@ -133,7 +144,6 @@ export async function POST(request) {
         isService: false,
         saveToDb: false,
       };
-      // SKU — necesar pentru descărcare gestiune
       if (item.sku) prod.code = item.sku;
       return prod;
     };
@@ -179,13 +189,15 @@ export async function POST(request) {
       currency: order.currency || 'RON',
       language: 'RO',
       precision: 2,
-      useStock: order.useStock === true,  // descărcare stoc — activat doar dacă setat explicit
+      // useStock + warehouseName: descărcare gestiune
+      // Necesită gestiunea configurată în SmartBill și warehouseName exact
+      useStock: order.useStock === true && !!order.warehouseName,
+      ...(order.useStock && order.warehouseName ? { warehouseName: order.warehouseName } : {}),
       observations: `Comanda Shopify ${order.name}`,
       mentions: '',
       products,
     };
 
-    // ── Generează factura ──
     const invRes = await fetch(`${BASE}/invoice`, {
       method: 'POST',
       headers: {
@@ -210,36 +222,39 @@ export async function POST(request) {
     const invoiceNumber = invData.number;
     const invoiceTotal  = parseFloat(order.total) || 0;
 
-    // ── Încasare automată dacă comanda e plătită pe Shopify ──
+    // URL-ul facturii — din răspunsul SmartBill sau construit corect
+    const invoiceUrl = buildInvoiceUrl(invData, cif);
+
+    // Încasare automată dacă e plătit cu card online
     let collected = false;
     if (order.isPaid && invoiceSeries && invoiceNumber) {
       const collectResult = await collectInvoice(auth, cif, invoiceSeries, invoiceNumber, invoiceTotal);
       collected = collectResult.ok;
     }
 
-    // ── Notare în Shopify (note_attributes + tag) ──
+    // Notare în Shopify
     let shopifyMarked = false;
-    let invoiceUrl = '';
-    if (shopifyDomain && shopifyToken && order.id) {
+    if (shopifyDomain && shopifyToken && order.id && invoiceUrl) {
       const markResult = await markInvoiceInShopify({
         shopifyDomain,
         shopifyToken,
         orderId: order.id,
         invoiceSeries,
         invoiceNumber,
-        smartbillCif: cif,
+        invoiceUrl,
       });
       shopifyMarked = markResult.ok;
-      invoiceUrl = markResult.invoiceUrl || '';
     }
 
     return NextResponse.json({
       ok: true,
       series: invoiceSeries,
       number: invoiceNumber,
+      invoiceUrl,
       collected,
       shopifyMarked,
-      invoiceUrl,
+      // Returnăm și răspunsul brut pentru debugging (primele 200 chars)
+      _debug: JSON.stringify(invData).slice(0, 200),
     });
 
   } catch (e) {
@@ -260,15 +275,25 @@ export async function GET(request) {
   const auth = makeAuth(email, token);
 
   try {
-    const res = await fetch(`${BASE}/invoice/series?cif=${cif}`, {
-      headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
-      cache: 'no-store',
-    });
-    const raw = await res.text();
-    let data; try { data = JSON.parse(raw); } catch { data = {}; }
-    if (!res.ok) return NextResponse.json({ error: `SmartBill ${res.status}` }, { status: res.status });
-    const list = data.list || data.invoiceSeries || [];
-    return NextResponse.json({ series: list.map(s => s.name || s) });
+    // Returnăm atât seriile cât și gestiunile disponibile
+    const [seriesRes, warehouseRes] = await Promise.all([
+      fetch(`${BASE}/invoice/series?cif=${cif}`, {
+        headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
+        cache: 'no-store',
+      }),
+      fetch(`${BASE}/warehouse/list?cif=${cif}`, {
+        headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
+        cache: 'no-store',
+      }),
+    ]);
+
+    const seriesData = seriesRes.ok ? await seriesRes.json() : {};
+    const warehouseData = warehouseRes.ok ? await warehouseRes.json() : {};
+
+    const seriesList = (seriesData.list || seriesData.invoiceSeries || []).map(s => s.name || s);
+    const warehouseList = (warehouseData.list || warehouseData.warehouses || []).map(w => w.name || w);
+
+    return NextResponse.json({ series: seriesList, warehouses: warehouseList });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
@@ -280,4 +305,3 @@ export async function OPTIONS() {
     headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' },
   });
 }
-
