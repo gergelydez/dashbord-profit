@@ -88,6 +88,7 @@ function procOrder(o) {
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
     gateway: o.payment_gateway || '',  // 'shopify_payments' = card online
+    paidAt: o.processed_at || '',     // data când a fost plătită comanda
     currency: o.presentment_currency || o.currency || 'RON',
     address: [addr.address1, addr.address2].filter(Boolean).join(', '),
     county: addr.province || '',
@@ -231,7 +232,7 @@ export default function Dashboard() {
     ls.set('gx_t', token);
     setLoading(true); setError('');
     try {
-      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes,payment_gateway';
+      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes,payment_gateway,processed_at';
       const yearAgo = toISO(new Date(new Date().setFullYear(new Date().getFullYear() - 1)));
       const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${yearAgo}T00:00:00&fields=${fields}`;
       const res = await fetch(url);
