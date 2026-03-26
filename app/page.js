@@ -808,7 +808,7 @@ export default function Dashboard() {
                 {/* Debug temporar — arată fiecare comandă livrată azi */}
                 {allOrders.filter(o => o.ts==='livrat' && (o.fulfilledAt||'').slice(0,10)===todayStr).map(o => (
                   <div key={o.id} style={{fontSize:8,color:'#4a5568',marginTop:2,lineHeight:1.4}}>
-                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · fin:{o.fin} · paid:{(o.paidAt||'').slice(5,10)} · cr:{(o.createdAt||'').slice(5,10)}
+                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · gw:{o.gateway||'?'} · fin:{o.fin} · cr:{(o.createdAt||'').slice(5,10)}
                   </div>
                 ))}
               </div></div>
