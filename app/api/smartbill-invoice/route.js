@@ -17,16 +17,10 @@ async function getDefaultSeries(auth, cif) {
   return list.find(s => s.nextNumber)?.name || list[0]?.name || null;
 }
 
-// Construiește URL-ul facturii din răspunsul API SmartBill
-// SmartBill returnează în răspuns câmpul 'url' sau 'documentUrl' — îl folosim direct
-// Fallback: construim URL-ul de vizualizare din cloud
 function buildInvoiceUrl(invData, cif) {
-  // 1. URL direct din răspunsul SmartBill (cel mai fiabil)
   if (invData.url) return invData.url;
   if (invData.documentUrl) return invData.documentUrl;
   if (invData.invoiceUrl) return invData.invoiceUrl;
-  // 2. Fallback — URL de vizualizare din cloud SmartBill
-  // Format corect: /core/factura/vizualizeaza/?cif=X&series=Y&number=Z
   if (invData.series && invData.number) {
     return `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(cif)}&series=${encodeURIComponent(invData.series)}&number=${encodeURIComponent(invData.number)}`;
   }
@@ -69,7 +63,6 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
   const orderData = await getRes.json();
   const existingAttrs = orderData.order?.note_attributes || [];
 
-  // Păstrăm atributele existente, actualizăm doar cele legate de factură
   const newAttrs = existingAttrs.filter(a => {
     const n = (a.name||'').toLowerCase();
     return !['xconnector-invoice-url','xconnector-invoice-short-url','invoice-number','invoice-series'].includes(n);
@@ -86,17 +79,8 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
 
   const updateRes = await fetch(`https://${shopifyDomain}/admin/api/2024-01/orders/${orderId}.json`, {
     method: 'PUT',
-    headers: {
-      'X-Shopify-Access-Token': shopifyToken,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      order: {
-        id: orderId,
-        note_attributes: newAttrs,
-        tags: existingTags.join(', '),
-      }
-    }),
+    headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order: { id: orderId, note_attributes: newAttrs, tags: existingTags.join(', ') } }),
     cache: 'no-store',
   });
 
@@ -122,31 +106,26 @@ export async function POST(request) {
     if (!series) {
       series = await getDefaultSeries(auth, cif);
       if (!series) {
-        return NextResponse.json({
-          error: 'Nu am putut detecta seria de facturi. Completează câmpul "Serie" înainte de generare.'
-        }, { status: 400 });
+        return NextResponse.json({ error: 'Nu am putut detecta seria. Completează câmpul "Serie".' }, { status: 400 });
       }
     }
 
     const issueDate = new Date().toISOString().slice(0, 10);
 
-    const buildProduct = (item) => {
-      const prod = {
-        name: (item.name || 'Produs').slice(0, 255),
-        isDiscount: false,
-        measuringUnitName: 'buc',
-        currency: order.currency || 'RON',
-        quantity: Math.max(1, parseInt(item.qty) || 1),
-        price: parseFloat(item.price) || 0,
-        isTaxIncluded: true,
-        taxName: 'Normala',
-        taxPercentage: 21,
-        isService: false,
-        saveToDb: false,
-      };
-      if (item.sku) prod.code = item.sku;
-      return prod;
-    };
+    const buildProduct = (item) => ({
+      name: (item.name || 'Produs').slice(0, 255),
+      code: item.sku || '',        // SKU = cod produs în gestiune SmartBill
+      isDiscount: false,
+      measuringUnitName: 'buc',
+      currency: order.currency || 'RON',
+      quantity: Math.max(1, parseInt(item.qty) || 1),
+      price: parseFloat(item.price) || 0,
+      isTaxIncluded: true,
+      taxName: 'Normala',
+      taxPercentage: 21,
+      isService: false,
+      saveToDb: true,              // salvează produsul în SmartBill dacă nu există
+    });
 
     let products = (order.items || [])
       .filter(i => i.name && parseFloat(i.price) > 0)
@@ -169,6 +148,9 @@ export async function POST(request) {
       }];
     }
 
+    // Construiește body-ul facturii
+    // useStock = true + warehouseName = numele exact al gestiunii din SmartBill
+    const useStock = order.useStock === true && !!order.warehouseName;
     const invoiceBody = {
       companyVatCode: cif,
       client: {
@@ -189,14 +171,20 @@ export async function POST(request) {
       currency: order.currency || 'RON',
       language: 'RO',
       precision: 2,
-      // useStock + warehouseName: descărcare gestiune
-      // Necesită gestiunea configurată în SmartBill și warehouseName exact
-      useStock: order.useStock === true && !!order.warehouseName,
-      ...(order.useStock && order.warehouseName ? { warehouseName: order.warehouseName } : {}),
+      useStock,
+      // warehouseName trimis DOAR dacă useStock e true
+      ...(useStock ? { warehouseName: order.warehouseName } : {}),
       observations: `Comanda Shopify ${order.name}`,
       mentions: '',
       products,
     };
+
+    // Log complet pentru debugging gestiune
+    console.log('[SmartBill Invoice] Body:', JSON.stringify({
+      useStock,
+      warehouseName: order.warehouseName,
+      products: products.map(p => ({ name: p.name, code: p.code, qty: p.quantity })),
+    }));
 
     const invRes = await fetch(`${BASE}/invoice`, {
       method: 'POST',
@@ -215,17 +203,18 @@ export async function POST(request) {
     if (!invRes.ok) {
       const errMsg = invData.errorText || invData.message || invData.error
         || (invData.raw ? invData.raw : JSON.stringify(invData).slice(0, 300));
-      return NextResponse.json({ error: `SmartBill ${invRes.status}: ${errMsg}` }, { status: invRes.status });
+      return NextResponse.json({
+        error: `SmartBill ${invRes.status}: ${errMsg}`,
+        _sentBody: { useStock, warehouseName: order.warehouseName },
+      }, { status: invRes.status });
     }
 
     const invoiceSeries = invData.series;
     const invoiceNumber = invData.number;
     const invoiceTotal  = parseFloat(order.total) || 0;
+    const invoiceUrl    = buildInvoiceUrl(invData, cif);
 
-    // URL-ul facturii — din răspunsul SmartBill sau construit corect
-    const invoiceUrl = buildInvoiceUrl(invData, cif);
-
-    // Încasare automată dacă e plătit cu card online
+    // Încasare automată dacă plătit online
     let collected = false;
     if (order.isPaid && invoiceSeries && invoiceNumber) {
       const collectResult = await collectInvoice(auth, cif, invoiceSeries, invoiceNumber, invoiceTotal);
@@ -236,12 +225,9 @@ export async function POST(request) {
     let shopifyMarked = false;
     if (shopifyDomain && shopifyToken && order.id && invoiceUrl) {
       const markResult = await markInvoiceInShopify({
-        shopifyDomain,
-        shopifyToken,
+        shopifyDomain, shopifyToken,
         orderId: order.id,
-        invoiceSeries,
-        invoiceNumber,
-        invoiceUrl,
+        invoiceSeries, invoiceNumber, invoiceUrl,
       });
       shopifyMarked = markResult.ok;
     }
@@ -253,8 +239,15 @@ export async function POST(request) {
       invoiceUrl,
       collected,
       shopifyMarked,
-      // Returnăm și răspunsul brut pentru debugging (primele 200 chars)
-      _debug: JSON.stringify(invData).slice(0, 200),
+      stockDecreased: useStock,
+      // Debug info vizibil în răspuns
+      _debug: {
+        useStock,
+        warehouseName: order.warehouseName || null,
+        productsWithCode: products.filter(p => p.code).length,
+        totalProducts: products.length,
+        smartbillResponse: JSON.stringify(invData).slice(0, 300),
+      },
     });
 
   } catch (e) {
@@ -275,7 +268,6 @@ export async function GET(request) {
   const auth = makeAuth(email, token);
 
   try {
-    // Returnăm atât seriile cât și gestiunile disponibile
     const [seriesRes, warehouseRes] = await Promise.all([
       fetch(`${BASE}/invoice/series?cif=${cif}`, {
         headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
@@ -287,10 +279,10 @@ export async function GET(request) {
       }),
     ]);
 
-    const seriesData = seriesRes.ok ? await seriesRes.json() : {};
+    const seriesData  = seriesRes.ok  ? await seriesRes.json()  : {};
     const warehouseData = warehouseRes.ok ? await warehouseRes.json() : {};
 
-    const seriesList = (seriesData.list || seriesData.invoiceSeries || []).map(s => s.name || s);
+    const seriesList    = (seriesData.list    || seriesData.invoiceSeries || []).map(s => s.name || s);
     const warehouseList = (warehouseData.list || warehouseData.warehouses || []).map(w => w.name || w);
 
     return NextResponse.json({ series: seriesList, warehouses: warehouseList });
