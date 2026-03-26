@@ -83,6 +83,17 @@ function procOrder(o) {
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
+    currency: o.presentment_currency || o.currency || 'RON',
+    address: [addr.address1, addr.address2].filter(Boolean).join(', '),
+    county: addr.province || '',
+    clientEmail: o.email || '',
+    items: (o.line_items || []).map(i => ({
+      name: i.name || i.title || 'Produs',
+      sku: i.sku || '',
+      qty: i.quantity || 1,
+      price: parseFloat(i.price) || 0,
+      variantId: String(i.variant_id || ''),
+    })),
   };
 }
 
@@ -117,6 +128,15 @@ export default function Dashboard() {
   // Filtru curier pentru tabel
   const [courierFilter, setCourierFilter] = useState('toate');
 
+  // Generare facturi SmartBill
+  const [sbInvLoading, setSbInvLoading] = useState({}); // { [orderId]: true/false }
+  const [sbInvResults, setSbInvResults] = useState({}); // { [orderId]: { ok, number, series, error } }
+  const [sbInvSeries, setSbInvSeries]   = useState(() => localStorage.getItem('sb_inv_series') || '');
+  const [sbInvSeriesList, setSbInvSeriesList] = useState([]);
+  const [sbBulkLoading, setSbBulkLoading] = useState(false);
+  // Modal editare produse înainte de generare factură
+  const [invoiceModal, setInvoiceModal] = useState(null); // { order, editItems }
+
   /* Date range — filtrare LOCALĂ, fără request nou */
   const [preset, setPreset]         = useState('last_30');
   const [customFrom, setCustomFrom] = useState('');
@@ -131,6 +151,8 @@ export default function Dashboard() {
     if (t) setToken(t);
     if (d) setDomain(d);
     // sdReturAwbs și sdFiles se restaurează automat în useState initializer
+    // Încarcă seriile SmartBill dacă există credențiale salvate
+    setTimeout(loadSbSeries, 500);
 
     // Restaurează comenzile salvate din sesiunea anterioară
     const saved = localStorage.getItem('gx_orders_all');
@@ -302,6 +324,100 @@ export default function Dashboard() {
     const awb = (order.trackingNo || '').trim();
     if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
     return order.ts !== 'pending' ? order.ts : null;
+  };
+
+  // ── Deschide modalul de editare produse înainte de generare ──
+  const openInvoiceModal = (order) => {
+    const email = localStorage.getItem('sb_email');
+    const token = localStorage.getItem('sb_token');
+    const cif   = localStorage.getItem('sb_cif');
+    if (!email || !token || !cif) {
+      alert('Configurează credențialele SmartBill în pagina Profit mai întâi!');
+      return;
+    }
+    // Pregătește items editabili — clone deep ca să nu modificăm originalul
+    const editItems = (order.items && order.items.length)
+      ? order.items.map(i => ({ ...i }))
+      : [{ name: order.prods || 'Produs', sku: '', qty: 1, price: order.total }];
+    setInvoiceModal({ order, editItems });
+  };
+
+  // ── Generează factura cu items (editați sau originali) ──
+  const generateInvoice = async (order, customItems) => {
+    const email = localStorage.getItem('sb_email');
+    const token = localStorage.getItem('sb_token');
+    const cif   = localStorage.getItem('sb_cif');
+    if (!email || !token || !cif) return;
+
+    setInvoiceModal(null);
+    setSbInvLoading(prev => ({ ...prev, [order.id]: true }));
+    setSbInvResults(prev => ({ ...prev, [order.id]: null }));
+
+    try {
+      const res = await fetch('/api/smartbill-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email, token, cif,
+          seriesName: sbInvSeries || undefined,
+          order: {
+            id: order.id,
+            name: order.name,
+            client: order.client,
+            address: order.address || '',
+            city: order.oras || '',
+            county: order.county || '',
+            country: 'Romania',
+            clientEmail: order.clientEmail || '',
+            currency: order.currency || 'RON',
+            total: order.total,
+            items: customItems || order.items || [],
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setSbInvResults(prev => ({ ...prev, [order.id]: { ok: true, number: data.number, series: data.series } }));
+        setAllOrders(prev => prev.map(o => o.id === order.id
+          ? { ...o, hasInvoice: true, invoiceNumber: data.number, invoiceSeries: data.series }
+          : o
+        ));
+      } else {
+        setSbInvResults(prev => ({ ...prev, [order.id]: { ok: false, error: data.error } }));
+      }
+    } catch (e) {
+      setSbInvResults(prev => ({ ...prev, [order.id]: { ok: false, error: e.message } }));
+    } finally {
+      setSbInvLoading(prev => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+  // Generează facturi în bulk — fără modal (folosește produsele din Shopify ca atare)
+  const generateAllInvoices = async () => {
+    const pending = noInvoicePaid.filter(o => !sbInvResults[o.id]?.ok);
+    if (!pending.length) return;
+    setSbBulkLoading(true);
+    for (const order of pending) {
+      await generateInvoice(order, null);
+      await new Promise(r => setTimeout(r, 400));
+    }
+    setSbBulkLoading(false);
+  };
+
+  // Încarcă seriile disponibile când se detectează credențiale SmartBill
+  const loadSbSeries = async () => {
+    const email = localStorage.getItem('sb_email');
+    const token = localStorage.getItem('sb_token');
+    const cif   = localStorage.getItem('sb_cif');
+    if (!email || !token || !cif) return;
+    try {
+      const res = await fetch(`/api/smartbill-invoice?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&cif=${encodeURIComponent(cif)}`);
+      const data = await res.json();
+      if (data.series?.length) {
+        setSbInvSeriesList(data.series);
+        if (!sbInvSeries) setSbInvSeries(data.series[0]);
+      }
+    } catch {}
   };
 
   const disconnect = () => { setOrders([]); setConnected(false); setError(''); localStorage.removeItem('gx_t'); };
@@ -773,14 +889,38 @@ export default function Dashboard() {
                           <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
                           <td><span className={`mg ${mc}`}>{fmt(o.total)} RON</span></td>
                           <td style={mobH}>
-                            {o.hasInvoice
-                              ? <a href={o.invoiceShort||o.invoiceUrl} target="_blank" rel="noopener noreferrer"
+                            {(() => {
+                              const invRes = sbInvResults[o.id];
+                              const invLoading = sbInvLoading[o.id];
+                              // Factură generată tocmai acum
+                              if (invRes?.ok) return (
+                                <span style={{fontSize:10,color:'#10b981',fontFamily:'monospace',fontWeight:700}}>
+                                  ✓ {invRes.series}{invRes.number}
+                                </span>
+                              );
+                              // Eroare generare
+                              if (invRes?.error) return (
+                                <span title={invRes.error} style={{fontSize:9,color:'#f43f5e',cursor:'help'}}>
+                                  ✗ Eroare
+                                </span>
+                              );
+                              // Are deja factură din xConnector
+                              if (o.hasInvoice) return (
+                                <a href={o.invoiceShort||o.invoiceUrl} target="_blank" rel="noopener noreferrer"
                                   style={{fontSize:10,color:'#10b981',fontFamily:'monospace',textDecoration:'none'}}>
                                   {o.invoiceNumber ? `#${o.invoiceNumber}` : '✓ Vezi'} ↗
                                 </a>
-                              : o.fin==='paid'
-                                ? <span style={{fontSize:10,color:'#f59e0b',fontWeight:700}}>⚠ Lipsă!</span>
-                                : <span style={{fontSize:10,color:'#4a5568'}}>—</span>}
+                              );
+                              // Comandă plătită fără factură — buton generare
+                              if (o.fin==='paid') return (
+                                <button onClick={() => openInvoiceModal(o)} disabled={invLoading}
+                                  title="Editează produsele și generează factură"
+                                  style={{fontSize:9,background:'rgba(245,158,11,.15)',border:'1px solid rgba(245,158,11,.4)',color:'#f59e0b',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:invLoading?.5:1}}>
+                                  {invLoading ? '⟳' : '+ Factură'}
+                                </button>
+                              );
+                              return <span style={{fontSize:10,color:'#4a5568'}}>—</span>;
+                            })()}
                           </td>
                           <td style={{...mobH,fontSize:'10px',color:'#94a3b8'}}>{fmtD(o.createdAt)}</td>
                           <td style={{...mobH,fontSize:'10px',color:'#94a3b8'}}>{o.fulfilledAt?fmtD(o.fulfilledAt):<span className="mg mg-m">—</span>}</td>
@@ -821,8 +961,152 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* ── MODAL EDITARE PRODUSE FACTURĂ ── */}
+      {invoiceModal && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.75)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}}
+          onClick={e => { if(e.target===e.currentTarget) setInvoiceModal(null); }}>
+          <div style={{background:'#0f1419',border:'1px solid #243040',borderRadius:14,width:'100%',maxWidth:560,maxHeight:'90vh',overflow:'auto',padding:'20px'}}>
+
+            {/* Header modal */}
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:'#e8edf2'}}>📄 Factură {invoiceModal.order.name}</div>
+                <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{invoiceModal.order.client} · {fmt(invoiceModal.order.total)} RON</div>
+              </div>
+              <button onClick={() => setInvoiceModal(null)}
+                style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:13}}>✕</button>
+            </div>
+
+            {/* Info client */}
+            <div style={{background:'#080c10',borderRadius:8,padding:'10px 12px',marginBottom:16,fontSize:11,color:'#94a3b8',lineHeight:1.7}}>
+              <strong style={{color:'#e8edf2'}}>Client:</strong> {invoiceModal.order.client}<br/>
+              {invoiceModal.order.oras && <><strong style={{color:'#e8edf2'}}>Oraș:</strong> {invoiceModal.order.oras}<br/></>}
+              {invoiceModal.order.address && <><strong style={{color:'#e8edf2'}}>Adresă:</strong> {invoiceModal.order.address}</>}
+            </div>
+
+            {/* Tabel produse editabile */}
+            <div style={{fontSize:11,color:'#94a3b8',marginBottom:8,fontWeight:600,textTransform:'uppercase',letterSpacing:.5}}>Produse pe factură</div>
+            <div style={{marginBottom:12}}>
+              {invoiceModal.editItems.map((item, idx) => (
+                <div key={idx} style={{background:'#080c10',borderRadius:8,padding:'10px 12px',marginBottom:8,border:'1px solid #1e2a35'}}>
+                  <div style={{display:'flex',gap:8,marginBottom:6}}>
+                    {/* Nume produs */}
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:9,color:'#4a5568',marginBottom:3,textTransform:'uppercase'}}>Produs</div>
+                      <input
+                        value={item.name}
+                        onChange={e => setInvoiceModal(prev => {
+                          const items = [...prev.editItems];
+                          items[idx] = { ...items[idx], name: e.target.value };
+                          return { ...prev, editItems: items };
+                        })}
+                        style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'6px 9px',borderRadius:6,fontSize:11,outline:'none'}}
+                      />
+                    </div>
+                    {/* SKU */}
+                    <div style={{width:80}}>
+                      <div style={{fontSize:9,color:'#4a5568',marginBottom:3,textTransform:'uppercase'}}>SKU</div>
+                      <input
+                        value={item.sku || ''}
+                        onChange={e => setInvoiceModal(prev => {
+                          const items = [...prev.editItems];
+                          items[idx] = { ...items[idx], sku: e.target.value };
+                          return { ...prev, editItems: items };
+                        })}
+                        style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'6px 9px',borderRadius:6,fontSize:11,outline:'none'}}
+                      />
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
+                    {/* Cantitate */}
+                    <div style={{width:70}}>
+                      <div style={{fontSize:9,color:'#4a5568',marginBottom:3,textTransform:'uppercase'}}>Cant.</div>
+                      <input type="number" min="1"
+                        value={item.qty}
+                        onChange={e => setInvoiceModal(prev => {
+                          const items = [...prev.editItems];
+                          items[idx] = { ...items[idx], qty: parseInt(e.target.value) || 1 };
+                          return { ...prev, editItems: items };
+                        })}
+                        style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'6px 9px',borderRadius:6,fontSize:11,outline:'none'}}
+                      />
+                    </div>
+                    {/* Preț */}
+                    <div style={{width:100}}>
+                      <div style={{fontSize:9,color:'#4a5568',marginBottom:3,textTransform:'uppercase'}}>Preț (RON)</div>
+                      <input type="number" step="0.01" min="0"
+                        value={item.price}
+                        onChange={e => setInvoiceModal(prev => {
+                          const items = [...prev.editItems];
+                          items[idx] = { ...items[idx], price: parseFloat(e.target.value) || 0 };
+                          return { ...prev, editItems: items };
+                        })}
+                        style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'6px 9px',borderRadius:6,fontSize:11,outline:'none'}}
+                      />
+                    </div>
+                    {/* Total linie */}
+                    <div style={{flex:1,textAlign:'right',fontSize:12,color:'#f97316',fontWeight:700,fontFamily:'monospace',paddingBottom:2}}>
+                      {fmt(item.qty * item.price)} RON
+                    </div>
+                    {/* Șterge linie */}
+                    {invoiceModal.editItems.length > 1 && (
+                      <button onClick={() => setInvoiceModal(prev => ({
+                          ...prev,
+                          editItems: prev.editItems.filter((_,i) => i !== idx)
+                        }))}
+                        style={{background:'rgba(244,63,94,.1)',border:'1px solid rgba(244,63,94,.3)',color:'#f43f5e',borderRadius:6,padding:'5px 8px',cursor:'pointer',fontSize:12,flexShrink:0}}>
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Adaugă linie nouă */}
+            <button
+              onClick={() => setInvoiceModal(prev => ({
+                ...prev,
+                editItems: [...prev.editItems, { name: '', sku: '', qty: 1, price: 0 }]
+              }))}
+              style={{width:'100%',background:'transparent',border:'1px dashed #243040',color:'#4a5568',borderRadius:8,padding:'8px',cursor:'pointer',fontSize:11,marginBottom:16}}>
+              + Adaugă produs
+            </button>
+
+            {/* Total + Generează */}
+            <div style={{borderTop:'1px solid #1e2a35',paddingTop:14,display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
+              <div>
+                <div style={{fontSize:10,color:'#94a3b8'}}>Total factură</div>
+                <div style={{fontSize:18,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>
+                  {fmt(invoiceModal.editItems.reduce((s,i) => s + i.qty * i.price, 0))} RON
+                </div>
+                {Math.abs(invoiceModal.editItems.reduce((s,i) => s + i.qty * i.price, 0) - invoiceModal.order.total) > 0.5 && (
+                  <div style={{fontSize:9,color:'#f59e0b',marginTop:2}}>
+                    ⚠ Diferă față de comanda Shopify ({fmt(invoiceModal.order.total)} RON)
+                  </div>
+                )}
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                <button onClick={() => setInvoiceModal(null)}
+                  style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:12}}>
+                  Anulează
+                </button>
+                <button
+                  onClick={() => generateInvoice(invoiceModal.order, invoiceModal.editItems)}
+                  style={{background:'#f97316',color:'white',border:'none',borderRadius:8,padding:'8px 20px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                  ⚡ Generează Factura
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </>
   );
 }
+
 
 
