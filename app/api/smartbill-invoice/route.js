@@ -115,38 +115,54 @@ export async function POST(request) {
     // Declară useStock ÎNAINTE de orice utilizare
     const useStock = order.useStock === true && !!order.warehouseName;
 
-    // Dacă useStock=true, preluăm produsele din gestiunea SmartBill după SKU
-    // Astfel numele de pe factură = numele din gestiune (nu din Shopify)
+    // Preluăm produsele din gestiunea SmartBill după SKU
+    // Încercăm mai multe endpoint-uri — documentația SmartBill variază
     let warehouseProducts = {};
     if (useStock && order.warehouseName) {
       try {
-        const wpRes = await fetch(
+        const endpoints = [
           `${BASE}/product/list?cif=${encodeURIComponent(cif)}&warehouseName=${encodeURIComponent(order.warehouseName)}&page=1&pageSize=500`,
-          { headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' }, cache: 'no-store' }
-        );
-        if (wpRes.ok) {
-          const wpData = await wpRes.json();
-          const list = wpData.products || wpData.list || [];
-          list.forEach(p => {
-            const code = (p.code || p.cod || '').trim();
-            if (code) warehouseProducts[code] = p;
+          `${BASE}/product/list?cif=${encodeURIComponent(cif)}&page=1&pageSize=500`,
+        ];
+        for (const url of endpoints) {
+          const wpRes = await fetch(url, {
+            headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
+            cache: 'no-store',
           });
+          if (wpRes.ok) {
+            const wpData = await wpRes.json();
+            const list = wpData.products || wpData.list || wpData.Produse || [];
+            if (list.length > 0) {
+              list.forEach(p => {
+                const code = (p.code || p.cod || p.Code || '').toString().trim();
+                if (code) warehouseProducts[code] = p;
+              });
+              console.log(`[SmartBill] Loaded ${list.length} products from warehouse, found codes:`, Object.keys(warehouseProducts).slice(0, 5));
+              break;
+            }
+          }
         }
-      } catch { /* non-critical */ }
+      } catch (e) {
+        console.warn('[SmartBill] Could not load warehouse products:', e.message);
+      }
     }
 
     const buildProduct = (item) => {
       const sku = (item.sku || '').trim();
-      // Dacă avem gestiune și SKU → căutăm produsul în gestiune
       const warehouseProd = (useStock && sku) ? warehouseProducts[sku] : null;
 
+      // Când useStock=true și avem SKU:
+      // SmartBill caută produsul în gestiune DUPĂ CODE (SKU)
+      // Dacă name-ul diferă față de cel din gestiune → SmartBill nu face match
+      // Soluție: folosim EXACT numele din gestiune (luat via API mai sus)
+      // Dacă nu l-am găsit în gestiune → trimitem numele din Shopify ca fallback
+      const productName = warehouseProd
+        ? (warehouseProd.name || warehouseProd.denumire || '').trim() || (item.name || 'Produs').slice(0, 255)
+        : (item.name || 'Produs').slice(0, 255);
+
       return {
-        // Dacă produsul există în gestiune → folosim NUMELE LUI (nu cel din Shopify)
-        // Altfel SmartBill nu poate face match și nu scade stocul
-        name: warehouseProd
-          ? (warehouseProd.name || warehouseProd.denumire || item.name || 'Produs').slice(0, 255)
-          : (item.name || 'Produs').slice(0, 255),
-        code: sku || '',
+        name: productName.slice(0, 255),
+        code: sku,
         isDiscount: false,
         measuringUnitName: warehouseProd
           ? (warehouseProd.measuringUnitName || warehouseProd.unitateMasura || 'buc')
@@ -158,7 +174,9 @@ export async function POST(request) {
         taxName: 'Normala',
         taxPercentage: 21,
         isService: false,
-        saveToDb: false,
+        // saveToDb: false când avem warehouseProd (produsul există, nu îl recreăm)
+        // saveToDb: true când nu găsim produsul (îl adaugă SmartBill automat)
+        saveToDb: !warehouseProd,
       };
     };
 
@@ -277,7 +295,10 @@ export async function POST(request) {
       _debug: {
         useStock,
         warehouseName: order.warehouseName || null,
-        productsWithCode: products.filter(p => p.code).length,
+        warehouseProductsFound: Object.keys(warehouseProducts).length,
+        warehouseProductCodes: Object.keys(warehouseProducts).slice(0, 10),
+        orderSkus: (order.items||[]).map(i => i.sku).filter(Boolean),
+        productsWithMatch: products.filter(p => p.code && warehouseProducts[p.code]).length,
         totalProducts: products.length,
         smartbillResponse: JSON.stringify(invData).slice(0, 300),
       },
@@ -330,4 +351,3 @@ export async function OPTIONS() {
     headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' },
   });
 }
-
