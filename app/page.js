@@ -165,20 +165,15 @@ export default function Dashboard() {
     }
   }, []);
 
-  // FIX PRINCIPAL: filtrare după createdAt SAU fulfilledAt
-  // Dacă selectezi "Azi", vrei să vezi și comenzile LIVRATE azi (fulfilledAt = azi)
-  // chiar dacă au fost create ieri/alaltăieri
+  // Filtrare DOAR după createdAt — sumarul arată comenzile create în perioadă
+  // Cardurile COD (azi/livrate) se calculează separat din allOrders
   const applyDateFilter = useCallback((ords, p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
     const inRange = ords.filter(o => {
-      const created   = new Date(o.createdAt);
-      const fulfilled = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
-      // Include comanda dacă a fost CREATĂ în interval SAU LIVRATĂ în interval
-      const createdInRange   = created >= fromD && created <= toD;
-      const fulfilledInRange = fulfilled && fulfilled >= fromD && fulfilled <= toD;
-      return createdInRange || fulfilledInRange;
+      const created = new Date(o.createdAt);
+      return created >= fromD && created <= toD;
     });
     setOrders(inRange);
     setRangeLabel(`${fmtD(from+'T00:00:00')} — ${fmtD(to+'T00:00:00')}`);
@@ -408,7 +403,13 @@ export default function Dashboard() {
   const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
   const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
-  const sI=sum(['livrat']), sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
+  // sI = total încasat (livrate) — include și plătite online și COD
+  // sICOD = doar rambursuri (COD) — exclude plătite cu card online
+  // sIPaid = plătite online deja încasate
+  const sI    = sum(['livrat']);
+  const sICOD = orders.filter(o => o.ts==='livrat' && o.fin!=='paid').reduce((a,o)=>a+o.total,0);
+  const sIPaid= orders.filter(o => o.ts==='livrat' && o.fin==='paid').reduce((a,o)=>a+o.total,0);
+  const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
   // ── COD calculations ──
   const now = new Date();
@@ -692,9 +693,13 @@ export default function Dashboard() {
             <div className="srow">
               {sI>0 && (
                 <div className="sc sc1"><div className="si">💰</div><div>
-                  <div className="slbl">Încasat</div>
+                  <div className="slbl">Încasat total</div>
                   <div className="sv">{fmt(sI)} RON</div>
-                  <div className="ssub">{livrate} comenzi livrate</div>
+                  <div className="ssub">
+                    {livrate} livrate · {sICOD>0&&<span>COD: <strong>{fmt(sICOD)}</strong></span>}
+                    {sIPaid>0&&sICOD>0&&' · '}
+                    {sIPaid>0&&<span>Card: <strong>{fmt(sIPaid)}</strong></span>}
+                  </div>
                 </div></div>
               )}
               {sA>0 && (
@@ -704,27 +709,23 @@ export default function Dashboard() {
                   <div className="ssub">{incurs+outfor} comenzi în tranzit</div>
                 </div></div>
               )}
-              {sumCodIncasatAzi>0 && (
-                <div className="sc" style={{border:'1px solid #a855f7',background:'#0f1419'}}><div className="si">⏰</div><div>
-                  <div className="slbl">COD de încasat azi</div>
-                  <div className="sv" style={{color:'#a855f7'}}>{fmt(sumCodIncasatAzi)} RON</div>
-                  <div className="ssub">
-                    GLS livrate pe {twoDaysAgoStr.split('-').reverse().join('.')}<br/>
-                    SD livrate pe {yesterdayStr.split('-').reverse().join('.')}<br/>
-                    {codIncasatAzi.length} colete · exclude plătite online
-                  </div>
-                </div></div>
-              )}
-              {(sumCodLivrateAzi>0||codLivrateAzi.length>0) && (
-                <div className="sc" style={{border:'1px solid #10b981',background:'#0f1419'}}><div className="si">📅</div><div>
-                  <div className="slbl">COD livrate azi</div>
-                  <div className="sv" style={{color:'#10b981'}}>{fmt(sumCodLivrateAzi)} RON</div>
-                  <div className="ssub">
-                    {codLivrateAzi.length} colete livrate în {todayStr.split('-').reverse().join('.')}<br/>
-                    Ramburs vine pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}
-                  </div>
-                </div></div>
-              )}
+              <div className="sc" style={{border:'1px solid #a855f7',background:'#0f1419'}}><div className="si">⏰</div><div>
+                <div className="slbl">COD de încasat azi</div>
+                <div className="sv" style={{color: sumCodIncasatAzi>0?'#a855f7':'#4a5568'}}>{fmt(sumCodIncasatAzi)} RON</div>
+                <div className="ssub">
+                  GLS livrate pe {twoDaysAgoStr.split('-').reverse().join('.')} · SD pe {yesterdayStr.split('-').reverse().join('.')}<br/>
+                  {codIncasatAzi.length > 0 ? `${codIncasatAzi.length} colete` : 'Niciun colet COD'}
+                </div>
+              </div></div>
+              <div className="sc" style={{border:'1px solid #10b981',background:'#0f1419'}}><div className="si">📅</div><div>
+                <div className="slbl">COD livrate azi</div>
+                <div className="sv" style={{color: sumCodLivrateAzi>0?'#10b981':'#4a5568'}}>{fmt(sumCodLivrateAzi)} RON</div>
+                <div className="ssub">
+                  {codLivrateAzi.length > 0
+                    ? <>{codLivrateAzi.length} colete · ramburs pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}</>
+                    : `Nicio livrare COD pe ${todayStr.split('-').reverse().join('.')}`}
+                </div>
+              </div></div>
               {sR>0 && (
                 <div className="sc sc3"><div className="si">↩️</div><div>
                   <div className="slbl">Pierdut retur/anulat</div>
