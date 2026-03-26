@@ -379,6 +379,8 @@ export default function Dashboard() {
           ok: true, number: data.number, series: data.series,
           collected: data.collected, shopifyMarked: data.shopifyMarked,
           invoiceUrl: data.invoiceUrl,
+          stockDecreased: data.stockDecreased,
+          _debug: data._debug,
         }}));
         setAllOrders(prev => prev.map(o => o.id === order.id
           ? {
@@ -979,9 +981,17 @@ export default function Dashboard() {
                                   style={{fontSize:10,color:'#10b981',fontFamily:'monospace',fontWeight:700,textDecoration:'none'}}>
                                   ✓ {invRes.series}{invRes.number} ↗
                                 </a>
-                                <span style={{fontSize:8,color:'#4a5568'}}>
-                                  {invRes.collected&&'💰 încasat · '}{invRes.shopifyMarked&&'🔗 Shopify ✓'}
+                                <span style={{fontSize:8,color:'#4a5568',lineHeight:1.3}}>
+                                  {invRes.collected&&'💰 '}{invRes.shopifyMarked&&'🔗 '}
+                                  {invRes.stockDecreased
+                                    ? <span style={{color:'#10b981'}}>📦 stoc scăzut</span>
+                                    : <span style={{color:'#f59e0b'}}>⚠ fără gestiune</span>}
                                 </span>
+                                {invRes._debug&&!invRes.stockDecreased&&(
+                                  <span style={{fontSize:7,color:'#4a5568',lineHeight:1.2}}>
+                                    gest: {invRes._debug.warehouseName||'lipsă'} | SKU: {invRes._debug.productsWithCode}/{invRes._debug.totalProducts}
+                                  </span>
+                                )}
                               </div>
                             );
                             if(invRes?.error) return <div style={{display:'flex',flexDirection:'column',gap:2}}>
