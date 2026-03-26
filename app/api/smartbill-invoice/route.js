@@ -112,6 +112,9 @@ export async function POST(request) {
 
     const issueDate = new Date().toISOString().slice(0, 10);
 
+    // Declară useStock ÎNAINTE de orice utilizare
+    const useStock = order.useStock === true && !!order.warehouseName;
+
     // Dacă useStock=true, preluăm produsele din gestiunea SmartBill după SKU
     // Astfel numele de pe factură = numele din gestiune (nu din Shopify)
     let warehouseProducts = {};
@@ -181,8 +184,6 @@ export async function POST(request) {
     }
 
     // Construiește body-ul facturii
-    // useStock = true + warehouseName = numele exact al gestiunii din SmartBill
-    const useStock = order.useStock === true && !!order.warehouseName;
     const invoiceBody = {
       companyVatCode: cif,
       client: {
