@@ -139,6 +139,18 @@ export default function Dashboard() {
   const [sbToken, setSbToken] = useState(() => ls.get('sb_token') || '');
   const [sbCif, setSbCif]     = useState(() => ls.get('sb_cif')   || '');
   const [sbCredsOpen, setSbCredsOpen] = useState(false);
+  const [sbUseStock, setSbUseStock]   = useState(() => { try { return ls.get('sb_use_stock') === 'true'; } catch { return false; } });
+  const [sbWarehouse, setSbWarehouse] = useState(() => { try { return ls.get('sb_warehouse') || ''; } catch { return ''; } });
+  const [sbWarehouseList, setSbWarehouseList] = useState([]);
+  const [onlinePaymentIds, setOnlinePaymentIds] = useState(() => { try { return JSON.parse(ls.get('online_payment_ids')||'[]'); } catch { return []; } });
+  const toggleOnlinePayment = (orderId) => {
+    setOnlinePaymentIds(prev => {
+      const sid = String(orderId);
+      const next = prev.includes(sid) ? prev.filter(id => id !== sid) : [...prev, sid];
+      ls.set('online_payment_ids', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const [preset, setPreset]         = useState('last_30');
   const [customFrom, setCustomFrom] = useState('');
@@ -389,7 +401,7 @@ export default function Dashboard() {
   const n = orders.length;
   const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
-    if (typeof onlinePaymentIds !== 'undefined' && onlinePaymentIds.includes(String(o.id))) return true;
+    if (onlinePaymentIds.includes(String(o.id))) return true;
     const gw = (o.gateway || '').toLowerCase();
     if (gw) return ONLINE_GW.some(g => gw.includes(g));
     if (o.fin === 'pending') return false;
@@ -880,7 +892,10 @@ export default function Dashboard() {
                           <td title={o.client}>{o.client||'—'}</td>
                           <td style={mobH}>{o.oras||'—'}</td>
                           <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
-                          <td><span className={`mg ${mc}`}>{fmt(o.total)} RON</span></td>
+                          <td style={{whiteSpace:'nowrap'}}>
+                            <span className={`mg ${mc}`}>{fmt(o.total)} RON</span>
+                            {o.fin==='paid'&&<button onClick={e=>{e.stopPropagation();toggleOnlinePayment(o.id);}} title={isOnlinePayment(o)?'Card — click=COD':'COD — click=Card'} style={{marginLeft:3,background:isOnlinePayment(o)?'rgba(59,130,246,.2)':'rgba(74,85,104,.1)',border:`1px solid ${isOnlinePayment(o)?'#3b82f6':'#4a5568'}`,color:isOnlinePayment(o)?'#3b82f6':'#94a3b8',borderRadius:4,padding:'1px 4px',fontSize:9,cursor:'pointer'}}>{isOnlinePayment(o)?'💳':'💵'}</button>}
+                          </td>
                           <td style={mobH}>{(()=>{
                             const invRes=sbInvResults[o.id];
                             const invLoading=sbInvLoading[o.id];
@@ -1058,3 +1073,4 @@ export default function Dashboard() {
     </>
   );
 }
+
