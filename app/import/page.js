@@ -97,12 +97,25 @@ export default function ImportCalc() {
           if (hi === -1) { setLoading(''); return; }
           const hdr = rows[hi].map(h => (h||'').toString().toLowerCase());
           const ai = hdr.findIndex(h => h.includes('amount'));
-          let total = 0;
+          // Luăm PRIMA valoare validă — nu suma (rândul total/formula dublează valoarea)
+          let transportVal = 0;
           for (let i = hi+1; i < rows.length; i++) {
-            const v = parseFloat(rows[i][ai]);
-            if (!isNaN(v) && v > 0) total += v;
+            const r = rows[i];
+            if (!r) continue;
+            const firstCell = (r[0]||'').toString().toLowerCase().trim();
+            // Sărim rânduri goale, total, formule, seller, date
+            if (!firstCell || firstCell.includes('total') || firstCell.includes('seller') || firstCell.includes('payment') || firstCell.includes('date')) continue;
+            const cellVal = r[ai];
+            if (cellVal === null || cellVal === undefined || cellVal === '') continue;
+            const cellStr = cellVal.toString().trim();
+            if (cellStr.startsWith('=')) continue; // formulă Excel
+            const v = parseFloat(cellStr);
+            if (!isNaN(v) && v > 0 && v < 50000) {
+              transportVal = v; // prima valoare validă — stop
+              break;
+            }
           }
-          setTransportUSD(String(total));
+          setTransportUSD(String(transportVal));
           setTransportRON('');
         } catch(err) { setError('Eroare Excel freight: ' + err.message); }
         setLoading('');
@@ -353,11 +366,13 @@ export default function ImportCalc() {
                   </div>
                   <div className="g2">
                     <div>
-                      <label style={lbl}>Taxă vamală % <span style={{color:'#475569'}}>(gol = globală)</span></label>
-                      <input type="number" style={inp} value={p.taxaVamala} step="0.1" min="0"
-                        placeholder={`${taxaVamalaGlobal||'0'}% global`}
+                      <label style={lbl}>Taxă vamală % <span style={{color:'#3b82f6'}}>per produs</span></label>
+                      <input type="number" style={{...inp, borderColor: p.taxaVamala!==''?'rgba(245,158,11,.5)':'#1a2535'}} value={p.taxaVamala} step="0.1" min="0"
+                        placeholder={`default: ${taxaVamalaGlobal||'0'}%`}
                         onChange={e => upd(idx,'taxaVamala',e.target.value)}/>
-                      {p.taxaVamala==='0' && <div style={{fontSize:10,color:'#10b981',marginTop:3}}>✓ Fără taxă vamală</div>}
+                      {p.taxaVamala===''&&<div style={{fontSize:9,color:'#475569',marginTop:2}}>Gol = folosește globala ({taxaVamalaGlobal||'0'}%)</div>}
+                      {p.taxaVamala==='0'&&<div style={{fontSize:10,color:'#10b981',marginTop:2}}>✓ Fără taxă vamală (ex: printer server)</div>}
+                      {p.taxaVamala!==''&&p.taxaVamala!=='0'&&<div style={{fontSize:10,color:'#f59e0b',marginTop:2}}>Taxă: {p.taxaVamala}%</div>}
                     </div>
                     <div>
                       <label style={lbl}>TVA %</label>
@@ -487,6 +502,9 @@ export default function ImportCalc() {
                 <div>
                   <label style={lbl}>Comision procesare DHL (RON, fără TVA)</label>
                   <input type="number" style={{...inp,borderColor:comisionDHL?'rgba(59,130,246,.4)':'#1a2535'}} value={comisionDHL} step="0.01" placeholder="ex: 59" onChange={e => setComisionDHL(e.target.value)}/>
+                  {comisionDHL && <div style={{fontSize:10,color:'#3b82f6',marginTop:4}}>
+                    + TVA {tvaPercent}% = <strong>{(parseFloat(comisionDHL)||0)*(1+(parseFloat(tvaPercent)||21)/100) > 0 ? ((parseFloat(comisionDHL)||0)*(1+(parseFloat(tvaPercent)||21)/100)).toFixed(2) : ''} RON</strong> total facturat
+                  </div>}
                 </div>
               </div>
             </div>
@@ -498,7 +516,7 @@ export default function ImportCalc() {
                 {[
                   ['📄 Valoare marfă', fmtRON(totalRON_f), '#e8edf2'],
                   ['✈️ Transport', fmtRON(tRON), '#3b82f6'],
-                  [`🛃 Taxă vamală${taxaVamalaRON?' (DVI)':` ${taxaVamalaGlobal}%`}`, fmtRON(taxaV_RON_global), '#f59e0b'],
+                  [`🛃 Taxe vamale${taxaVamalaRON?' (DVI)':' per produs'}`, fmtRON(taxaV_RON_global), '#f59e0b'],
                   ['🏢 Comision DHL', fmtRON(comRON), '#94a3b8'],
                   [`💰 TVA${tvaRON_dvi?' (DVI)':` ${tvaPercent}%`}`, fmtRON(tva_RON_global), '#a855f7'],
                   ['📦 TOTAL (cu TVA)', fmtRON(totalCostRON), '#f97316'],
