@@ -63,12 +63,18 @@ function procOrder(o) {
     if (ss === 'delivered') ts = 'livrat';
     else if (['failure','failed_attempt','returned','failed_delivery','return_in_progress'].includes(ss)) ts = 'retur';
     else if (ss === 'out_for_delivery') ts = 'outfor';
-    else if (['in_transit','confirmed'].includes(ss)) ts = 'incurs';
-    else if (ss === 'label_printed') ts = 'incurs';
+    else if (ss === 'label_printed') ts = 'pending'; // AWB printat dar NEPREDAT curierului
+    else if (['in_transit','confirmed'].includes(ss)) {
+      // Curierul a scanat coletul (l-a preluat fizic)
+      // Dacă e in_transit de mai mult de 10 zile → xConnector nu a actualizat → livrat
+      if (fulfilledAt) {
+        const daysSince = (new Date() - new Date(fulfilledAt)) / (1000 * 60 * 60 * 24);
+        ts = daysSince > 10 ? 'livrat' : 'incurs';
+      } else {
+        ts = 'incurs';
+      }
+    }
     else if (o.fulfillment_status === 'fulfilled') {
-      // Dacă e fulfilled dar fără shipment_status explicit:
-      // - dacă fulfilledAt e mai vechi de 10 zile → considerat livrat (xConnector nu a actualizat)
-      // - dacă e recent → incurs (în drum, xConnector va actualiza)
       if (fulfilledAt) {
         const daysSince = (new Date() - new Date(fulfilledAt)) / (1000 * 60 * 60 * 24);
         ts = daysSince > 10 ? 'livrat' : 'incurs';
