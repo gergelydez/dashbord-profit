@@ -565,6 +565,13 @@ export default function Dashboard() {
     return false;
   };
 
+  // GLS status: prioritizăm Excel din MyGLS > Shopify/xConnector
+  const getGlsStatusFinal = (o) => {
+    const awb = (o.trackingNo || '').trim();
+    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
+    return o.ts;
+  };
+
   const livrateOrders = allOrders.filter(o => {
     // Statusul final: GLS Excel > Shopify
     const finalTs = o.courier === 'gls' ? getGlsStatusFinal(o) : o.ts;
@@ -609,13 +616,6 @@ export default function Dashboard() {
   // GLS livrate după fulfilledAt în perioada curentă
   const glsOrders  = orders.filter(o => o.courier === 'gls');
   const sdOrders   = orders.filter(o => o.courier === 'sameday');
-  // GLS status: prioritizăm Excel din MyGLS > Shopify/xConnector
-  const getGlsStatusFinal = (o) => {
-    const awb = (o.trackingNo || '').trim();
-    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
-    return o.ts;
-  };
-
   const glsLivrate = allOrders.filter(o => {
     if (o.courier !== 'gls') return false;
     const st = getGlsStatusFinal(o);
@@ -1317,4 +1317,3 @@ export default function Dashboard() {
     </>
   );
 }
-
