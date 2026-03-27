@@ -10,13 +10,12 @@ const ls = {
 
 const PS = 25;
 const STATUS_MAP = {
-  livrat:   { label: '✅ Livrat' },
-  incurs:   { label: '🚚 Tranzit' },
-  outfor:   { label: '📬 La curier' },
-  preluat:  { label: '📦 Preluat curier' },  // scanat de curier, în drum
-  retur:    { label: '↩️ Retur' },
-  anulat:   { label: '❌ Anulat' },
-  pending:  { label: '⏳ Neexpediat' },
+  livrat:  { label: '✅ Livrat' },
+  incurs:  { label: '🚚 Tranzit' },
+  outfor:  { label: '📬 La curier' },
+  retur:   { label: '↩️ Retur' },
+  anulat:  { label: '❌ Anulat' },
+  pending: { label: '⏳ Neexpediat' },
 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -60,11 +59,10 @@ function procOrder(o) {
     trackingNo = f.tracking_number || '';
     const ss = (f.shipment_status || '').toLowerCase();
     if (ss === 'delivered') ts = 'livrat';
-    else if (['failure','failed_attempt','returned','return_in_progress'].includes(ss)) ts = 'retur';
+    else if (['failure','failed_attempt','returned'].includes(ss)) ts = 'retur';
     else if (ss === 'out_for_delivery') ts = 'outfor';
-    else if (['in_transit','confirmed'].includes(ss)) ts = 'preluat';
-    else if (ss === 'label_printed') ts = 'pending';
-    else if (o.fulfillment_status === 'fulfilled') ts = 'incurs'; // fulfilled fără shipment_status = în tranzit
+    else if (['in_transit','confirmed','label_printed'].includes(ss)) ts = 'incurs';
+    else if (o.fulfillment_status === 'fulfilled') ts = 'incurs';
   }
   if (o.cancelled_at) ts = 'anulat';
   const addr = o.shipping_address || o.billing_address || {};
@@ -134,16 +132,16 @@ export default function Dashboard() {
 
   const [sbInvLoading, setSbInvLoading] = useState({});
   const [sbInvResults, setSbInvResults] = useState({});
-  const [sbInvSeries, setSbInvSeries]   = useState(() => { try { return ls.get('sb_inv_series') || ''; } catch { return ''; } });
+  const [sbInvSeries, setSbInvSeries]   = useState(() => ls.get('sb_inv_series') || '');
   const [sbInvSeriesList, setSbInvSeriesList] = useState([]);
   const [sbBulkLoading, setSbBulkLoading] = useState(false);
   const [invoiceModal, setInvoiceModal] = useState(null);
-  const [sbEmail, setSbEmail] = useState(() => { try { return ls.get('sb_email') || ''; } catch { return ''; } });
-  const [sbToken, setSbToken] = useState(() => { try { return ls.get('sb_token') || ''; } catch { return ''; } });
-  const [sbCif, setSbCif]     = useState(() => { try { return ls.get('sb_cif') || ''; } catch { return ''; } });
+  const [sbEmail, setSbEmail] = useState(() => ls.get('sb_email') || '');
+  const [sbToken, setSbToken] = useState(() => ls.get('sb_token') || '');
+  const [sbCif, setSbCif]     = useState(() => ls.get('sb_cif')   || '');
   const [sbCredsOpen, setSbCredsOpen] = useState(false);
-  const [sbUseStock, setSbUseStock]         = useState(() => { try { return ls.get('sb_use_stock') === 'true'; } catch { return false; } });
-  const [sbWarehouse, setSbWarehouse]       = useState(() => { try { return ls.get('sb_warehouse') || ''; } catch { return ''; } });
+  const [sbUseStock, setSbUseStock]         = useState(() => ls.get('sb_use_stock') === 'true');
+  const [sbWarehouse, setSbWarehouse]       = useState(() => ls.get('sb_warehouse') || '');
   const [sbWarehouseList, setSbWarehouseList] = useState([]);
   // Comenzi marcate manual ca Shopify Payments (salvate în localStorage)
   const [onlinePaymentIds, setOnlinePaymentIds] = useState(() => {
@@ -456,19 +454,9 @@ export default function Dashboard() {
   const n = orders.length;
   const cnt = s => orders.filter(o=>o.ts===s).length;
   const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
-  const incurs=cnt('incurs'), outfor=cnt('outfor'), preluat=cnt('preluat');
+  const incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
-  const sA=sum(['incurs','outfor','preluat']);
-  const { from: rFrom, to: rTo } = getRange(preset, customFrom, customTo);
-  const rFromD = new Date(rFrom + 'T00:00:00');
-  const rToD   = new Date(rTo   + 'T23:59:59');
-  const retururiDinPerioad = allOrders.filter(o => {
-    if (o.ts !== 'retur') return false;
-    if (orders.some(ord => ord.id === o.id)) return false;
-    const d = new Date(o.fulfilledAt || o.createdAt);
-    return d >= rFromD && d <= rToD;
-  });
-  const sR = sum(['retur','anulat']) + retururiDinPerioad.reduce((a,o)=>a+o.total,0);
+  const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
   // "Livrate" = comenzi cu fulfilledAt în intervalul selectat (nu createdAt!)
   // Astfel "Azi" arată 8 colete livrate azi, "Ieri" arată 5 livrate ieri
@@ -541,7 +529,7 @@ export default function Dashboard() {
   ).length;
 
   // COD total în drum (din perioada selectată)
-  const codInDrum = orders.filter(o => ['incurs','outfor','preluat'].includes(o.ts));
+  const codInDrum = orders.filter(o => ['incurs','outfor'].includes(o.ts));
   const sumCodInDrum = codInDrum.reduce((a,o) => a+o.total, 0);
 
   // Courier breakdown
@@ -566,16 +554,12 @@ export default function Dashboard() {
 
   const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
   const sdReturDetectat = orders.filter(o => o.courier==='sameday' && getSdStatus(o) === 'retur' && o.ts !== 'retur');
-  // Includem și retururile din allOrders cu fulfilledAt în perioada curentă
-  // (comenzi din alte perioade returnate în perioada selectată)
-  const returTotal = retur + sdReturDetectat.length + retururiDinPerioad.length;
+  const returTotal = retur + sdReturDetectat.length;
 
   const kpis = [
     {v:n,             lbl:'Total comenzi', e:'📦',color:'#f97316',p:100},
     {v:livrate,       lbl:'Livrate',       e:'✅',color:'#10b981',p:pct(livrate,n)},
-    {v:incurs+outfor+preluat, lbl:'În tranzit',    e:'🚚',color:'#3b82f6',p:pct(incurs+outfor+preluat,n)},
-    {v:preluat, lbl:'Preluat curier', e:'📦',color:'#f97316',p:pct(preluat,n)},
-    {v:outfor,  lbl:'La curier',      e:'📬',color:'#a855f7',p:pct(outfor,n)},
+    {v:incurs+outfor, lbl:'În tranzit',    e:'🚚',color:'#3b82f6',p:pct(incurs+outfor,n)},
     {v:returTotal,    lbl:'Retur',         e:'↩️',color:'#f43f5e',p:pct(returTotal,n)},
     {v:anulate,       lbl:'Anulate',       e:'❌',color:'#4a5568',p:pct(anulate,n)},
     {v:pend,          lbl:'Neexpediate',   e:'⏳',color:'#f59e0b',p:pct(pend,n)},
@@ -583,7 +567,7 @@ export default function Dashboard() {
 
   const slice = filtered.slice((pg-1)*PS, pg*PS);
   const pages = Math.ceil(filtered.length/PS);
-  const bc = {livrat:'badge-green',incurs:'badge-blue',outfor:'badge-purple',preluat:'badge-orange',retur:'badge-red',anulat:'badge-gray',pending:'badge-yellow'};
+  const bc = {livrat:'badge-green',incurs:'badge-blue',outfor:'badge-purple',retur:'badge-red',anulat:'badge-gray',pending:'badge-yellow'};
 
   return (
     <>
@@ -674,7 +658,6 @@ export default function Dashboard() {
         .badge-purple{background:rgba(168,85,247,.11);color:#a855f7;border:1px solid rgba(168,85,247,.2);}
         .badge-gray{background:rgba(100,116,139,.1);color:#4a5568;border:1px solid rgba(100,116,139,.2);}
         .badge-yellow{background:rgba(245,158,11,.11);color:#f59e0b;border:1px solid rgba(245,158,11,.2);}
-        .badge-orange{background:rgba(249,115,22,.11);color:#f97316;border:1px solid rgba(249,115,22,.2);}
         .ref{font-family:monospace;font-size:11px;color:#f97316;}
         .mg{font-family:monospace;font-weight:500;}
         .mg-g{color:#10b981;}.mg-r{color:#f43f5e;}.mg-y{color:#f59e0b;}.mg-m{color:#4a5568;font-style:italic;font-weight:400;}
@@ -725,7 +708,6 @@ export default function Dashboard() {
             {connected && <>
               <button className="bsm" onClick={fetchOrders}>⟳ Sincronizează</button>
               <a href="/profit" style={{background:'#10b981',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>💹 Profit</a>
-              <a href="/stats" style={{background:'#3b82f6',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>📊 Statistici</a>
               <button className="bsm" style={{borderColor:'rgba(244,63,94,.3)',color:'#f43f5e'}} onClick={disconnect}>✕</button>
             </>}
           </div>
@@ -952,7 +934,7 @@ export default function Dashboard() {
                   🚚 Livrate
                 </button>
               </div>
-              {['toate','livrat','outfor','incurs','preluat','retur','anulat','pending'].map(f=>(
+              {['toate','livrat','incurs','outfor','retur','anulat','pending'].map(f=>(
                 <button key={f} className={`fb ${filter===f?'active':''}`}
                   onClick={()=>{
                     setFilter(f);
@@ -1002,7 +984,7 @@ export default function Dashboard() {
                     ):slice.map(o=>{
                       const st=STATUS_MAP[o.ts]||{label:o.ts};
                       const bcc=bc[o.ts]||'badge-gray';
-                      const mc=o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':(o.ts==='pending'||o.ts==='preluat')?'mg-m':'mg-y';
+                      const mc=o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':'mg-y';
                       const mobH={display:'var(--mob-hide,table-cell)'};
                       return (
                         <tr key={o.id} style={o.fin==='paid'&&!o.hasInvoice?{background:'rgba(245,158,11,0.05)'}:{}}>
@@ -1252,3 +1234,4 @@ export default function Dashboard() {
     </>
   );
 }
+
