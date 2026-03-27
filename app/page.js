@@ -59,10 +59,11 @@ function procOrder(o) {
     trackingNo = f.tracking_number || '';
     const ss = (f.shipment_status || '').toLowerCase();
     if (ss === 'delivered') ts = 'livrat';
-    else if (['failure','failed_attempt','returned'].includes(ss)) ts = 'retur';
+    else if (['failure','failed_attempt','returned','failed_delivery','return_in_progress'].includes(ss)) ts = 'retur';
     else if (ss === 'out_for_delivery') ts = 'outfor';
-    else if (['in_transit','confirmed','label_printed'].includes(ss)) ts = 'incurs';
-    else if (o.fulfillment_status === 'fulfilled') ts = 'incurs';
+    else if (['in_transit','confirmed'].includes(ss)) ts = 'incurs';
+    else if (ss === 'label_printed') ts = 'incurs';
+    else if (o.fulfillment_status === 'fulfilled') ts = 'livrat';
   }
   if (o.cancelled_at) ts = 'anulat';
   const addr = o.shipping_address || o.billing_address || {};
@@ -88,11 +89,13 @@ function procOrder(o) {
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
     gateway: o.payment_gateway || '',
-    paidAt: o.processed_at || '',     // data când a fost plătită comanda
+    paidAt: o.processed_at || '',
     currency: o.presentment_currency || o.currency || 'RON',
     address: [addr.address1, addr.address2].filter(Boolean).join(', '),
     county: addr.province || '',
     clientEmail: o.email || '',
+    utmSource: o.utmSource || '', utmMedium: o.utmMedium || '',
+    utmCampaign: o.utmCampaign || '', referrerUrl: o.referrerUrl || '',
     items: (o.line_items || []).map(i => ({
       name: i.name || i.title || 'Produs',
       sku: i.sku || '',
@@ -132,18 +135,17 @@ export default function Dashboard() {
 
   const [sbInvLoading, setSbInvLoading] = useState({});
   const [sbInvResults, setSbInvResults] = useState({});
-  const [sbInvSeries, setSbInvSeries]   = useState(() => ls.get('sb_inv_series') || '');
+  const [sbInvSeries, setSbInvSeries]   = useState(() => { try { return ls.get('sb_inv_series') || ''; } catch { return ''; } });
   const [sbInvSeriesList, setSbInvSeriesList] = useState([]);
   const [sbBulkLoading, setSbBulkLoading] = useState(false);
   const [invoiceModal, setInvoiceModal] = useState(null);
-  const [sbEmail, setSbEmail] = useState(() => ls.get('sb_email') || '');
-  const [sbToken, setSbToken] = useState(() => ls.get('sb_token') || '');
-  const [sbCif, setSbCif]     = useState(() => ls.get('sb_cif')   || '');
+  const [sbEmail, setSbEmail] = useState(() => { try { return ls.get('sb_email') || ''; } catch { return ''; } });
+  const [sbToken, setSbToken] = useState(() => { try { return ls.get('sb_token') || ''; } catch { return ''; } });
+  const [sbCif, setSbCif]     = useState(() => { try { return ls.get('sb_cif')   || ''; } catch { return ''; } });
   const [sbCredsOpen, setSbCredsOpen] = useState(false);
-  const [sbUseStock, setSbUseStock]         = useState(() => ls.get('sb_use_stock') === 'true');
-  const [sbWarehouse, setSbWarehouse]       = useState(() => ls.get('sb_warehouse') || '');
+  const [sbUseStock, setSbUseStock]         = useState(() => { try { return ls.get('sb_use_stock') === 'true'; } catch { return false; } });
+  const [sbWarehouse, setSbWarehouse]       = useState(() => { try { return ls.get('sb_warehouse') || ''; } catch { return ''; } });
   const [sbWarehouseList, setSbWarehouseList] = useState([]);
-  // Comenzi marcate manual ca Shopify Payments (salvate în localStorage)
   const [onlinePaymentIds, setOnlinePaymentIds] = useState(() => {
     try { return JSON.parse(ls.get('online_payment_ids') || '[]'); } catch { return []; }
   });
@@ -155,7 +157,6 @@ export default function Dashboard() {
       return next;
     });
   };
-  // livreazaMode: 'create' (implicit) | 'fulfilled' (livrate în perioadă)
   const [deliveryMode, setDeliveryMode] = useState('create');
 
   const [preset, setPreset]         = useState('last_30');
@@ -180,15 +181,10 @@ export default function Dashboard() {
         const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
         applyDateFilter(parsed, 'last_30', '', '');
-        // Verifică dacă datele vechi au câmpul gateway
-        // Dacă nu → arată avertisment să resincronizeze
-        // gateway vine din GraphQL — detecție automată
       } catch {}
     }
   }, []);
 
-  // Filtrare DOAR după createdAt — sumarul arată comenzile create în perioadă
-  // Cardurile COD (azi/livrate) se calculează separat din allOrders
   const applyDateFilter = useCallback((ords, p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
     const fromD = new Date(from + 'T00:00:00');
@@ -213,9 +209,6 @@ export default function Dashboard() {
     setPg(1);
   }, []);
 
-  // Filtrare specială după fulfilledAt — pentru butonul "Livrate azi/ieri"
-  // orders = comenzile create în perioadă
-  // livrateInPeriod = toate comenzile livrate în perioada selectată (din allOrders)
   const getLivrateInPeriod = useCallback((p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
     const fromD = new Date(from + 'T00:00:00');
@@ -229,7 +222,6 @@ export default function Dashboard() {
 
   useEffect(() => { applyFilters(orders, filter, search, sortCol, sortDir, courierFilter); }, [orders, filter, search, sortCol, sortDir, courierFilter, applyFilters]);
 
-  // Când modul e 'fulfilled', recalculează tabelul după fulfilledAt
   useEffect(() => {
     if (deliveryMode === 'fulfilled') {
       const livrate = getLivrateInPeriod(preset, customFrom, customTo);
@@ -243,16 +235,15 @@ export default function Dashboard() {
     ls.set('gx_t', token);
     setLoading(true); setError('');
     try {
-      const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes,payment_gateway,processed_at';
       const yearAgo = toISO(new Date(new Date().setFullYear(new Date().getFullYear() - 1)));
-      const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${yearAgo}T00:00:00&fields=${fields}`;
+      const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${yearAgo}T00:00:00`;
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
       const processed = data.orders.map(procOrder);
       setAllOrders(processed);
       setConnected(true);
-      setError(''); // șterge avertismentul de cache vechi
+      setError('');
       const now = new Date();
       setLastFetch(now);
       ls.set('gx_orders_all', JSON.stringify(processed));
@@ -264,15 +255,14 @@ export default function Dashboard() {
 
   const handlePreset = (id) => {
     setPreset(id);
-    setDeliveryMode('create'); // resetează modul la schimbarea perioadei
+    setDeliveryMode('create');
     if (id !== 'custom') applyDateFilter(allOrders, id, customFrom, customTo);
   };
 
   const parseSamedayExcel = (e) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
-    setSdLoading(true);
-    setSdError('');
+    setSdLoading(true); setSdError('');
     const normalizeStatus = (raw) => {
       const s = (raw || '').toString().toLowerCase();
       if (s.includes('returnat') || s.includes('retur') || s.includes('refuzat') || s.includes('nepreluat')) return 'retur';
@@ -360,7 +350,6 @@ export default function Dashboard() {
         body: JSON.stringify({
           email: sbEmail, token: sbToken, cif: sbCif,
           seriesName: order._seriesOverride || sbInvSeries || undefined,
-          // Date Shopify pentru marcare automată post-generare
           shopifyDomain: ls.get('gx_d') || '',
           shopifyToken:  ls.get('gx_t') || '',
           order: {
@@ -371,7 +360,6 @@ export default function Dashboard() {
             currency: order.currency || 'RON',
             total: order.total,
             items: customItems || order.items || [],
-            // isPaid: dacă e paid cu card online, încasăm automat în SmartBill
             isPaid: order.fin === 'paid',
             useStock: sbUseStock,
             warehouseName: sbUseStock ? sbWarehouse : '',
@@ -381,28 +369,15 @@ export default function Dashboard() {
       const rawText = await res.text();
       let data;
       try { data = JSON.parse(rawText); }
-      catch {
-        data = res.status === 404
-          ? { error: 'Ruta /api/smartbill-invoice lipsește din repo.' }
-          : { error: `Server error ${res.status}` };
-      }
+      catch { data = { error: `Server error ${res.status}` }; }
       if (data.ok) {
         setSbInvResults(prev => ({ ...prev, [order.id]: {
           ok: true, number: data.number, series: data.series,
           collected: data.collected, shopifyMarked: data.shopifyMarked,
-          invoiceUrl: data.invoiceUrl,
-          stockDecreased: data.stockDecreased,
-          _debug: data._debug,
+          invoiceUrl: data.invoiceUrl, stockDecreased: data.stockDecreased, _debug: data._debug,
         }}));
         setAllOrders(prev => prev.map(o => o.id === order.id
-          ? {
-              ...o,
-              hasInvoice: true,
-              invoiceNumber: data.number,
-              invoiceSeries: data.series,
-              invoiceUrl: data.invoiceUrl || o.invoiceUrl,
-              invoiceShort: data.invoiceUrl || o.invoiceShort,
-            }
+          ? { ...o, hasInvoice: true, invoiceNumber: data.number, invoiceSeries: data.series, invoiceUrl: data.invoiceUrl || o.invoiceUrl, invoiceShort: data.invoiceUrl || o.invoiceShort }
           : o
         ));
       } else {
@@ -435,14 +410,8 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/smartbill-invoice?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&cif=${encodeURIComponent(cif)}`);
       const data = await res.json();
-      if (data.series?.length) {
-        setSbInvSeriesList(data.series);
-        if (!sbInvSeries) setSbInvSeries(data.series[0]);
-      }
-      if (data.warehouses?.length) {
-        setSbWarehouseList(data.warehouses);
-        if (!sbWarehouse) setSbWarehouse(data.warehouses[0]);
-      }
+      if (data.series?.length) { setSbInvSeriesList(data.series); if (!sbInvSeries) setSbInvSeries(data.series[0]); }
+      if (data.warehouses?.length) { setSbWarehouseList(data.warehouses); if (!sbWarehouse) setSbWarehouse(data.warehouses[0]); }
     } catch {}
   };
 
@@ -450,7 +419,6 @@ export default function Dashboard() {
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
   // ── KPI ──
-  // orders = comenzi CREATE în intervalul selectat (pentru Total, Tranzit, Retur, Neexpediate)
   const n = orders.length;
   const cnt = s => orders.filter(o=>o.ts===s).length;
   const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
@@ -458,23 +426,16 @@ export default function Dashboard() {
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
-  // "Livrate" = comenzi cu fulfilledAt în intervalul selectat (nu createdAt!)
-  // Astfel "Azi" arată 8 colete livrate azi, "Ieri" arată 5 livrate ieri
   const { from: rangeFrom, to: rangeTo } = getRange(preset, customFrom, customTo);
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
-  // isOnlinePayment — detectează comenzile plătite cu card online
-  // Gateway vine acum 100% corect din GraphQL API
-  const ONLINE_GW = ['shopify_payments','stripe','paypal','visa','mastercard'];
+
+  const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
-    // 1. Marcat manual → prioritate maximă
     if (onlinePaymentIds.includes(String(o.id))) return true;
-    // 2. Gateway din GraphQL — 100% fiabil
     const gw = (o.gateway || '').toLowerCase();
     if (gw) return ONLINE_GW.some(g => gw.includes(g));
-    // 3. pending → mereu COD
     if (o.fin === 'pending') return false;
-    // 4. paid fără gateway → COD
     return false;
   };
 
@@ -491,20 +452,11 @@ export default function Dashboard() {
   // ── COD calculations ──
   const now = new Date();
   const todayStr = toISO(now);
-
-  // Ziua de acum 2 zile (ex: dacă azi e 26 → data = 24)
   const twoDaysAgo = new Date(now); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
   const twoDaysAgoStr = toISO(twoDaysAgo);
   const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = toISO(yesterday);
 
-  // isCOD: exclude comenzi plătite cu card online la checkout
-  // COD = xConnector captured → gateway: 'cash', 'cod', 'manual', sau altele non-Shopify
-  // Card online = gateway: 'shopify_payments'
-
-  // COD de încasat azi:
-  // GLS: livrate pe data de 2 zile în urmă (ex: azi 26 → livrate pe 24)
-  // Sameday: livrate ieri (ex: azi 26 → livrate pe 25)
   const codIncasatAzi = allOrders.filter(o => {
     if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
     if (isOnlinePayment(o)) return false;
@@ -515,28 +467,35 @@ export default function Dashboard() {
   });
   const sumCodIncasatAzi = codIncasatAzi.reduce((a,o) => a+o.total, 0);
 
-  // COD livrate azi = colete cu fulfilledAt = azi, exclude plătite online
   const codLivrateAzi = allOrders.filter(o =>
-    o.ts === 'livrat' &&
-    !isOnlinePayment(o) &&
-    (o.fulfilledAt||'').slice(0,10) === todayStr
+    o.ts === 'livrat' && !isOnlinePayment(o) && (o.fulfilledAt||'').slice(0,10) === todayStr
   );
   const sumCodLivrateAzi = codLivrateAzi.reduce((a,o) => a+o.total, 0);
-  // Și pentru cardul "Livrate azi" COD (folosit în cardul verde din srow)
   const codLivrateAziTotal = allOrders.filter(o =>
-    o.ts === 'livrat' &&
-    (o.fulfilledAt||'').slice(0,10) === todayStr
+    o.ts === 'livrat' && (o.fulfilledAt||'').slice(0,10) === todayStr
   ).length;
 
-  // COD total în drum (din perioada selectată)
   const codInDrum = orders.filter(o => ['incurs','outfor'].includes(o.ts));
   const sumCodInDrum = codInDrum.reduce((a,o) => a+o.total, 0);
 
-  // Courier breakdown
+  // GLS livrate după fulfilledAt în perioada curentă
   const glsOrders  = orders.filter(o => o.courier === 'gls');
   const sdOrders   = orders.filter(o => o.courier === 'sameday');
-  const glsLivrate = glsOrders.filter(o => o.ts === 'livrat').length;
-  const glsRetur   = glsOrders.filter(o => o.ts === 'retur').length;
+  const glsLivrate = allOrders.filter(o => {
+    if (o.courier !== 'gls' || o.ts !== 'livrat') return false;
+    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
+    return fd && fd >= rangeFromD && fd <= rangeToD;
+  }).length;
+  const glsRetur = glsOrders.filter(o => o.ts === 'retur').length;
+
+  // Retururi suplimentare (din alte perioade, returnate în perioada curentă)
+  const retururiExtra = allOrders.filter(o => {
+    if (o.ts !== 'retur') return false;
+    if (orders.some(x => x.id === o.id)) return false;
+    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
+    return fd && fd >= rangeFromD && fd <= rangeToD;
+  });
+  const returTotal = retur + retururiExtra.length;
 
   const courierBadgeCount = (courierId) => {
     return orders.filter(o => {
@@ -554,15 +513,14 @@ export default function Dashboard() {
 
   const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
   const sdReturDetectat = orders.filter(o => o.courier==='sameday' && getSdStatus(o) === 'retur' && o.ts !== 'retur');
-  const returTotal = retur + sdReturDetectat.length;
 
   const kpis = [
-    {v:n,             lbl:'Total comenzi', e:'📦',color:'#f97316',p:100},
-    {v:livrate,       lbl:'Livrate',       e:'✅',color:'#10b981',p:pct(livrate,n)},
-    {v:incurs+outfor, lbl:'În tranzit',    e:'🚚',color:'#3b82f6',p:pct(incurs+outfor,n)},
-    {v:returTotal,    lbl:'Retur',         e:'↩️',color:'#f43f5e',p:pct(returTotal,n)},
-    {v:anulate,       lbl:'Anulate',       e:'❌',color:'#4a5568',p:pct(anulate,n)},
-    {v:pend,          lbl:'Neexpediate',   e:'⏳',color:'#f59e0b',p:pct(pend,n)},
+    {v:n,          lbl:'Total comenzi', e:'📦',color:'#f97316',p:100},
+    {v:livrate,    lbl:'Livrate',       e:'✅',color:'#10b981',p:pct(livrate,n)},
+    {v:incurs+outfor, lbl:'În tranzit', e:'🚚',color:'#3b82f6',p:pct(incurs+outfor,n)},
+    {v:returTotal, lbl:'Retur',         e:'↩️',color:'#f43f5e',p:pct(returTotal,n)},
+    {v:anulate,    lbl:'Anulate',       e:'❌',color:'#4a5568',p:pct(anulate,n)},
+    {v:pend,       lbl:'Neexpediate',   e:'⏳',color:'#f59e0b',p:pct(pend,n)},
   ];
 
   const slice = filtered.slice((pg-1)*PS, pg*PS);
@@ -708,6 +666,7 @@ export default function Dashboard() {
             {connected && <>
               <button className="bsm" onClick={fetchOrders}>⟳ Sincronizează</button>
               <a href="/profit" style={{background:'#10b981',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>💹 Profit</a>
+              <a href="/stats" style={{background:'#3b82f6',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>📊 Statistici</a>
               <button className="bsm" style={{borderColor:'rgba(244,63,94,.3)',color:'#f43f5e'}} onClick={disconnect}>✕</button>
             </>}
           </div>
@@ -807,7 +766,6 @@ export default function Dashboard() {
                     ? <>{codLivrateAzi.length} COD din {codLivrateAziTotal} livrate · ramburs pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}</>
                     : `Nicio livrare COD pe ${todayStr.split('-').reverse().join('.')}`}
                 </div>
-
               </div></div>
               {sR>0 && (
                 <div className="sc sc3"><div className="si">↩️</div><div>
@@ -818,7 +776,6 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* INVOICE WARNING */}
             {noInvoicePaid.length > 0 && (
               <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.25)',borderRadius:10,padding:'10px 14px',marginBottom:10,fontSize:12}}>
                 <div style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:8,flexWrap:'wrap'}}>
@@ -870,7 +827,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* COURIER BREAKDOWN */}
             {(glsOrders.length > 0 || sdOrders.length > 0) && (
               <div className="courier-grid" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
                 <div style={{background:'#0f1419',border:'1px solid #f97316',borderRadius:10,padding:'12px 14px'}}>
@@ -919,27 +875,19 @@ export default function Dashboard() {
 
             <div className="stitle">Comenzi</div>
             <div className="frow" style={{marginBottom:5}}>
-              {/* Toggle mod: comenzi create vs livrate în perioadă */}
               <div style={{display:'flex',gap:4,background:'#0a0f14',border:'1px solid #1e2a35',borderRadius:20,padding:'3px 4px',marginRight:4}}>
-                <button
-                  className={`fb ${deliveryMode==='create'?'active':''}`}
-                  style={{padding:'3px 10px',fontSize:10,borderRadius:16}}
+                <button className={`fb ${deliveryMode==='create'?'active':''}`} style={{padding:'3px 10px',fontSize:10,borderRadius:16}}
                   onClick={()=>{setDeliveryMode('create'); applyFilters(orders,filter,search,sortCol,sortDir,courierFilter);}}>
                   📦 Create
                 </button>
-                <button
-                  className={`fb ${deliveryMode==='fulfilled'?'active':''}`}
-                  style={{padding:'3px 10px',fontSize:10,borderRadius:16}}
+                <button className={`fb ${deliveryMode==='fulfilled'?'active':''}`} style={{padding:'3px 10px',fontSize:10,borderRadius:16}}
                   onClick={()=>setDeliveryMode('fulfilled')}>
                   🚚 Livrate
                 </button>
               </div>
               {['toate','livrat','incurs','outfor','retur','anulat','pending'].map(f=>(
                 <button key={f} className={`fb ${filter===f?'active':''}`}
-                  onClick={()=>{
-                    setFilter(f);
-                    if(deliveryMode==='create') applyFilters(orders,f,search,sortCol,sortDir,courierFilter);
-                  }}>
+                  onClick={()=>{setFilter(f); if(deliveryMode==='create') applyFilters(orders,f,search,sortCol,sortDir,courierFilter);}}>
                   {f==='toate'?'Toate':STATUS_MAP[f]?.label||f}
                 </button>
               ))}
@@ -997,17 +945,9 @@ export default function Dashboard() {
                           <td style={{whiteSpace:'nowrap'}}>
                             <span className={`mg ${mc}`}>{fmt(o.total)} RON</span>
                             {' '}
-                            <button
-                              onClick={(e)=>{e.stopPropagation();toggleOnlinePayment(o.id);}}
-                              title={isOnlinePayment(o)?'Card online (Shopify Payments) — click = COD':'COD/Ramburs — click = Card online'}
-                              style={{
-                                background: isOnlinePayment(o)?'rgba(59,130,246,.2)':'rgba(74,85,104,.15)',
-                                border: `1px solid ${isOnlinePayment(o)?'#3b82f6':'#4a5568'}`,
-                                color: isOnlinePayment(o)?'#3b82f6':'#94a3b8',
-                                borderRadius:4, padding:'1px 5px', fontSize:9,
-                                cursor:'pointer', lineHeight:1.4,
-                              }}
-                            >
+                            <button onClick={(e)=>{e.stopPropagation();toggleOnlinePayment(o.id);}}
+                              title={isOnlinePayment(o)?'Card online — click = COD':'COD — click = Card online'}
+                              style={{background:isOnlinePayment(o)?'rgba(59,130,246,.2)':'rgba(74,85,104,.15)',border:`1px solid ${isOnlinePayment(o)?'#3b82f6':'#4a5568'}`,color:isOnlinePayment(o)?'#3b82f6':'#94a3b8',borderRadius:4,padding:'1px 5px',fontSize:9,cursor:'pointer',lineHeight:1.4}}>
                               {isOnlinePayment(o)?'💳 Card':'💵 COD'}
                             </button>
                           </td>
@@ -1022,19 +962,12 @@ export default function Dashboard() {
                                 </a>
                                 <span style={{fontSize:8,color:'#4a5568',lineHeight:1.3}}>
                                   {invRes.collected&&'💰 '}{invRes.shopifyMarked&&'🔗 '}
-                                  {invRes.stockDecreased
-                                    ? <span style={{color:'#10b981'}}>📦 stoc scăzut</span>
-                                    : <span style={{color:'#f59e0b'}}>⚠ fără gestiune</span>}
+                                  {invRes.stockDecreased?<span style={{color:'#10b981'}}>📦 stoc scăzut</span>:<span style={{color:'#f59e0b'}}>⚠ fără gestiune</span>}
                                 </span>
-                                {invRes._debug&&!invRes.stockDecreased&&(
-                                  <span style={{fontSize:7,color:'#4a5568',lineHeight:1.2}}>
-                                    gest: {invRes._debug.warehouseName||'lipsă'} | SKU: {invRes._debug.productsWithCode}/{invRes._debug.totalProducts}
-                                  </span>
-                                )}
                               </div>
                             );
                             if(invRes?.error) return <div style={{display:'flex',flexDirection:'column',gap:2}}>
-                              <span style={{fontSize:9,color:'#f43f5e',lineHeight:1.3}}>✗ {invRes.error.slice(0,60)}{invRes.error.length>60?'…':''}</span>
+                              <span style={{fontSize:9,color:'#f43f5e',lineHeight:1.3}}>✗ {invRes.error.slice(0,60)}</span>
                               <button onClick={()=>openInvoiceModal(o)} style={{fontSize:8,background:'transparent',border:'1px solid #f43f5e',color:'#f43f5e',borderRadius:4,padding:'1px 5px',cursor:'pointer'}}>↺ Retry</button>
                             </div>;
                             if(o.hasInvoice) return <a href={o.invoiceShort||o.invoiceUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:'#10b981',fontFamily:'monospace',textDecoration:'none'}}>{o.invoiceNumber?`#${o.invoiceNumber}`:'✓ Vezi'} ↗</a>;
@@ -1078,7 +1011,6 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* MODAL EDITARE PRODUSE FACTURĂ */}
       {invoiceModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.75)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}}
           onClick={e=>{if(e.target===e.currentTarget)setInvoiceModal(null);}}>
@@ -1101,27 +1033,21 @@ export default function Dashboard() {
                     placeholder="ex: GLA, FACT..."
                     style={{flex:1,background:'#161d24',border:'1px solid #3b82f6',color:'#e8edf2',padding:'5px 8px',borderRadius:6,fontSize:12,outline:'none'}} />
               }
-              {!(invoiceModal.seriesInput||sbInvSeries)&&<span style={{fontSize:9,color:'#f43f5e'}}>⚠ obligatoriu</span>}
             </div>
-            {/* Toggle descărcare stoc */}
             <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,padding:'8px 10px',background:'#080c10',borderRadius:8,border:'1px solid #243040'}}>
               <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',flex:1}}>
                 <div onClick={()=>{setSbUseStock(v=>{ls.set('sb_use_stock',String(!v));return !v;})}}
                   style={{width:32,height:18,borderRadius:9,background:sbUseStock?'#10b981':'#243040',position:'relative',cursor:'pointer',transition:'background .2s',flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:7,background:'white',position:'absolute',top:2,left:sbUseStock?16:2,transition:'left .2s'}}/>
                 </div>
-                <span style={{fontSize:11,color:sbUseStock?'#10b981':'#94a3b8'}}>
-                  Descarcă stoc din gestiune SmartBill
-                </span>
+                <span style={{fontSize:11,color:sbUseStock?'#10b981':'#94a3b8'}}>Descarcă stoc din gestiune SmartBill</span>
               </label>
-              {sbUseStock && <span style={{fontSize:9,color:'#f59e0b'}}>⚠ necesită gestiune configurată</span>}
             </div>
             {sbUseStock && (
               <div style={{marginTop:-8,marginBottom:12,display:'flex',alignItems:'center',gap:8,padding:'6px 10px',background:'#080c10',borderRadius:8,border:'1px solid #243040'}}>
                 <span style={{fontSize:10,color:'#94a3b8',whiteSpace:'nowrap'}}>Gestiune:</span>
                 {sbWarehouseList.length > 0
-                  ? <select value={sbWarehouse}
-                      onChange={e=>{setSbWarehouse(e.target.value);ls.set('sb_warehouse',e.target.value);}}
+                  ? <select value={sbWarehouse} onChange={e=>{setSbWarehouse(e.target.value);ls.set('sb_warehouse',e.target.value);}}
                       style={{flex:1,background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'4px 8px',borderRadius:6,fontSize:11}}>
                       {sbWarehouseList.map(w=><option key={w} value={w}>{w}</option>)}
                     </select>
@@ -1200,7 +1126,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* MODAL CREDENȚIALE SMARTBILL */}
       {sbCredsOpen&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.8)',zIndex:1100,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={e=>{if(e.target===e.currentTarget)setSbCredsOpen(false);}}>
@@ -1208,9 +1133,6 @@ export default function Dashboard() {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
               <div style={{fontSize:14,fontWeight:700,color:'#e8edf2'}}>🔑 Credențiale SmartBill</div>
               <button onClick={()=>setSbCredsOpen(false)} style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'3px 9px',cursor:'pointer'}}>✕</button>
-            </div>
-            <div style={{fontSize:11,color:'#94a3b8',marginBottom:14,lineHeight:1.6,background:'rgba(59,130,246,.07)',borderRadius:7,padding:'8px 11px'}}>
-              Aceleași credențiale ca în pagina <strong style={{color:'#3b82f6'}}>Profit → SmartBill</strong>.<br/>Se salvează automat.
             </div>
             {[
               {label:'Email cont SmartBill',val:sbEmail,set:setSbEmail,key:'sb_email',type:'text',ph:'email@firma.ro'},
