@@ -71,6 +71,19 @@ export default function Stats() {
     });
   }, [allOrders, from, to]);
 
+  // livrateInPeriod = comenzi livrate în intervalul selectat (după fulfilledAt)
+  // Folosit pentru KPI livrate, financiar, produse top
+  const livrateInPeriod = useMemo(() => {
+    const fromD = new Date(from + 'T00:00:00');
+    const toD   = new Date(to   + 'T23:59:59');
+    return allOrders.filter(o => {
+      if (o.ts !== 'livrat' && !(o.courier === 'sameday')) return false;
+      const livDate = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
+      if (!livDate) return false;
+      return livDate >= fromD && livDate <= toD;
+    });
+  }, [allOrders, from, to]);
+
   // getSdStatus: prioritizează Excel > Shopify pentru Sameday
   const getSdStatus = (o) => {
     const awb = (o.trackingNo || '').trim();
@@ -80,11 +93,12 @@ export default function Stats() {
 
   const stats = useMemo(() => {
     const total    = orders.length;
-    // Pentru livrate/retururi: folosim getSdStatus pentru Sameday, ts pentru restul
-    const livrate  = orders.filter(o => {
+    // livrate = comenzi livrate în perioada selectată (după fulfilledAt)
+    const livrate = livrateInPeriod.filter(o => {
       if (o.courier === 'sameday') return getSdStatus(o) === 'livrat';
       return o.ts === 'livrat';
     });
+    // retururi din comenzile create în perioadă
     const retururi = orders.filter(o => {
       if (o.courier === 'sameday') return getSdStatus(o) === 'retur';
       return o.ts === 'retur';
@@ -93,13 +107,16 @@ export default function Stats() {
     const tranzit  = orders.filter(o => ['incurs','outfor'].includes(o.ts));
     const pending  = orders.filter(o => o.ts === 'pending');
 
-    const gls      = orders.filter(o => o.courier === 'gls');
-    const sameday  = orders.filter(o => o.courier === 'sameday');
+    // Courier breakdown din livrateInPeriod
+    const gls      = livrateInPeriod.filter(o => o.courier === 'gls' && o.ts === 'livrat');
+    const sameday  = livrateInPeriod.filter(o => o.courier === 'sameday');
+    const glsAll   = orders.filter(o => o.courier === 'gls');
+    const sdAll    = orders.filter(o => o.courier === 'sameday');
 
-    const glsLiv   = gls.filter(o => o.ts === 'livrat');
-    const sdLiv    = sameday.filter(o => getSdStatus(o) === 'livrat');
-    const glsRet   = gls.filter(o => o.ts === 'retur');
-    const sdRet    = sameday.filter(o => getSdStatus(o) === 'retur');
+    const glsLiv   = gls.length;
+    const sdLiv    = sameday.filter(o => getSdStatus(o) === 'livrat').length;
+    const glsRet   = orders.filter(o => o.courier === 'gls' && o.ts === 'retur').length;
+    const sdRet    = orders.filter(o => o.courier === 'sameday' && getSdStatus(o) === 'retur').length;
 
     const codOrders    = orders.filter(o => !isOnlinePayment(o, onlineIds));
     const onlineOrders = orders.filter(o =>  isOnlinePayment(o, onlineIds));
@@ -187,24 +204,42 @@ export default function Stats() {
     const avgOrder    = livrate.length ? sumLivrate / livrate.length : 0;
 
     // ── Încasări pe zile ──
-    // Grupează livratele după data livrării și calculează suma per zi
+    // Calculează data REALĂ a încasării (nu data livrării):
+    // GLS COD: livrare + 2 zile → banii intră în cont
+    // Sameday COD: livrare + 1 zi
+    // Shopify Payments: livrare + 2 zile (payout)
+    const addDaysToStr = (str, n) => {
+      if (!str) return '';
+      const d = new Date(str); d.setDate(d.getDate() + n);
+      const p = x => String(x).padStart(2,'0');
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+    };
+
     const incasariPerZi = {};
-    livrate.forEach(o => {
-      const zi = (o.fulfilledAt||o.createdAt||'').slice(0,10);
-      if (!zi) return;
-      if (!incasariPerZi[zi]) incasariPerZi[zi] = { gls:0, sameday:0, shopify:0, total:0, count:0 };
-      const net = isOnlinePayment(o, onlineIds)
-        ? o.total * (1 - shopifyFeePercent/100) - shopifyFeeFixed
-        : o.total;
-      if (o.courier === 'gls')          incasariPerZi[zi].gls     += o.total;
-      else if (o.courier === 'sameday') incasariPerZi[zi].sameday += o.total;
-      else if (isOnlinePayment(o, onlineIds)) incasariPerZi[zi].shopify += net;
-      incasariPerZi[zi].total += isOnlinePayment(o, onlineIds) ? net : o.total;
-      incasariPerZi[zi].count++;
+    allOrders.forEach(o => {
+      if (o.ts !== 'livrat' || !o.fulfilledAt) return;
+      const livStr = o.fulfilledAt.slice(0,10);
+      const isOnline = isOnlinePayment(o, onlineIds);
+      const net = isOnline ? o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed : o.total;
+
+      // Data încasării = livrare + zile specifice curierului
+      let incasareStr = '';
+      if (o.courier === 'gls' && !isOnline)     incasareStr = addDaysToStr(livStr, 2);
+      else if (o.courier === 'sameday' && !isOnline) incasareStr = addDaysToStr(livStr, 1);
+      else if (isOnline)                         incasareStr = addDaysToStr(livStr, 2);
+      else                                       incasareStr = addDaysToStr(livStr, 2);
+
+      if (!incasareStr) return;
+      if (!incasariPerZi[incasareStr]) incasariPerZi[incasareStr] = { gls:0, sameday:0, shopify:0, total:0, count:0 };
+      if (o.courier === 'gls' && !isOnline)          incasariPerZi[incasareStr].gls     += o.total;
+      else if (o.courier === 'sameday' && !isOnline) incasariPerZi[incasareStr].sameday += o.total;
+      else if (isOnline)                             incasariPerZi[incasareStr].shopify += net;
+      incasariPerZi[incasareStr].total += isOnline ? net : o.total;
+      incasariPerZi[incasareStr].count++;
     });
     const incasariList = Object.entries(incasariPerZi)
       .sort((a,b) => b[0].localeCompare(a[0]))
-      .slice(0, 30);
+      .slice(0, 60);
 
     // ── Previziuni încasări azi și mâine ──
     const nowDate  = new Date();
@@ -253,16 +288,15 @@ export default function Stats() {
       incasariList, previziuni,
       totalGLS, totalSameday, totalShopify, totalShopifyBrut,
       anulate: anulate.length, tranzit: tranzit.length, pending: pending.length,
-      gls: gls.length, sameday: sameday.length,
-      glsLiv: glsLiv.length, sdLiv: sdLiv.length,
-      glsRet: glsRet.length, sdRet: sdRet.length,
+      gls: glsAll.length, sameday: sdAll.length,
+      glsLiv, sdLiv, glsRet, sdRet,
       codCount: codOrders.length, onlineCount: onlineOrders.length,
       sumLivrate, sumCOD, sumOnline, sumRetur, sumTranzit, totalRevenue,
       rataLivrare, rataRetur, avgOrder,
       topProd, avgPrice, prodList: prodList.slice(0, 10),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed]);
+  }, [orders, livrateInPeriod, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed]);
 
   const Bar = ({ pct, color }) => (
     <div style={{height:4,background:'#1e2a35',borderRadius:2,overflow:'hidden',marginTop:4}}>
@@ -431,7 +465,7 @@ export default function Stats() {
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
               <thead>
                 <tr style={{background:'#161d24'}}>
-                  {['Data livrare','Colete','📦 GLS','🚀 Sameday','💳 Shopify','Total'].map(h=>(
+                  {['Data încasare','Colete','📦 GLS','🚀 Sameday','💳 Shopify','Total'].map(h=>(
                     <th key={h} style={{padding:'8px 12px',textAlign:h==='Data livrare'?'left':'right',fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1,whiteSpace:'nowrap'}}>{h}</th>
                   ))}
                 </tr>
@@ -463,7 +497,7 @@ export default function Stats() {
           <div style={{background:'#0d1520',border:'1px solid #f97316',borderRadius:12,padding:'16px 18px'}}>
             <div style={{fontSize:12,color:'#f97316',fontWeight:700,marginBottom:12,fontFamily:'monospace'}}>📦 GLS</div>
             {[
-              ['Total expediate', stats.gls,    '#e8edf2'],
+              ['Livrate în perioadă', stats.glsLiv, '#e8edf2'],
               ['✅ Livrate',       stats.glsLiv, '#10b981'],
               ['↩️ Returnate',    stats.glsRet, '#f43f5e'],
             ].map(([l,v,c])=>(
@@ -472,9 +506,9 @@ export default function Stats() {
                 <span style={{fontSize:13,fontWeight:700,color:c,fontFamily:'monospace'}}>{v}</span>
               </div>
             ))}
-            {stats.gls > 0 && <Bar pct={stats.glsLiv/stats.gls*100} color="#10b981"/>}
-            {stats.gls > 0 && <div style={{fontSize:10,color:'#4a5568',marginTop:4}}>
-              {Math.round(stats.glsLiv/stats.gls*100)}% livrare · {Math.round(stats.glsRet/stats.gls*100)}% retur
+            {stats.glsLiv > 0 && <Bar pct={100} color="#10b981"/>}
+            {stats.glsLiv > 0 && <div style={{fontSize:10,color:'#4a5568',marginTop:4}}>
+              {stats.glsLiv} livrate în perioadă · {stats.glsRet} retururi
             </div>}
           </div>
 
@@ -482,7 +516,7 @@ export default function Stats() {
           <div style={{background:'#0d1520',border:'1px solid #3b82f6',borderRadius:12,padding:'16px 18px'}}>
             <div style={{fontSize:12,color:'#3b82f6',fontWeight:700,marginBottom:12,fontFamily:'monospace'}}>🚀 Sameday</div>
             {[
-              ['Total expediate', stats.sameday, '#e8edf2'],
+              ['Livrate în perioadă', stats.sdLiv, '#e8edf2'],
               ['✅ Livrate',       stats.sdLiv,   '#10b981'],
               ['↩️ Returnate',    stats.sdRet,   '#f43f5e'],
             ].map(([l,v,c])=>(
@@ -491,9 +525,9 @@ export default function Stats() {
                 <span style={{fontSize:13,fontWeight:700,color:c,fontFamily:'monospace'}}>{v}</span>
               </div>
             ))}
-            {stats.sameday > 0 && <Bar pct={stats.sdLiv/stats.sameday*100} color="#10b981"/>}
-            {stats.sameday > 0 && <div style={{fontSize:10,color:'#4a5568',marginTop:4}}>
-              {Math.round(stats.sdLiv/stats.sameday*100)}% livrare · {Math.round(stats.sdRet/stats.sameday*100)}% retur
+            {stats.sdLiv > 0 && <Bar pct={100} color="#10b981"/>}
+            {stats.sdLiv > 0 && <div style={{fontSize:10,color:'#4a5568',marginTop:4}}>
+              {stats.sdLiv} livrate în perioadă · {stats.sdRet} retururi
             </div>}
           </div>
         </div>
