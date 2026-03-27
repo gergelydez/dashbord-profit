@@ -87,7 +87,11 @@ function procOrder(o) {
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
-    gateway: o.payment_gateway || '',  // 'shopify_payments' = card online
+    gateway: o.payment_gateway || '',
+    // Debug: salvăm toate câmpurile care pot indica metoda de plată
+    paymentDetails: JSON.stringify(o.payment_details || {}),
+    checkoutId: o.checkout_id || '',
+    sourceIdentifier: o.source_identifier || '',
     paidAt: o.processed_at || '',     // data când a fost plătită comanda
     currency: o.presentment_currency || o.currency || 'RON',
     address: [addr.address1, addr.address2].filter(Boolean).join(', '),
@@ -798,7 +802,7 @@ export default function Dashboard() {
                 {/* Debug temporar — arată fiecare comandă livrată azi */}
                 {allOrders.filter(o => o.ts==='livrat' && (o.fulfilledAt||'').slice(0,10)===todayStr).map(o => (
                   <div key={o.id} style={{fontSize:8,color:'#4a5568',marginTop:2,lineHeight:1.4}}>
-                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · gw:{o.gateway||'?'} · fin:{o.fin}
+                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · gw:{o.gateway||'?'} · pd:{o.paymentDetails||'{}'}
                   </div>
                 ))}
               </div></div>
