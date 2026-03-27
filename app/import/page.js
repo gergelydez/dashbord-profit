@@ -133,11 +133,19 @@ export default function ImportCalc() {
       });
 
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      const text = data.text || '';
-      const match = text.match(/\{[\s\S]*?\}/);
-      if (!match) throw new Error('Format răspuns invalid');
-      const parsed = JSON.parse(match[0]);
+      if (data.error && !data.parsed) throw new Error(data.error);
+      // API returnează parsed direct sau text brut
+      let parsed;
+      if (data.parsed) {
+        parsed = data.parsed;
+      } else {
+        const text = data.text || '';
+        const match = text.match(/\{[\s\S]*\}/);
+        if (!match) throw new Error('Format răspuns invalid');
+        parsed = JSON.parse(match[0]);
+      }
+      // Găsim JSON-ul în răspuns - poate fi înconjurat de text
+      // parsed e deja definit mai sus
 
       if (type === 'dvi') {
         if (parsed.cursSchimb) setCursValutar(String(parsed.cursSchimb));
