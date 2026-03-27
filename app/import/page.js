@@ -129,7 +129,7 @@ export default function ImportCalc() {
       const res = await fetch('/api/parse-import-pdf', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ base64, type, system })
+        body: JSON.stringify({ base64, type })
       });
 
       const data = await res.json();
