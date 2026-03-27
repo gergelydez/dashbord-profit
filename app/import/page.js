@@ -210,7 +210,7 @@ export default function ImportCalc() {
     : (totalRON_f + tRON + taxaV_RON_global + comRON_faraTVA) * (parseFloat(tvaPercent)||21) / 100;
 
   const totalCosturiGlobal = tRON + taxaV_RON_global + comRON + tva_RON_global;
-  const totalCostRON = totalRON_f + totalCosturiGlobal;
+  const totalCostRON = totalRON_f + totalCosturiGlobal; // recalculat din prods mai jos
 
   // Cost per produs cu taxe din DVI per segment
   // Transport și comision se împart la totalQty (toți produsele)
@@ -223,9 +223,25 @@ export default function ImportCalc() {
     const valUSD = qty * unitUSD;
     const valRON = valUSD * curs;
 
-    // Caută segmentul DVI corespunzător acestui produs
-    // Dacă avem segmente DVI, le folosim în ordine
-    const seg = dviSegmente.length > 0 ? dviSegmente[Math.min(idx, dviSegmente.length-1)] : null;
+    // Mapăm fiecare produs la segmentul DVI corect:
+    // - Produsele cu taxă vamală setată explicit la 0 → segmentul cu taxă 0% (printer)
+    // - Restul → segmentul principal (ceasuri)
+    let seg = null;
+    if (dviSegmente.length > 0) {
+      const isPrinter = p.taxaVamala === '0' || 
+        (p.name||'').toLowerCase().includes('printer') || 
+        (p.name||'').toLowerCase().includes('server') ||
+        (p.sku||'').toLowerCase().includes('server');
+      if (isPrinter) {
+        // Caută segmentul cu taxă vamală 0
+        seg = dviSegmente.find(s => (s.taxaVamalaPercent||0) === 0 || (s.taxaVamalaRON||0) === 0)
+           || dviSegmente[dviSegmente.length - 1];
+      } else {
+        // Caută primul segment cu taxă vamală > 0 (ceasurile)
+        seg = dviSegmente.find(s => (s.taxaVamalaRON||0) > 0)
+           || dviSegmente[0];
+      }
+    }
 
     const tvaPPerc = parseFloat(p.tvaPercent) || 21;
 
@@ -262,6 +278,11 @@ export default function ImportCalc() {
       costuri, totalP, costUnit, tvPerc, tvaPPerc,
       dinDVI: !!seg};
   });
+
+  // Total real = suma tuturor produselor cu taxele corecte din DVI
+  const totalCostRON_real = dviSegmente.length > 0
+    ? prods.reduce((s,p) => s + p.totalP, 0)
+    : totalCostRON;
 
   const exportJSON = () => {
     const data = {
@@ -575,7 +596,7 @@ export default function ImportCalc() {
                   [`🛃 Taxe vamale${taxaVamalaRON?' (DVI)':' per produs'}`, fmtRON(taxaV_RON_global), '#f59e0b'],
                   [`🏢 Comision DHL (cu TVA: ${comRON.toFixed(2)} RON)`, fmtRON(comRON), '#94a3b8'],
                   [`💰 TVA${tvaRON_dvi?' (DVI)':` ${tvaPercent}%`}`, fmtRON(tva_RON_global), '#a855f7'],
-                  ['📦 TOTAL (cu TVA)', fmtRON(totalCostRON), '#f97316'],
+                  ['📦 TOTAL (cu TVA)', fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON), '#f97316'],
                 ].map(([l,v,c], i) => (
                   <div key={l} className="bdr" style={{fontWeight:i===5?800:400}}>
                     <span style={{color:i===5?'#f97316':'#64748b'}}>{l}</span>
@@ -617,7 +638,7 @@ export default function ImportCalc() {
               ))}
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:12,marginTop:6,borderTop:'2px solid rgba(249,115,22,.2)'}}>
                 <span style={{fontSize:16,fontWeight:800}}>TOTAL (cu TVA inclus)</span>
-                <span style={{fontSize:22,fontWeight:900,color:'#f97316',fontFamily:'monospace'}}>{fmtRON(totalCostRON)}</span>
+                <span style={{fontSize:22,fontWeight:900,color:'#f97316',fontFamily:'monospace'}}>{fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON)}</span>
               </div>
               <div style={{textAlign:'right',marginTop:6,fontSize:11,color:'#475569'}}>
                 {totalQty} buc · cost mediu <strong style={{color:'#f97316'}}>{fmtRON(totalQty>0?totalCostRON/totalQty:0)}</strong> / buc
@@ -718,7 +739,7 @@ export default function ImportCalc() {
                       <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:700}}>${fmt(totalUSD)}</td>
                       <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:700}}>{fmtRON(totalRON_f)}</td>
                       <td colSpan={3}></td>
-                      <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:15}}>{fmtRON(totalCostRON)}</td>
+                      <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:15}}>{fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON)}</td>
                     </tr>
                   </tbody>
                 </table>
