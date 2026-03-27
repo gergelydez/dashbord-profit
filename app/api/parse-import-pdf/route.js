@@ -4,10 +4,16 @@ export async function POST(request) {
   try {
     const { base64, type } = await request.json();
 
+    // API key din Vercel Environment Variables
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: 'ANTHROPIC_API_KEY lipsește din Environment Variables Vercel' }, { status: 500 });
+    }
+
     const system = type === 'dvi'
-      ? `Ești expert în declarații vamale românești (DVI). Răspunde DOAR cu JSON valid, fără alt text:
+      ? `Ești expert în declarații vamale românești. Răspunde DOAR cu JSON valid, fără alt text înainte sau după:
 {"cursSchimb":4.3046,"taxaVamalaPercent":3.7,"taxaVamalaRON":419,"tvaPercent":21,"tvaRON":2488}`
-      : `Ești expert în facturi DHL România. Răspunde DOAR cu JSON valid, fără alt text:
+      : `Ești expert în facturi DHL România. Răspunde DOAR cu JSON valid, fără alt text înainte sau după:
 {"comisionProcessare":59,"comisionTVA":12.39,"totalDePlata":2978.39}`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -15,6 +21,7 @@ export async function POST(request) {
       headers: {
         'Content-Type': 'application/json',
         'anthropic-version': '2023-06-01',
+        'x-api-key': apiKey,
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
@@ -38,12 +45,11 @@ export async function POST(request) {
     const data = await response.json();
     const text = (data.content || []).map(c => c.text || '').join('').trim();
 
-    // Încearcă JSON direct
+    // Parse JSON din răspuns
     try {
       const parsed = JSON.parse(text);
       return NextResponse.json({ parsed });
     } catch {
-      // Caută JSON în text
       const match = text.match(/\{[\s\S]*\}/);
       if (match) {
         try {
@@ -52,7 +58,7 @@ export async function POST(request) {
         } catch {}
       }
     }
-    return NextResponse.json({ error: 'Nu am putut extrage JSON. Răspuns: ' + text.slice(0,200) }, { status: 500 });
+    return NextResponse.json({ error: 'Nu am putut extrage JSON. Text: ' + text.slice(0,300) }, { status: 500 });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
