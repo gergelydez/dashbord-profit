@@ -1,4 +1,5 @@
-<!-- 'use client';
+<!--
+  'use client';
 import { useState, useEffect, useCallback } from 'react';
 
 /* ─── HELPERS ─────────────────────────────────────────────── */
@@ -916,4 +917,5 @@ export default function ProfitPage() {
       </div>
     </>
   );
-}  -->
+}  
+-->
