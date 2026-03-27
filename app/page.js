@@ -143,6 +143,18 @@ export default function Dashboard() {
   const [sbUseStock, setSbUseStock]         = useState(() => ls.get('sb_use_stock') === 'true');
   const [sbWarehouse, setSbWarehouse]       = useState(() => ls.get('sb_warehouse') || '');
   const [sbWarehouseList, setSbWarehouseList] = useState([]);
+  // Comenzi marcate manual ca Shopify Payments (salvate în localStorage)
+  const [onlinePaymentIds, setOnlinePaymentIds] = useState(() => {
+    try { return JSON.parse(ls.get('online_payment_ids') || '[]'); } catch { return []; }
+  });
+  const toggleOnlinePayment = (orderId) => {
+    setOnlinePaymentIds(prev => {
+      const sid = String(orderId);
+      const next = prev.includes(sid) ? prev.filter(id => id !== sid) : [...prev, sid];
+      ls.set('online_payment_ids', JSON.stringify(next));
+      return next;
+    });
+  };
   // livreazaMode: 'create' (implicit) | 'fulfilled' (livrate în perioadă)
   const [deliveryMode, setDeliveryMode] = useState('create');
 
@@ -453,15 +465,16 @@ export default function Dashboard() {
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
   // isOnlinePayment — detectează comenzile plătite cu card online (Shopify Payments)
-  // Surse în ordine: gateway explicit > fin=pending > fallback conservator
   const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
-    // 1. Gateway explicit — 100% corect când Shopify îl returnează
+    // 1. Marcat manual de utilizator → cel mai prioritar
+    if (onlinePaymentIds.includes(String(o.id))) return true;
+    // 2. Gateway explicit
     const gw = (o.gateway || '').toLowerCase();
     if (gw) return ONLINE_GW.some(g => gw.includes(g));
-    // 2. pending → mereu COD
+    // 3. pending → mereu COD
     if (o.fin === 'pending') return false;
-    // 3. paid fără gateway — nu putem știi sigur, nu excludem (tratăm ca COD)
+    // 4. paid fără gateway → COD (conservator)
     return false;
   };
 
@@ -794,12 +807,7 @@ export default function Dashboard() {
                     ? <>{codLivrateAzi.length} COD din {codLivrateAziTotal} livrate · ramburs pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}</>
                     : `Nicio livrare COD pe ${todayStr.split('-').reverse().join('.')}`}
                 </div>
-                {/* Debug temporar — arată fiecare comandă livrată azi */}
-                {allOrders.filter(o => o.ts==='livrat' && (o.fulfilledAt||'').slice(0,10)===todayStr).map(o => (
-                  <div key={o.id} style={{fontSize:8,color:'#4a5568',marginTop:2,lineHeight:1.4}}>
-                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · gw:{o.gateway||'?'} · paid:{(o.paidAt||'').slice(5,10)} · cr:{(o.createdAt||'').slice(5,10)}
-                  </div>
-                ))}
+
               </div></div>
               {sR>0 && (
                 <div className="sc sc3"><div className="si">↩️</div><div>
@@ -986,7 +994,20 @@ export default function Dashboard() {
                           <td title={o.client}>{o.client||'—'}</td>
                           <td style={mobH}>{o.oras||'—'}</td>
                           <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
-                          <td><span className={`mg ${mc}`} title={`fin:${o.fin} | paidAt:${(o.paidAt||'').slice(0,10)} | created:${(o.createdAt||'').slice(0,10)} | fulfilled:${(o.fulfilledAt||'').slice(0,10)} | gw:${o.gateway||'?'} | COD:${!isOnlinePayment(o)}`}>{fmt(o.total)} RON</span></td>
+                          <td>
+                            <span className={`mg ${mc}`}>{fmt(o.total)} RON</span>
+                            {o.fin==='paid' && (
+                              <span
+                                onClick={() => toggleOnlinePayment(o.id)}
+                                title={isOnlinePayment(o) ? 'Marcat: Shopify Payments — click pentru a schimba în COD' : 'Marcat: COD — click pentru a schimba în Shopify Payments'}
+                                style={{marginLeft:4,cursor:'pointer',fontSize:9,
+                                  color: isOnlinePayment(o) ? '#3b82f6' : '#4a5568',
+                                  userSelect:'none'}}
+                              >
+                                {isOnlinePayment(o) ? '💳' : '💵'}
+                              </span>
+                            )}
+                          </td>
                           <td style={mobH}>{(()=>{
                             const invRes=sbInvResults[o.id];
                             const invLoading=sbInvLoading[o.id];
