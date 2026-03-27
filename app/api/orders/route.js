@@ -61,15 +61,29 @@ function toRestOrder(node) {
   const fulfillments = (node.fulfillments || []).map(f => {
     const ti = (f.trackingInfo || [])[0] || {};
     const ssMap = {
-      'DELIVERED':'delivered','IN_TRANSIT':'in_transit','OUT_FOR_DELIVERY':'out_for_delivery',
-      'ATTEMPTED_DELIVERY':'attempted_delivery','FAILURE':'failure','RETURNED':'returned',
-      'LABEL_PRINTED':'label_printed','CONFIRMED':'confirmed',
+      'DELIVERED':'delivered',
+      'IN_TRANSIT':'in_transit',
+      'OUT_FOR_DELIVERY':'out_for_delivery',
+      'ATTEMPTED_DELIVERY':'attempted_delivery',
+      'FAILURE':'failure',
+      'FAILED_ATTEMPT':'failed_attempt',
+      'RETURNED':'returned',
+      'RETURN_IN_PROGRESS':'return_in_progress',
+      'DELIVERY_EXCEPTION':'failure',
+      'FAILED_DELIVERY':'failed_delivery',
+      'REFUSED':'failure',
+      'LABEL_PRINTED':'label_printed',
+      'CONFIRMED':'confirmed',
+      'NOT_DELIVERED':'failure',
     };
     const ds = (f.displayStatus||'').toUpperCase();
+    const mappedStatus = ssMap[ds] || ds.toLowerCase();
+    // Log pentru statusuri necunoscute - ajută la debugging
+    if (ds && !ssMap[ds]) console.log('[GLS STATUS UNKNOWN]', ds, 'order:', node.name);
     return {
       updated_at: f.updatedAt, created_at: f.createdAt,
       tracking_number: ti.number || '', tracking_company: ti.company || '',
-      shipment_status: ssMap[ds] || ds.toLowerCase(),
+      shipment_status: mappedStatus,
     };
   });
 
@@ -83,9 +97,16 @@ function toRestOrder(node) {
   }));
 
   // paymentGatewayNames = array cu toate gateway-urile folosite pe comandă
-  // ex: ["shopify_payments"] sau ["Cash on Delivery (COD), xConnector"]
   const gateways = node.paymentGatewayNames || [];
   const payment_gateway = gateways[0] || '';
+
+  // Attribution din customerJourneySummary
+  const journey     = node.customerJourneySummary?.lastVisit;
+  const utmSource   = journey?.utmParameters?.source || journey?.source || '';
+  const utmMedium   = journey?.utmParameters?.medium || '';
+  const utmCampaign = journey?.utmParameters?.campaign || '';
+  const referrerUrl = journey?.referrerUrl || '';
+  const landingPage = journey?.landingPage || '';
 
   const addr  = node.shippingAddress || node.billingAddress || {};
   const baddr = node.billingAddress  || {};
