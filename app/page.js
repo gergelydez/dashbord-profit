@@ -88,10 +88,6 @@ function procOrder(o) {
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
     gateway: o.payment_gateway || '',
-    // Debug: salvăm toate câmpurile care pot indica metoda de plată
-    paymentDetails: JSON.stringify(o.payment_details || {}),
-    checkoutId: o.checkout_id || '',
-    sourceIdentifier: o.source_identifier || '',
     paidAt: o.processed_at || '',     // data când a fost plătită comanda
     currency: o.presentment_currency || o.currency || 'RON',
     address: [addr.address1, addr.address2].filter(Boolean).join(', '),
@@ -457,16 +453,15 @@ export default function Dashboard() {
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
   // isOnlinePayment — detectează comenzile plătite cu card online (Shopify Payments)
-  // payment_gateway = singura sursă 100% fiabilă
-  // Acum vine corect din orders route (request individual per comandă paid)
+  // Surse în ordine: gateway explicit > fin=pending > fallback conservator
   const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
+    // 1. Gateway explicit — 100% corect când Shopify îl returnează
     const gw = (o.gateway || '').toLowerCase();
-    // Gateway disponibil → folosim direct
     if (gw) return ONLINE_GW.some(g => gw.includes(g));
-    // Fallback: pending = COD mereu
+    // 2. pending → mereu COD
     if (o.fin === 'pending') return false;
-    // paid fără gateway → nu știm, tratăm ca COD (mai bine să includem decât să excludem)
+    // 3. paid fără gateway — nu putem știi sigur, nu excludem (tratăm ca COD)
     return false;
   };
 
@@ -802,7 +797,7 @@ export default function Dashboard() {
                 {/* Debug temporar — arată fiecare comandă livrată azi */}
                 {allOrders.filter(o => o.ts==='livrat' && (o.fulfilledAt||'').slice(0,10)===todayStr).map(o => (
                   <div key={o.id} style={{fontSize:8,color:'#4a5568',marginTop:2,lineHeight:1.4}}>
-                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · gw:{o.gateway||'?'} · pd:{o.paymentDetails||'{}'}
+                    {o.name} · {isOnlinePayment(o)?'🔴 Card':'🟢 COD'} · gw:{o.gateway||'?'} · paid:{(o.paidAt||'').slice(5,10)} · cr:{(o.createdAt||'').slice(5,10)}
                   </div>
                 ))}
               </div></div>
