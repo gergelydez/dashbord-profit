@@ -15,10 +15,16 @@ export async function GET(request) {
   };
 
   try {
-    const fields = searchParams.get('fields') || 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes,payment_gateway,processed_at';
     const createdMin = searchParams.get('created_at_min') || '';
+    const fields = searchParams.get('fields') || '';
     let allOrders = [];
-    let url = `https://${domain}/admin/api/2024-01/orders.json?limit=250&status=any&fields=${fields}`;
+
+    // Strategie: dacă fields conține payment_gateway, cerem fără fields
+    // pentru a obține payment_gateway (Shopify îl ignoră în fields filter)
+    // Compensăm prin a cere mai puțini câmpi dar fără filtrare fields
+    const url_fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,currency,line_items,shipping_address,billing_address,tags,note_attributes,payment_gateway,processed_at,gateway';
+    
+    let url = `https://${domain}/admin/api/2024-01/orders.json?limit=250&status=any&fields=${url_fields}`;
     if (createdMin) url += `&created_at_min=${createdMin}`;
 
     while (url) {
