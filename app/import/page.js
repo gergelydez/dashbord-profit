@@ -202,15 +202,19 @@ export default function ImportCalc() {
   const totalRON_f = totalUSD * curs;
 
   // Taxe globale din DVI (dacă există valorile exacte)
+  // Taxă vamală totală — din câmpul DVI exact sau calculat din %
   const taxaV_RON_global = taxaVamalaRON ? parseFloat(taxaVamalaRON)||0
     : (totalRON_f + tRON) * (parseFloat(taxaVamalaGlobal)||0) / 100;
-  // Comision e cu TVA inclus — baza TVA = valoare + transport + taxă vamală + comision fără TVA
-  const comRON_faraTVA = comRON / (1 + (parseFloat(tvaPercent)||21)/100);
-  const tva_RON_global = tvaRON_dvi ? parseFloat(tvaRON_dvi)||0
-    : (totalRON_f + tRON + taxaV_RON_global + comRON_faraTVA) * (parseFloat(tvaPercent)||21) / 100;
 
+  // TVA total — ÎNTOTDEAUNA din câmpul DVI exact (tvaRON_dvi) dacă există
+  // Nu recalculăm niciodată TVA din procente când avem valoarea din DVI
+  const tva_RON_global = tvaRON_dvi
+    ? parseFloat(tvaRON_dvi)||0
+    : (totalRON_f + tRON + taxaV_RON_global) * (parseFloat(tvaPercent)||21) / 100;
+
+  // Total sumar — folosit în preview și header sumar
   const totalCosturiGlobal = tRON + taxaV_RON_global + comRON + tva_RON_global;
-  const totalCostRON = totalRON_f + totalCosturiGlobal; // recalculat din prods mai jos
+  const totalCostRON = totalRON_f + totalCosturiGlobal;
 
   // Cost per produs cu taxe din DVI per segment
   // Transport și comision se împart la totalQty (toți produsele)
