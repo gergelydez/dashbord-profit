@@ -101,16 +101,17 @@ export default function Stats() {
     const codOrders    = orders.filter(o => !isOnlinePayment(o, onlineIds));
     const onlineOrders = orders.filter(o =>  isOnlinePayment(o, onlineIds));
 
+    // Financiar — calculat DOAR pe comenzile livrate
     const sumLivrate  = livrate.reduce((a,o)=>a+o.total,0);
-    const sumCOD      = codOrders.filter(o=>o.ts==='livrat').reduce((a,o)=>a+o.total,0);
-    const sumOnline   = onlineOrders.filter(o=>o.ts==='livrat').reduce((a,o)=>a+o.total,0);
+    const sumCOD      = livrate.filter(o=>!isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
+    const sumOnline   = livrate.filter(o=>isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
     const sumRetur    = retururi.reduce((a,o)=>a+o.total,0);
     const sumTranzit  = tranzit.reduce((a,o)=>a+o.total,0);
-    const totalRevenue= orders.reduce((a,o)=>a+o.total,0);
+    const totalRevenue= sumLivrate; // Total = doar ce s-a livrat efectiv
 
-    // Produse — count qty per SKU/name
+    // Produse — doar din comenzile LIVRATE (nu din toate comenzile)
     const prodMap = {};
-    orders.forEach(o => {
+    livrate.forEach(o => {
       (o.items||[]).forEach(item => {
         const key = item.sku || item.name;
         if (!key) return;
@@ -130,16 +131,45 @@ export default function Stats() {
       const utm = (o.utmSource || '').toLowerCase();
       const ref = (o.referrerUrl || '').toLowerCase();
       const med = (o.utmMedium || '').toLowerCase();
+      const lp  = (o.landingPage || '').toLowerCase();
+      const cam = (o.utmCampaign || '').toLowerCase();
 
-      if (utm.includes('facebook') || utm.includes('fb') || ref.includes('facebook.com') || ref.includes('fb.com')) return 'Facebook';
-      if (utm.includes('tiktok') || utm.includes('tik_tok') || ref.includes('tiktok.com')) return 'TikTok';
-      if (utm.includes('google') || ref.includes('google.com') || med.includes('cpc')) return 'Google';
+      // Facebook: utm_source=facebook, referrer facebook.com, sau fbclid în landing page
+      if (utm.includes('facebook') || utm.includes('fb') ||
+          ref.includes('facebook.com') || ref.includes('fb.com') || ref.includes('l.facebook') ||
+          lp.includes('fbclid') || cam.includes('facebook') || cam.includes('fb_')) return 'Facebook';
+
+      // TikTok: utm_source=tiktok, referrer tiktok.com, sau ttclid
+      if (utm.includes('tiktok') || utm.includes('tik_tok') ||
+          ref.includes('tiktok.com') || lp.includes('ttclid') || cam.includes('tiktok')) return 'TikTok';
+
+      // Google: utm_source=google, referrer google.com, gclid, sau cpc medium
+      if (utm.includes('google') || ref.includes('google.com') ||
+          lp.includes('gclid') || med.includes('cpc') || med.includes('ppc') ||
+          cam.includes('google')) return 'Google';
+
+      // Instagram: utm_source=instagram, referrer instagram.com
       if (utm.includes('instagram') || ref.includes('instagram.com')) return 'Instagram';
-      if (utm.includes('youtube') || ref.includes('youtube.com')) return 'YouTube';
-      if (utm.includes('email') || med.includes('email')) return 'Email';
-      if (ref && !ref.includes('glamx') && !ref.includes('myshopify')) return 'Referral';
-      if (!utm && !ref) return 'Direct';
-      return utm || 'Altul';
+
+      // YouTube
+      if (utm.includes('youtube') || ref.includes('youtube.com') || ref.includes('youtu.be')) return 'YouTube';
+
+      // Email
+      if (utm.includes('email') || med.includes('email') || med.includes('newsletter')) return 'Email';
+
+      // SMS
+      if (utm.includes('sms') || med.includes('sms')) return 'SMS';
+
+      // Organic search (referrer google dar fără gclid)
+      if (ref.includes('google.') || ref.includes('bing.com') || ref.includes('yahoo.com')) return 'Organic Search';
+
+      // Direct sau fără date
+      if (!utm && !ref && !lp) return 'Direct';
+
+      // Alte referrals
+      if (ref && !ref.includes('myshopify') && !ref.includes('glamxonline')) return 'Referral';
+
+      return utm ? utm.charAt(0).toUpperCase() + utm.slice(1) : 'Direct';
     };
 
     const sourceMap = {};
@@ -151,7 +181,7 @@ export default function Stats() {
 
     const rataLivrare = total ? Math.round(livrate.length / total * 100) : 0;
     const rataRetur   = total ? Math.round(retururi.length / total * 100) : 0;
-    const avgOrder    = total ? totalRevenue / total : 0;
+    const avgOrder    = livrate.length ? sumLivrate / livrate.length : 0;
 
     return {
       total, livrate: livrate.length, retururi: retururi.length,
@@ -244,7 +274,7 @@ export default function Stats() {
         <Section title="Financiar"/>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:10,marginBottom:8}}>
           <div style={{background:'#0d1520',border:'1px solid #f97316',borderRadius:12,padding:'16px 18px'}}>
-            <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Total vânzări</div>
+            <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Încasat (livrate)</div>
             <div style={{fontSize:26,fontWeight:800,color:'#f97316'}}>{fmt(stats.totalRevenue)} <span style={{fontSize:13}}>RON</span></div>
             <div style={{fontSize:11,color:'#4a5568',marginTop:4}}>avg {fmt(stats.avgOrder)} RON / comandă</div>
           </div>
