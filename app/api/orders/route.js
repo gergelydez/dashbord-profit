@@ -75,6 +75,7 @@ function toRestOrder(node) {
       'LABEL_PRINTED':'label_printed',
       'CONFIRMED':'confirmed',
       'NOT_DELIVERED':'failure',
+      'FULFILLED':'delivered',
     };
     const ds = (f.displayStatus||'').toUpperCase();
     const mappedStatus = ssMap[ds] || ds.toLowerCase();
@@ -190,4 +191,3 @@ export async function OPTIONS() {
     headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': '*' },
   });
 }
-
