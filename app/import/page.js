@@ -125,22 +125,16 @@ export default function ImportCalc() {
         ? 'Ești expert în declarații vamale românești. Răspunde DOAR cu JSON: {"cursSchimb":4.3046,"taxaVamalaPercent":3.7,"taxaVamalaRON":419,"tvaPercent":21,"tvaRON":2488}'
         : 'Ești expert în facturi DHL România. Răspunde DOAR cu JSON: {"comisionProcessare":59,"comisionTVA":12.39,"totalDePlata":2978.39}';
 
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      // API call prin serverul Next.js pentru a evita CORS
+      const res = await fetch('/api/parse-import-pdf', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 500,
-          system,
-          messages: [{role:'user', content:[
-            {type:'document', source:{type:'base64', media_type:'application/pdf', data:base64}},
-            {type:'text', text: type==='dvi' ? 'Extrage datele din DVI și returnează JSON.' : 'Extrage datele din factura DHL și returnează JSON.'}
-          ]}]
-        })
+        body: JSON.stringify({ base64, type, system })
       });
 
       const data = await res.json();
-      const text = (data.content||[]).map(c => c.text||'').join('');
+      if (data.error) throw new Error(data.error);
+      const text = data.text || '';
       const match = text.match(/\{[\s\S]*?\}/);
       if (!match) throw new Error('Format răspuns invalid');
       const parsed = JSON.parse(match[0]);
