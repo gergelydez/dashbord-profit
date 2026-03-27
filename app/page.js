@@ -63,7 +63,7 @@ function procOrder(o) {
     else if (ss === 'out_for_delivery') ts = 'outfor';
     else if (['in_transit','confirmed'].includes(ss)) ts = 'incurs';
     else if (ss === 'label_printed') ts = 'incurs';
-    else if (o.fulfillment_status === 'fulfilled') ts = 'livrat';
+    else if (o.fulfillment_status === 'fulfilled') ts = 'incurs'; // fulfilled fără shipment_status = în drum
   }
   if (o.cancelled_at) ts = 'anulat';
   const addr = o.shipping_address || o.billing_address || {};
@@ -439,11 +439,11 @@ export default function Dashboard() {
     return false;
   };
 
-  const livrateOrders = allOrders.filter(o =>
-    o.ts === 'livrat' && o.fulfilledAt &&
-    new Date(o.fulfilledAt) >= rangeFromD &&
-    new Date(o.fulfilledAt) <= rangeToD
-  );
+  const livrateOrders = allOrders.filter(o => {
+    if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
+    const f = new Date(o.fulfilledAt);
+    return f >= rangeFromD && f <= rangeToD;
+  });
   const livrate = livrateOrders.length;
   const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
   const sICOD  = livrateOrders.filter(o => !isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
