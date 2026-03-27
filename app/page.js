@@ -459,6 +459,15 @@ export default function Dashboard() {
   const incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor','preluat']);
+  const { from: rFrom, to: rTo } = getRange(preset, customFrom, customTo);
+  const rFromD = new Date(rFrom + 'T00:00:00');
+  const rToD   = new Date(rTo   + 'T23:59:59');
+  const retururiDinPerioad = allOrders.filter(o => {
+    if (o.ts !== 'retur') return false;
+    if (orders.some(ord => ord.id === o.id)) return false;
+    const d = new Date(o.fulfilledAt || o.createdAt);
+    return d >= rFromD && d <= rToD;
+  });
   const sR = sum(['retur','anulat']) + retururiDinPerioad.reduce((a,o)=>a+o.total,0);
 
   // "Livrate" = comenzi cu fulfilledAt în intervalul selectat (nu createdAt!)
@@ -559,16 +568,6 @@ export default function Dashboard() {
   const sdReturDetectat = orders.filter(o => o.courier==='sameday' && getSdStatus(o) === 'retur' && o.ts !== 'retur');
   // Includem și retururile din allOrders cu fulfilledAt în perioada curentă
   // (comenzi din alte perioade returnate în perioada selectată)
-  const { from: rFrom, to: rTo } = getRange(preset, customFrom, customTo);
-  const rFromD = new Date(rFrom + 'T00:00:00');
-  const rToD   = new Date(rTo   + 'T23:59:59');
-  const retururiDinPerioad = allOrders.filter(o => {
-    if (o.ts !== 'retur') return false;
-    // Excludem cele deja numărate în `retur`
-    if (orders.some(ord => ord.id === o.id)) return false;
-    const d = new Date(o.fulfilledAt || o.createdAt);
-    return d >= rFromD && d <= rToD;
-  });
   const returTotal = retur + sdReturDetectat.length + retururiDinPerioad.length;
 
   const kpis = [
