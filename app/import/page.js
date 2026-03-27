@@ -53,7 +53,7 @@ function parseFreightExcel(data) {
   return {totalUSD:total};
 }
 
-const EMPTY = {name:'', sku:'', qty:1, unitPriceUSD:0};
+const EMPTY = {name:'', sku:'', qty:1, unitPriceUSD:0, taxaVamala:'', tvaPercent:'21'};
 
 export default function ImportCalc() {
   const [products, setProducts] = useState([{...EMPTY}]);
@@ -231,16 +231,37 @@ export default function ImportCalc() {
   const tva_RON_final = tvaRON_dvi ? tva_RON_real : tva_RON_calc;
 
   const totalCosturi = tRON + taxaV_RON_final + comRON + tva_RON_final;
-  const totalCostRON = totalRON_f + totalCosturi;
+  const totalCostRON = totalRON_f + totalCosturi; // recalculat după prods mai jos
 
   const prods = products.map(p=>{
     const qty=parseFloat(p.qty)||0, unitUSD=parseFloat(p.unitPriceUSD)||0;
     const valUSD=qty*unitUSD, valRON=valUSD*curs;
     const prop = totalUSD_val>0 ? valUSD/totalUSD_val : 0;
-    const costuri = totalCosturi*prop;
-    const totalP = valRON+costuri;
-    const costUnit = qty>0 ? totalP/qty : 0;
-    return {...p,qty,unitUSD,valUSD,valRON,prop,costuri,totalP,costUnit};
+
+    // Taxă vamală per produs (poate fi 0% pentru unele produse)
+    const tvPerc = p.taxaVamala !== '' ? parseFloat(p.taxaVamala)||0 : parseFloat(taxaVamala)||0;
+    const tvaPPerc = p.tvaPercent !== '' ? parseFloat(p.tvaPercent)||21 : parseFloat(tvaPercent)||21;
+
+    // Transport alocat proporțional
+    const transportAlocat = tRON * prop;
+
+    // Taxă vamală pe acest produs (bazată pe valoare + transport alocat)
+    const bazaVamalaProd = valRON + transportAlocat;
+    const taxaVamalaProd = bazaVamalaProd * tvPerc / 100;
+
+    // Comision DHL alocat proporțional
+    const comisionAlocat = comRON * prop;
+
+    // TVA pe (valoare + transport + taxă vamală + comision)
+    const bazaTVAProd = bazaVamalaProd + taxaVamalaProd + comisionAlocat;
+    const tvaProd = bazaTVAProd * tvaPPerc / 100;
+
+    const costuri = transportAlocat + taxaVamalaProd + comisionAlocat + tvaProd;
+    const totalP = valRON + costuri; // total cu TVA inclus
+    const costUnit = qty>0 ? totalP/qty : 0; // preț unitar cu toate taxele + TVA
+
+    return {...p,qty,unitUSD,valUSD,valRON,prop,costuri,totalP,costUnit,
+      transportAlocat,taxaVamalaProd,comisionAlocat,tvaProd,tvPerc,tvaPPerc};
   });
 
   const exportJSON = () => {
@@ -380,6 +401,20 @@ export default function ImportCalc() {
                     <div>
                       <label style={lbl}>Preț unitar (USD)</label>
                       <input type="number" style={inp} value={p.unitPriceUSD} step="0.01" placeholder="0.00" onChange={e=>upd(idx,'unitPriceUSD',e.target.value)}/>
+                    </div>
+                  </div>
+                  <div className="g2" style={{marginTop:8}}>
+                    <div>
+                      <label style={lbl}>Taxă vamală % <span style={{color:'#475569'}}>(gol = folosește globala)</span></label>
+                      <input type="number" style={inp} value={p.taxaVamala} step="0.1" min="0"
+                        placeholder={`default: ${taxaVamala||'0'}%`}
+                        onChange={e=>upd(idx,'taxaVamala',e.target.value)}/>
+                      {p.taxaVamala==='0'&&<div style={{fontSize:10,color:'#10b981',marginTop:3}}>✓ Fără taxă vamală (ex: printer server)</div>}
+                    </div>
+                    <div>
+                      <label style={lbl}>TVA % <span style={{color:'#475569'}}>(gol = 21%)</span></label>
+                      <input type="number" style={inp} value={p.tvaPercent} step="0.1" min="0" placeholder="21"
+                        onChange={e=>upd(idx,'tvaPercent',e.target.value)}/>
                     </div>
                   </div>
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10}}>
@@ -643,13 +678,13 @@ export default function ImportCalc() {
                   <div style={{marginTop:12,background:'#070d12',borderRadius:9,padding:'12px 14px',border:'1px solid #1a2535'}}>
                     <div style={{fontSize:10,color:'#64748b',marginBottom:8,textTransform:'uppercase',letterSpacing:1}}>Breakdown detaliat</div>
                     {[
-                      ['Valoare marfă',fmtRON(p.valRON),false],
-                      ['Transport alocat',fmtRON(tRON*p.prop),false],
-                      [`Taxă vamală`,fmtRON(taxaV_RON_final*p.prop),false],
-                      ['Comision procesare',fmtRON(comRON*p.prop),false],
-                      ['TVA',fmtRON(tva_RON_final*p.prop),false],
-                      [`Total ${p.qty} buc`,fmtRON(p.totalP),true],
-                      ['Cost unitar RON',fmtRON(p.costUnit),true],
+                      ['Valoare marfă (RON)',fmtRON(p.valRON),false],
+                      ['Transport alocat',fmtRON(p.transportAlocat||0),false],
+                      [`Taxă vamală ${p.tvPerc||0}%`,fmtRON(p.taxaVamalaProd||0),false],
+                      ['Comision procesare DHL',fmtRON(p.comisionAlocat||0),false],
+                      [`TVA ${p.tvaPPerc||21}% (cu TVA inclus)`,fmtRON(p.tvaProd||0),false],
+                      [`Total ${p.qty} buc (cu TVA)`,fmtRON(p.totalP),true],
+                      ['Cost unitar RON (cu TVA)',fmtRON(p.costUnit),true],
                     ].map(([l,v,bold])=>(
                       <div key={l} className="bdr" style={{fontWeight:bold?700:400}}>
                         <span style={{color:bold?'#f97316':'#64748b',fontSize:12}}>{l}</span>
@@ -689,6 +724,48 @@ export default function ImportCalc() {
             <div style={{display:'flex',gap:10,marginTop:12}}>
               <button className="bbtn" onClick={()=>setStep(2)}>← Înapoi</button>
               <button className="bbtn" onClick={()=>{setStep(1);setSavedResults(null);setDviData(null);setDhlData(null);setAiMessages({});}}>🔄 Import nou</button>
+            </div>
+
+            {/* TABEL FINAL PRODUSE */}
+            <div style={{marginTop:24,background:'#0c1520',border:'1px solid #1a2535',borderRadius:14,overflow:'hidden'}}>
+              <div style={{padding:'12px 16px',borderBottom:'1px solid #1a2535',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div style={{fontSize:13,fontWeight:700}}>📋 Lista produse cu prețuri finale (TVA inclus)</div>
+                <div style={{fontSize:10,color:'#475569'}}>cost de achiziție per unitate</div>
+              </div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead>
+                    <tr style={{background:'#070d12'}}>
+                      {['SKU','Produs','Cant','Preț USD','Preț RON','Taxă %','TVA %','Taxe/buc','Cost unitar (cu TVA)'].map(h=>(
+                        <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:1,borderBottom:'1px solid #1a2535',whiteSpace:'nowrap'}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {prods.map((p,i)=>(
+                      <tr key={i} style={{borderBottom:'1px solid #1a2535'}}>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#3b82f6',fontWeight:700}}>{p.sku||'—'}</td>
+                        <td style={{padding:'9px 12px',color:'#e8edf2',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.name}>{p.name}</td>
+                        <td style={{padding:'9px 12px',color:'#94a3b8',textAlign:'center'}}>{p.qty}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#94a3b8'}}>${fmt(p.unitUSD)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#94a3b8'}}>{fmtRON(p.unitUSD*curs)}</td>
+                        <td style={{padding:'9px 12px',color:p.tvPerc===0?'#10b981':'#f59e0b',fontWeight:600}}>{p.tvPerc}%{p.tvPerc===0?<span style={{fontSize:9}}> ✓</span>:''}</td>
+                        <td style={{padding:'9px 12px',color:'#a855f7'}}>{p.tvaPPerc}%</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f59e0b'}}>{fmtRON(p.qty>0?p.costuri/p.qty:0)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:800,fontSize:13}}>{fmtRON(p.costUnit)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{background:'rgba(249,115,22,.05)',borderTop:'2px solid rgba(249,115,22,.2)'}}>
+                      <td colSpan={2} style={{padding:'10px 12px',fontWeight:700,color:'#f97316'}}>TOTAL</td>
+                      <td style={{padding:'10px 12px',color:'#f97316',fontWeight:700,textAlign:'center'}}>{totalQty}</td>
+                      <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:700}}>${fmt(totalUSD_val)}</td>
+                      <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:700}}>{fmtRON(totalRON_f)}</td>
+                      <td colSpan={3}></td>
+                      <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:14}}>{fmtRON(totalCostRON)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
