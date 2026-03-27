@@ -687,4 +687,3 @@ export default function Stats() {
     </div>
   );
 }
-
