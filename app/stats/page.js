@@ -38,6 +38,7 @@ export default function Stats() {
   const [lastFetch, setLastFetch] = useState(null);
   const [preset, setPreset] = useState('month');
   const [onlineIds] = useState(() => { try { return JSON.parse(ls.get('online_payment_ids')||'[]'); } catch { return []; }});
+  const [sdAwbMap] = useState(() => { try { return JSON.parse(ls.get('sd_awb_map')||'{}'); } catch { return {}; }});
   const [shopifyAnalytics, setShopifyAnalytics] = useState(() => {
     try { return JSON.parse(ls.get('shopify_analytics')||'null'); } catch { return null; }
   });
@@ -67,10 +68,24 @@ export default function Stats() {
     });
   }, [allOrders, from, to]);
 
+  // getSdStatus: prioritizează Excel > Shopify pentru Sameday
+  const getSdStatus = (o) => {
+    const awb = (o.trackingNo || '').trim();
+    if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
+    return o.ts !== 'pending' ? o.ts : null;
+  };
+
   const stats = useMemo(() => {
     const total    = orders.length;
-    const livrate  = orders.filter(o => o.ts === 'livrat');
-    const retururi = orders.filter(o => o.ts === 'retur');
+    // Pentru livrate/retururi: folosim getSdStatus pentru Sameday, ts pentru restul
+    const livrate  = orders.filter(o => {
+      if (o.courier === 'sameday') return getSdStatus(o) === 'livrat';
+      return o.ts === 'livrat';
+    });
+    const retururi = orders.filter(o => {
+      if (o.courier === 'sameday') return getSdStatus(o) === 'retur';
+      return o.ts === 'retur';
+    });
     const anulate  = orders.filter(o => o.ts === 'anulat');
     const tranzit  = orders.filter(o => ['incurs','outfor'].includes(o.ts));
     const pending  = orders.filter(o => o.ts === 'pending');
@@ -79,9 +94,9 @@ export default function Stats() {
     const sameday  = orders.filter(o => o.courier === 'sameday');
 
     const glsLiv   = gls.filter(o => o.ts === 'livrat');
-    const sdLiv    = sameday.filter(o => o.ts === 'livrat');
+    const sdLiv    = sameday.filter(o => getSdStatus(o) === 'livrat');
     const glsRet   = gls.filter(o => o.ts === 'retur');
-    const sdRet    = sameday.filter(o => o.ts === 'retur');
+    const sdRet    = sameday.filter(o => getSdStatus(o) === 'retur');
 
     const codOrders    = orders.filter(o => !isOnlinePayment(o, onlineIds));
     const onlineOrders = orders.filter(o =>  isOnlinePayment(o, onlineIds));
@@ -150,7 +165,8 @@ export default function Stats() {
       rataLivrare, rataRetur, avgOrder,
       topProd, avgPrice, prodList: prodList.slice(0, 10),
     };
-  }, [orders, onlineIds]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, onlineIds, sdAwbMap]);
 
   const Bar = ({ pct, color }) => (
     <div style={{height:4,background:'#1e2a35',borderRadius:2,overflow:'hidden',marginTop:4}}>
