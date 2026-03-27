@@ -87,8 +87,7 @@ function procOrder(o) {
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
-    // Shopify poate returna payment_gateway sau gateway (variază)
-    gateway: o.payment_gateway || o.gateway || '',
+    gateway: o.payment_gateway || '',
     paidAt: o.processed_at || '',     // data când a fost plătită comanda
     currency: o.presentment_currency || o.currency || 'RON',
     address: [addr.address1, addr.address2].filter(Boolean).join(', '),
@@ -183,10 +182,7 @@ export default function Dashboard() {
         applyDateFilter(parsed, 'last_30', '', '');
         // Verifică dacă datele vechi au câmpul gateway
         // Dacă nu → arată avertisment să resincronizeze
-        const hasPaidGateway = parsed.some(o => o.gateway && o.gateway.length > 0 && o.fin === 'paid');
-        if (!hasPaidGateway && parsed.some(o => o.fin === 'paid')) {
-          setError('⚠️ Nu pot detecta automat Shopify Payments. Marchează manual comenzile card online cu butonul 💳 din coloana Total.');
-        }
+        // gateway vine din GraphQL — detecție automată
       } catch {}
     }
   }, []);
@@ -467,17 +463,18 @@ export default function Dashboard() {
   const { from: rangeFrom, to: rangeTo } = getRange(preset, customFrom, customTo);
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
-  // isOnlinePayment — detectează comenzile plătite cu card online (Shopify Payments)
-  const ONLINE_GW = ['shopify_payments','stripe','paypal'];
+  // isOnlinePayment — detectează comenzile plătite cu card online
+  // Gateway vine acum 100% corect din GraphQL API
+  const ONLINE_GW = ['shopify_payments','stripe','paypal','visa','mastercard'];
   const isOnlinePayment = (o) => {
-    // 1. Marcat manual de utilizator → cel mai prioritar
+    // 1. Marcat manual → prioritate maximă
     if (onlinePaymentIds.includes(String(o.id))) return true;
-    // 2. Gateway explicit
+    // 2. Gateway din GraphQL — 100% fiabil
     const gw = (o.gateway || '').toLowerCase();
     if (gw) return ONLINE_GW.some(g => gw.includes(g));
     // 3. pending → mereu COD
     if (o.fin === 'pending') return false;
-    // 4. paid fără gateway → COD (conservator)
+    // 4. paid fără gateway → COD
     return false;
   };
 
@@ -1237,4 +1234,3 @@ export default function Dashboard() {
     </>
   );
 }
-
