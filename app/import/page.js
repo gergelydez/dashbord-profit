@@ -322,6 +322,82 @@ export default function ImportCalc() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'import-cost.csv'; a.click();
   };
 
+  const exportXLSX = () => {
+    loadXLSX(() => {
+      const wb = window.XLSX.utils.book_new();
+
+      // ── Sheet 1: Produse ──
+      const dataSheet = [
+        ['SKU', 'Produs', 'Cantitate', 'Pret furnizor USD', 'Pret furnizor RON',
+         'Taxa vamala %', 'Taxa vamala RON', 'TVA %', 'TVA RON',
+         'Transport/buc RON', 'Comision DHL/buc RON',
+         'Taxe totale/buc RON', 'Cost unitar RON (cu TVA)', 'Total produs RON'],
+      ];
+      prods.forEach(p => dataSheet.push([
+        p.sku,
+        p.name,
+        p.qty,
+        +p.unitUSD.toFixed(4),
+        +(p.unitUSD * curs).toFixed(2),
+        p.tvPerc,
+        +p.taxaVProd.toFixed(2),
+        p.tvaPPerc,
+        +p.tvaProd.toFixed(2),
+        +(p.transportAlocat / p.qty).toFixed(4),
+        +(p.comisionAlocat / p.qty).toFixed(4),
+        +(p.costuri / p.qty).toFixed(2),
+        +p.costUnit.toFixed(2),
+        +p.totalP.toFixed(2),
+      ]));
+      // Rând TOTAL
+      dataSheet.push([
+        'TOTAL', '', totalQty, '', +totalRON_f.toFixed(2),
+        '', +taxaV_RON_global.toFixed(2), '', +tva_RON_global.toFixed(2),
+        '', '', '',
+        '',
+        +(dviSegmente.length>0?totalCostRON_real:totalCostRON).toFixed(2),
+      ]);
+
+      const ws1 = window.XLSX.utils.aoa_to_sheet(dataSheet);
+
+      // Lățimi coloane
+      ws1['!cols'] = [
+        {wch:10},{wch:30},{wch:10},{wch:16},{wch:16},
+        {wch:12},{wch:16},{wch:8},{wch:12},
+        {wch:16},{wch:18},
+        {wch:18},{wch:22},{wch:18},
+      ];
+
+      window.XLSX.utils.book_append_sheet(wb, ws1, 'Produse');
+
+      // ── Sheet 2: Sumar import ──
+      const data = new Date().toISOString().slice(0,10);
+      const totalFinal = dviSegmente.length>0?totalCostRON_real:totalCostRON;
+      const sumarSheet = [
+        ['SUMAR IMPORT', ''],
+        ['Data', data],
+        [''],
+        ['Curs valutar (USD/RON)', curs],
+        [''],
+        ['Valoare marfă furnizor (RON)', +totalRON_f.toFixed(2)],
+        ['Transport DHL (RON)', +tRON.toFixed(2)],
+        ['Taxă vamală (RON)', +taxaV_RON_global.toFixed(2)],
+        ['Comision procesare DHL (RON cu TVA)', +comRON.toFixed(2)],
+        ['TVA (RON)', +tva_RON_global.toFixed(2)],
+        [''],
+        ['TOTAL COST IMPORT (RON)', +totalFinal.toFixed(2)],
+        ['Cost mediu / bucată (RON)', +(totalQty>0?totalFinal/totalQty:0).toFixed(2)],
+        ['Total bucăți', totalQty],
+      ];
+      const ws2 = window.XLSX.utils.aoa_to_sheet(sumarSheet);
+      ws2['!cols'] = [{wch:35},{wch:20}];
+      window.XLSX.utils.book_append_sheet(wb, ws2, 'Sumar');
+
+      // Download
+      window.XLSX.writeFile(wb, `import-cost-${data}.xlsx`);
+    });
+  };
+
   // ── STYLES ──
   const inp = {background:'#070d12',border:'1px solid #1a2535',color:'#e8edf2',padding:'9px 12px',borderRadius:8,fontSize:13,outline:'none',width:'100%',fontFamily:'monospace'};
   const lbl = {fontSize:10,color:'#64748b',textTransform:'uppercase',letterSpacing:1,marginBottom:5,display:'block'};
@@ -751,14 +827,18 @@ export default function ImportCalc() {
             </div>
 
             {/* EXPORT */}
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:16}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginTop:16}}>
               <button onClick={exportJSON}
                 style={{background:'linear-gradient(135deg,#10b981,#059669)',color:'white',border:'none',padding:'14px',borderRadius:12,fontWeight:700,fontSize:13,cursor:'pointer'}}>
-                💾 Export JSON cu SKU
+                💾 JSON
               </button>
               <button onClick={exportCSV}
                 style={{background:'linear-gradient(135deg,#3b82f6,#1d4ed8)',color:'white',border:'none',padding:'14px',borderRadius:12,fontWeight:700,fontSize:13,cursor:'pointer'}}>
-                📊 Export CSV
+                📊 CSV
+              </button>
+              <button onClick={exportXLSX}
+                style={{background:'linear-gradient(135deg,#16a34a,#15803d)',color:'white',border:'none',padding:'14px',borderRadius:12,fontWeight:700,fontSize:13,cursor:'pointer'}}>
+                📗 Excel (.xlsx)
               </button>
             </div>
 
