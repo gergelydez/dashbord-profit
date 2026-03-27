@@ -127,6 +127,7 @@ export default function Dashboard() {
   const [sdLoading, setSdLoading] = useState(false);
   const [sdFiles, setSdFiles]   = useState(() => { try { return JSON.parse(ls.get('sd_files') || '[]'); } catch { return []; } });
   const [courierFilter, setCourierFilter] = useState('toate');
+  const [deliveryMode, setDeliveryMode] = useState('create'); // 'create' | 'fulfilled'
 
   const [sbInvLoading, setSbInvLoading] = useState({});
   const [sbInvResults, setSbInvResults] = useState({});
@@ -175,9 +176,11 @@ export default function Dashboard() {
     const inRange = ords.filter(o => {
       const created   = new Date(o.createdAt);
       const fulfilled = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
-      // Include comanda dacă a fost CREATĂ în interval SAU LIVRATĂ în interval
       const createdInRange   = created >= fromD && created <= toD;
       const fulfilledInRange = fulfilled && fulfilled >= fromD && fulfilled <= toD;
+      // Pentru retururi: includem dacă comanda a fost CREATĂ în interval
+      // sau dacă data refuzului (fulfilledAt) e în interval
+      if (o.ts === 'retur') return createdInRange || fulfilledInRange;
       return createdInRange || fulfilledInRange;
     });
     setOrders(inRange);
@@ -384,11 +387,33 @@ export default function Dashboard() {
 
   // ── KPI — pe toate comenzile din perioadă (nu filtrate) ──
   const n = orders.length;
+  const ONLINE_GW = ['shopify_payments','stripe','paypal'];
+  const isOnlinePayment = (o) => {
+    if (typeof onlinePaymentIds !== 'undefined' && onlinePaymentIds.includes(String(o.id))) return true;
+    const gw = (o.gateway || '').toLowerCase();
+    if (gw) return ONLINE_GW.some(g => gw.includes(g));
+    if (o.fin === 'pending') return false;
+    return false;
+  };
+
   const cnt = s => orders.filter(o=>o.ts===s).length;
   const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
+
+  // retururiExtra: comenzi cu retur care nu sunt în orders (create în altă perioadă)
+  // dar au fulfilledAt (data refuzului) în perioada curentă
+  const { from: _rf, to: _rt } = getRange(preset, customFrom, customTo);
+  const _rfD = new Date(_rf + 'T00:00:00'), _rtD = new Date(_rt + 'T23:59:59');
+  const retururiExtra = allOrders.filter(o => {
+    if (o.ts !== 'retur') return false;
+    if (orders.some(x => x.id === o.id)) return false; // deja în orders
+    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
+    if (fd && fd >= _rfD && fd <= _rtD) return true;
+    return false;
+  });
   const livrate=cnt('livrat'), incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
-  const sI=sum(['livrat']), sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
+  const sI=sum(['livrat']), sA=sum(['incurs','outfor']);
+  const sR=sum(['retur','anulat']) + retururiExtra.reduce((a,o)=>a+o.total,0);
 
   // ── COD calculations ──
   const now = new Date();
@@ -437,7 +462,7 @@ export default function Dashboard() {
 
   const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
   const sdReturDetectat = orders.filter(o => o.courier==='sameday' && getSdStatus(o) === 'retur' && o.ts !== 'retur');
-  const returTotal = retur + sdReturDetectat.length;
+  const returTotal = retur + sdReturDetectat.length + retururiExtra.length;
 
   const kpis = [
     {v:n,             lbl:'Total comenzi', e:'📦',color:'#f97316',p:100},
@@ -797,7 +822,13 @@ export default function Dashboard() {
             )}
 
             <div className="stitle">Comenzi</div>
-            <div className="frow">
+            <div className="frow" style={{marginBottom:5}}>
+              <div style={{display:'flex',gap:4,background:'#0a0f14',border:'1px solid #1e2a35',borderRadius:20,padding:'3px 4px',marginRight:4}}>
+                <button className={`fb ${deliveryMode==='create'?'active':''}`} style={{padding:'3px 10px',fontSize:10,borderRadius:16}}
+                  onClick={()=>setDeliveryMode('create')}>📦 Create</button>
+                <button className={`fb ${deliveryMode==='fulfilled'?'active':''}`} style={{padding:'3px 10px',fontSize:10,borderRadius:16}}
+                  onClick={()=>setDeliveryMode('fulfilled')}>🚚 Livrate</button>
+              </div>
               {['toate','livrat','incurs','outfor','retur','anulat','pending'].map(f=>(
                 <button key={f} className={`fb ${filter===f?'active':''}`} onClick={()=>setFilter(f)}>
                   {f==='toate'?'Toate':STATUS_MAP[f]?.label||f}
@@ -1027,4 +1058,3 @@ export default function Dashboard() {
     </>
   );
 }
-
