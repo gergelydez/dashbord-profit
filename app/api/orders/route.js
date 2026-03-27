@@ -32,7 +32,7 @@ const buildQuery = (cursor, createdAtMin) => `{
           trackingInfo { number company }
           displayStatus
         }
-        noteAttributes { name value }
+        customAttributes { key value }
       }
     }
   }
@@ -95,7 +95,7 @@ function toRestOrder(node) {
     currency: node.totalPriceSet?.shopMoney?.currencyCode || 'RON',
     email: node.email || '',
     tags: (node.tags || []).join(', '),
-    note_attributes: node.noteAttributes || [],
+    note_attributes: (node.customAttributes || []).map(a => ({ name: a.key, value: a.value })),
     shipping_address: { name:addr.name||'', city:addr.city||'', province:addr.province||'', address1:addr.address1||'', address2:addr.address2||'' },
     billing_address:  { name:baddr.name||'', city:baddr.city||'', province:baddr.province||'', address1:baddr.address1||'', address2:baddr.address2||'' },
     fulfillments,
