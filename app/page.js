@@ -456,7 +456,7 @@ export default function Dashboard() {
   const n = orders.length;
   const cnt = s => orders.filter(o=>o.ts===s).length;
   const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
-  const incurs=cnt('incurs'), outfor=cnt('outfor');
+  const incurs=cnt('incurs'), outfor=cnt('outfor'), preluat=cnt('preluat');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor','preluat']);
   const { from: rFrom, to: rTo } = getRange(preset, customFrom, customTo);
