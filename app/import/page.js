@@ -17,7 +17,6 @@ export default function ImportCalc() {
   const [taxaVamalaRON, setTaxaVamalaRON] = useState('');
   const [tvaPercent, setTvaPercent] = useState('21');
   const [tvaRON_dvi, setTvaRON_dvi] = useState('');
-  const [dviSegmente, setDviSegmente] = useState([]); // segmente per produs din DVI
   const [totalProduseImport, setTotalProduseImport] = useState(0); // total buc pe DVI
   const [comisionDHL, setComisionDHL] = useState('');       // fără TVA
   const [comisionDHLTVA, setComisionDHLTVA] = useState(''); // TVA pe comision
