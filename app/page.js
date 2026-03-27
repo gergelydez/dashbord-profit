@@ -59,7 +59,7 @@ function procOrder(o) {
     trackingNo = f.tracking_number || '';
     const ss = (f.shipment_status || '').toLowerCase();
     if (ss === 'delivered') ts = 'livrat';
-    else if (['failure','failed_attempt','returned','failed_delivery','return_in_progress','refused'].includes(ss)) ts = 'retur';
+    else if (['failure','failed_attempt','returned','failed_delivery','return_in_progress'].includes(ss)) ts = 'retur';
     else if (ss === 'out_for_delivery') ts = 'outfor';
     else if (['in_transit','confirmed','label_printed'].includes(ss)) ts = 'incurs';
     else if (o.fulfillment_status === 'fulfilled') ts = 'incurs';
@@ -849,17 +849,7 @@ export default function Dashboard() {
                           <td title={o.client}>{o.client||'—'}</td>
                           <td style={mobH}>{o.oras||'—'}</td>
                           <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
-                          <td style={{whiteSpace:'nowrap'}}>
-                            <span className={`mg ${mc}`}>{fmt(o.total)} RON</span>
-                            {' '}
-                            {o.fin==='paid' && (
-                              <button onClick={(e)=>{e.stopPropagation();toggleOnlinePayment(o.id);}}
-                                title={isOnlinePayment(o)?'Card online — click = COD':'COD — click = Card online'}
-                                style={{background:isOnlinePayment(o)?'rgba(59,130,246,.2)':'rgba(74,85,104,.15)',border:`1px solid ${isOnlinePayment(o)?'#3b82f6':'#4a5568'}`,color:isOnlinePayment(o)?'#3b82f6':'#94a3b8',borderRadius:4,padding:'1px 5px',fontSize:9,cursor:'pointer'}}>
-                                {isOnlinePayment(o)?'💳':'💵'}
-                              </button>
-                            )}
-                          </td>
+                          <td><span className={`mg ${mc}`}>{fmt(o.total)} RON</span></td>
                           <td style={mobH}>{(()=>{
                             const invRes=sbInvResults[o.id];
                             const invLoading=sbInvLoading[o.id];
@@ -1036,5 +1026,3 @@ export default function Dashboard() {
       )}
     </>
   );
-}
-
