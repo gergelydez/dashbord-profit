@@ -237,10 +237,10 @@ export default function Stats() {
 
       // Data încasării = livrare + zile specifice curierului
       let incasareStr = '';
-      if (o.courier === 'gls' && !isOnline)     incasareStr = addDaysToStr(livStr, 2);
-      else if (o.courier === 'sameday' && !isOnline) incasareStr = addDaysToStr(livStr, 1);
-      else if (isOnline)                         incasareStr = addDaysToStr(livStr, 2);
-      else                                       incasareStr = addDaysToStr(livStr, 2);
+      if (isOnline)                                  incasareStr = addDaysToStr(livStr, 2); // Shopify payout după 2 zile
+      else if (o.courier === 'gls')                  incasareStr = addDaysToStr(livStr, 2); // GLS ramburs după 2 zile
+      else if (o.courier === 'sameday')              incasareStr = addDaysToStr(livStr, 1); // SD ramburs după 1 zi
+      else                                           incasareStr = addDaysToStr(livStr, 2);
 
       if (!incasareStr) return;
       if (!incasariPerZi[incasareStr]) incasariPerZi[incasareStr] = { gls:0, sameday:0, shopify:0, total:0, count:0 };
@@ -292,8 +292,9 @@ export default function Stats() {
     });
 
     // Total încasat GLS, Sameday, Shopify din livrate
-    const totalGLS     = livrate.filter(o=>o.courier==='gls'&&!isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
-    const totalSameday = livrate.filter(o=>o.courier==='sameday').reduce((a,o)=>a+o.total,0);
+    // Totaluri COD per curier (excludem Shopify Payments - nu sunt ramburs)
+    const totalGLS     = livrate.filter(o=>o.courier==='gls' && !isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
+    const totalSameday = livrate.filter(o=>o.courier==='sameday' && !isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
     const totalShopify = livrate.filter(o=>isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed,0);
     const totalShopifyBrut = livrate.filter(o=>isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
 
