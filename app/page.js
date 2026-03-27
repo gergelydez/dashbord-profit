@@ -87,7 +87,8 @@ function procOrder(o) {
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
     invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
-    gateway: o.payment_gateway || '',
+    // Shopify poate returna payment_gateway sau gateway (variază)
+    gateway: o.payment_gateway || o.gateway || '',
     paidAt: o.processed_at || '',     // data când a fost plătită comanda
     currency: o.presentment_currency || o.currency || 'RON',
     address: [addr.address1, addr.address2].filter(Boolean).join(', '),
@@ -182,8 +183,10 @@ export default function Dashboard() {
         applyDateFilter(parsed, 'last_30', '', '');
         // Verifică dacă datele vechi au câmpul gateway
         // Dacă nu → arată avertisment să resincronizeze
-        const hasGateway = parsed.some(o => o.gateway !== undefined);
-        if (!hasGateway) setError('⚠️ Date vechi în cache — apasă Resincronizează pentru detecție corectă COD vs card online.');
+        const hasPaidGateway = parsed.some(o => o.gateway && o.gateway.length > 0 && o.fin === 'paid');
+        if (!hasPaidGateway && parsed.some(o => o.fin === 'paid')) {
+          setError('⚠️ Nu pot detecta automat Shopify Payments. Marchează manual comenzile card online cu butonul 💳 din coloana Total.');
+        }
       } catch {}
     }
   }, []);
@@ -994,19 +997,22 @@ export default function Dashboard() {
                           <td title={o.client}>{o.client||'—'}</td>
                           <td style={mobH}>{o.oras||'—'}</td>
                           <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
-                          <td>
+                          <td style={{whiteSpace:'nowrap'}}>
                             <span className={`mg ${mc}`}>{fmt(o.total)} RON</span>
-                            {o.fin==='paid' && (
-                              <span
-                                onClick={() => toggleOnlinePayment(o.id)}
-                                title={isOnlinePayment(o) ? 'Marcat: Shopify Payments — click pentru a schimba în COD' : 'Marcat: COD — click pentru a schimba în Shopify Payments'}
-                                style={{marginLeft:4,cursor:'pointer',fontSize:9,
-                                  color: isOnlinePayment(o) ? '#3b82f6' : '#4a5568',
-                                  userSelect:'none'}}
-                              >
-                                {isOnlinePayment(o) ? '💳' : '💵'}
-                              </span>
-                            )}
+                            {' '}
+                            <button
+                              onClick={(e)=>{e.stopPropagation();toggleOnlinePayment(o.id);}}
+                              title={isOnlinePayment(o)?'Card online (Shopify Payments) — click = COD':'COD/Ramburs — click = Card online'}
+                              style={{
+                                background: isOnlinePayment(o)?'rgba(59,130,246,.2)':'rgba(74,85,104,.15)',
+                                border: `1px solid ${isOnlinePayment(o)?'#3b82f6':'#4a5568'}`,
+                                color: isOnlinePayment(o)?'#3b82f6':'#94a3b8',
+                                borderRadius:4, padding:'1px 5px', fontSize:9,
+                                cursor:'pointer', lineHeight:1.4,
+                              }}
+                            >
+                              {isOnlinePayment(o)?'💳 Card':'💵 COD'}
+                            </button>
                           </td>
                           <td style={mobH}>{(()=>{
                             const invRes=sbInvResults[o.id];
