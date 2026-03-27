@@ -177,8 +177,8 @@ export default function ImportCalc() {
           if (parsed.segmente[0]?.tvaPercent) setTvaPercent(String(parsed.segmente[0].tvaPercent));
         }
         const segInfo = parsed.segmente?.map(s => `${s.cantitate} buc: ${s.taxaVamalaPercent}% (${s.taxaVamalaRON} RON) + TVA ${s.tvaRON} RON`).join(' | ') || '';
-        setAiMsg(m => ({...m, dvi:`✅ Curs: ${parsed.cursSchimb} · ${parsed.segmente?.length || 1} segmente · Total vamă: ${parsed.totalTaxaVamalaRON} RON · TVA: ${parsed.totalTVARON} RON${segInfo?'
-'+segInfo:''}`}));
+        const dviMsg = '✅ Curs: ' + parsed.cursSchimb + ' · ' + (parsed.segmente?.length || 1) + ' segmente · Total vamă: ' + parsed.totalTaxaVamalaRON + ' RON · TVA: ' + parsed.totalTvaRON + ' RON' + (segInfo ? ' | ' + segInfo : '');
+        setAiMsg(m => ({...m, dvi: dviMsg}));
       } else {
         if (parsed.comisionProcessare) setComisionDHL(String(parsed.comisionProcessare));
         if (parsed.comisionTVA) setComisionDHLTVA(String(parsed.comisionTVA));
