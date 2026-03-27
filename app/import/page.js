@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 const fmt = (n, d=2) => Number(n||0).toLocaleString('ro-RO', {minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtRON = n => `${fmt(n)} RON`;
@@ -7,6 +7,7 @@ const fmtRON = n => `${fmt(n)} RON`;
 const EMPTY = {name:'', sku:'', qty:'1', unitPriceUSD:'0', taxaVamala:'', tvaPercent:'21'};
 
 export default function ImportCalc() {
+  const [mounted, setMounted] = useState(false);
   const [products, setProducts] = useState([{...EMPTY}]);
   const [transportUSD, setTransportUSD] = useState('');
   const [transportRON, setTransportRON] = useState('');
@@ -24,6 +25,8 @@ export default function ImportCalc() {
   const [aiMsg, setAiMsg] = useState({});
   const [savedJSON, setSavedJSON] = useState(null);
   const [showBD, setShowBD] = useState(null);
+
+  useEffect(() => { setMounted(true); }, []);
 
   const upd = (idx, field, val) =>
     setProducts(p => p.map((x, i) => i === idx ? {...x, [field]: val} : x));
@@ -248,6 +251,12 @@ export default function ImportCalc() {
     border: `1px solid ${step>=s?'transparent':'#1a2535'}`,
     borderRadius:22, padding:'6px 18px', fontSize:11, cursor:'pointer', fontWeight:step===s?700:400,
   });
+
+  if (!mounted) return (
+    <div style={{minHeight:'100vh',background:'#060b10',display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <div style={{color:'#f97316',fontSize:14}}>Se încarcă...</div>
+    </div>
+  );
 
   return (
     <>
