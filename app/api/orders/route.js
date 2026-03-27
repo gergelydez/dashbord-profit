@@ -83,16 +83,9 @@ function toRestOrder(node) {
   }));
 
   // paymentGatewayNames = array cu toate gateway-urile folosite pe comandă
+  // ex: ["shopify_payments"] sau ["Cash on Delivery (COD), xConnector"]
   const gateways = node.paymentGatewayNames || [];
   const payment_gateway = gateways[0] || '';
-
-  // Attribution din customerJourneySummary
-  const journey     = node.customerJourneySummary?.lastVisit;
-  const utmSource   = journey?.utmParameters?.source || journey?.source || '';
-  const utmMedium   = journey?.utmParameters?.medium || '';
-  const utmCampaign = journey?.utmParameters?.campaign || '';
-  const referrerUrl = journey?.referrerUrl || '';
-  const landingPage = journey?.landingPage || '';
 
   const addr  = node.shippingAddress || node.billingAddress || {};
   const baddr = node.billingAddress  || {};
