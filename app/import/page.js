@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 
 const fmt = (n, d=2) => Number(n||0).toLocaleString('ro-RO', {minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtRON = n => `${fmt(n)} RON`;
@@ -231,7 +231,7 @@ export default function ImportCalc() {
   const tva_RON_final = tvaRON_dvi ? tva_RON_real : tva_RON_calc;
 
   const totalCosturi = tRON + taxaV_RON_final + comRON + tva_RON_final;
-  const totalCostRON = totalRON_f + totalCosturi; // recalculat după prods mai jos
+  const totalCostRON = totalRON_f + totalCosturi;
 
   const prods = products.map(p=>{
     const qty=parseFloat(p.qty)||0, unitUSD=parseFloat(p.unitPriceUSD)||0;
@@ -260,8 +260,16 @@ export default function ImportCalc() {
     const totalP = valRON + costuri; // total cu TVA inclus
     const costUnit = qty>0 ? totalP/qty : 0; // preț unitar cu toate taxele + TVA
 
-    return {...p,qty,unitUSD,valUSD,valRON,prop,costuri,totalP,costUnit,
-      transportAlocat,taxaVamalaProd,comisionAlocat,tvaProd,tvPerc,tvaPPerc};
+    return {
+      ...p, qty, unitUSD, valUSD, valRON, prop,
+      costuri: costuri||0, totalP: totalP||0, costUnit: costUnit||0,
+      transportAlocat: transportAlocat||0,
+      taxaVamalaProd: taxaVamalaProd||0,
+      comisionAlocat: comisionAlocat||0,
+      tvaProd: tvaProd||0,
+      tvPerc: tvPerc||0,
+      tvaPPerc: tvaPPerc||21,
+    };
   });
 
   const exportJSON = () => {
