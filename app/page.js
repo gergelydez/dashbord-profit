@@ -54,7 +54,9 @@ const PRESETS = [
 function procOrder(o) {
   let ts = 'pending', fulfilledAt = '', trackingNo = '';
   if (o.fulfillments?.length > 0) {
-    const f = o.fulfillments[o.fulfillments.length - 1];
+    // Prioritizăm fulfillment-ul cu 'delivered', altfel ultimul
+    const deliveredF = o.fulfillments.find(f => (f.shipment_status||'').toLowerCase() === 'delivered');
+    const f = deliveredF || o.fulfillments[o.fulfillments.length - 1];
     fulfilledAt = f.updated_at || f.created_at || '';
     trackingNo = f.tracking_number || '';
     const ss = (f.shipment_status || '').toLowerCase();
@@ -63,7 +65,17 @@ function procOrder(o) {
     else if (ss === 'out_for_delivery') ts = 'outfor';
     else if (['in_transit','confirmed'].includes(ss)) ts = 'incurs';
     else if (ss === 'label_printed') ts = 'incurs';
-    else if (o.fulfillment_status === 'fulfilled') ts = 'incurs'; // fulfilled fără shipment_status = în drum
+    else if (o.fulfillment_status === 'fulfilled') {
+      // Dacă e fulfilled dar fără shipment_status explicit:
+      // - dacă fulfilledAt e mai vechi de 10 zile → considerat livrat (xConnector nu a actualizat)
+      // - dacă e recent → incurs (în drum, xConnector va actualiza)
+      if (fulfilledAt) {
+        const daysSince = (new Date() - new Date(fulfilledAt)) / (1000 * 60 * 60 * 24);
+        ts = daysSince > 10 ? 'livrat' : 'incurs';
+      } else {
+        ts = 'incurs';
+      }
+    }
   }
   if (o.cancelled_at) ts = 'anulat';
   const addr = o.shipping_address || o.billing_address || {};
