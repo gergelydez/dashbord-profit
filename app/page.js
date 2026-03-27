@@ -149,6 +149,15 @@ export default function Dashboard() {
   const [sdError, setSdError]   = useState('');
   const [sdLoading, setSdLoading] = useState(false);
   const [sdFiles, setSdFiles]   = useState(() => { try { return JSON.parse(ls.get('sd_files') || '[]'); } catch { return []; } });
+
+  // GLS AWB Map — import din MyGLS Excel
+  const [glsAwbMap, setGlsAwbMap] = useState(() => {
+    try { const s = ls.get('gls_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
+  const [glsDone, setGlsDone]     = useState(() => { try { return !!ls.get('gls_awb_map'); } catch { return false; } });
+  const [glsError, setGlsError]   = useState('');
+  const [glsLoading, setGlsLoading] = useState(false);
+  const [glsFiles, setGlsFiles]   = useState(() => { try { return JSON.parse(ls.get('gls_files') || '[]'); } catch { return []; } });
   const [courierFilter, setCourierFilter] = useState('toate');
 
   const [sbInvLoading, setSbInvLoading] = useState({});
@@ -341,6 +350,105 @@ export default function Dashboard() {
     ls.del('sd_awb_map'); ls.del('sd_files');
   };
 
+  const parseGlsExcel = (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    setGlsLoading(true); setGlsError('');
+    const normalizeGlsStatus = (raw) => {
+      const s = (raw || '').toString().toLowerCase();
+      if (s.includes('delivered') || s.includes('livrat')) return 'delivered_raw'; // poate fi livrat sau retur
+      if (s.includes('return') || s.includes('retur') || s.includes('not delivered') || s.includes('refused')) return 'retur';
+      if (s.includes('out for delivery') || s.includes('in delivery')) return 'outfor';
+      if (s.includes('in transit') || s.includes('transit') || s.includes('hub')) return 'incurs';
+      return null;
+    };
+    const loadXLSX = () => {
+      const newMap = { ...glsAwbMap };
+      const newFiles = [...glsFiles];
+      let processed = 0;
+      const processFile = (file) => new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const wb = window.XLSX.read(ev.target.result, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+            const header = (rows[0] || []).map(h => (h||'').toString().toLowerCase());
+            // Căutăm coloanele AWB și Status
+            const awbIdx = header.findIndex(h => h.includes('parcel') || h.includes('awb') || h.includes('colet') || h.includes('number'));
+            const statusIdx = header.findIndex(h => h.includes('status') || h.includes('stare') || h.includes('event'));
+            const refIdx = header.findIndex(h => h.includes('reference') || h.includes('referinta') || h.includes('ref'));
+            if (awbIdx === -1 && refIdx === -1) { setGlsError('Coloana AWB/Parcel negăsită.'); resolve(); return; }
+            if (statusIdx === -1) { setGlsError('Coloana Status negăsită.'); resolve(); return; }
+            // Găsim coloana pentru valoarea rambursului
+            const rambursIdx = header.findIndex(h => 
+              h.includes('ramburs') || h.includes('valoare') || h.includes('cod') || h.includes('cash') || h.includes('amount')
+            );
+            const servicesIdx = header.findIndex(h => 
+              h.includes('servicii') || h.includes('service')
+            );
+            rows.slice(1).forEach(row => {
+              const awb = (row[awbIdx !== -1 ? awbIdx : refIdx] || '').toString().trim();
+              if (!awb) return;
+              let status = normalizeGlsStatus(row[statusIdx]);
+              if (!status) return;
+              
+              // Dacă statusul e 'delivered_raw', verificăm dacă e livrat sau retur
+              if (status === 'delivered_raw') {
+                const rambursVal = rambursIdx !== -1 ? (row[rambursIdx] || '').toString().trim() : '';
+                const services   = servicesIdx !== -1 ? (row[servicesIdx] || '').toString().toUpperCase() : '';
+                // Are valoare ramburs SAU are serviciul COD → livrat la client
+                // Nu are ramburs și nu are COD → livrat înapoi (retur)
+                if (rambursVal && rambursVal !== '0' && rambursVal !== '-') {
+                  status = 'livrat';
+                } else if (services.includes('COD')) {
+                  status = 'livrat';
+                } else {
+                  // Fără ramburs și fără COD = livrat înapoi la expeditor = RETUR
+                  status = 'retur';
+                }
+              }
+              
+              newMap[awb] = status;
+              processed++;
+            });
+            if (!newFiles.includes(file.name)) newFiles.push(file.name);
+            resolve();
+          } catch(err) { setGlsError('Eroare Excel: ' + err.message); resolve(); }
+        };
+        reader.readAsArrayBuffer(file);
+      });
+      Promise.all(files.map(processFile)).then(() => {
+        if (processed === 0) { setGlsError('Niciun AWB recunoscut. Verifică formatul fișierului.'); setGlsLoading(false); return; }
+        setGlsAwbMap(newMap); setGlsFiles(newFiles); setGlsDone(true);
+        ls.set('gls_awb_map', JSON.stringify(newMap));
+        ls.set('gls_files', JSON.stringify(newFiles));
+        setGlsLoading(false);
+      });
+    };
+    if (window.XLSX) { loadXLSX(); }
+    else {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = loadXLSX;
+      s.onerror = () => { setGlsError('Nu s-a putut încărca XLSX.'); setGlsLoading(false); };
+      document.head.appendChild(s);
+    }
+    e.target.value = '';
+  };
+
+  const clearGlsData = () => {
+    setGlsAwbMap({}); setGlsFiles([]); setGlsDone(false); setGlsError('');
+    ls.del('gls_awb_map'); ls.del('gls_files');
+  };
+
+  const getGlsStatus = (order) => {
+    if (!order) return null;
+    const awb = (order.trackingNo || '').trim();
+    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
+    return null; // null = folosim statusul din Shopify
+  };
+
   const getSdStatus = (order) => {
     if (!order) return null;
     const awb = (order.trackingNo || '').trim();
@@ -458,9 +566,11 @@ export default function Dashboard() {
   };
 
   const livrateOrders = allOrders.filter(o => {
-    if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
-    const f = new Date(o.fulfilledAt);
-    return f >= rangeFromD && f <= rangeToD;
+    // Statusul final: GLS Excel > Shopify
+    const finalTs = o.courier === 'gls' ? getGlsStatusFinal(o) : o.ts;
+    if (finalTs !== 'livrat') return false;
+    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
+    return fd >= rangeFromD && fd <= rangeToD;
   });
   const livrate = livrateOrders.length;
   const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
@@ -499,12 +609,21 @@ export default function Dashboard() {
   // GLS livrate după fulfilledAt în perioada curentă
   const glsOrders  = orders.filter(o => o.courier === 'gls');
   const sdOrders   = orders.filter(o => o.courier === 'sameday');
+  // GLS status: prioritizăm Excel din MyGLS > Shopify/xConnector
+  const getGlsStatusFinal = (o) => {
+    const awb = (o.trackingNo || '').trim();
+    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
+    return o.ts;
+  };
+
   const glsLivrate = allOrders.filter(o => {
-    if (o.courier !== 'gls' || o.ts !== 'livrat') return false;
-    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
-    return fd && fd >= rangeFromD && fd <= rangeToD;
+    if (o.courier !== 'gls') return false;
+    const st = getGlsStatusFinal(o);
+    if (st !== 'livrat') return false;
+    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
+    return fd >= rangeFromD && fd <= rangeToD;
   }).length;
-  const glsRetur = glsOrders.filter(o => o.ts === 'retur').length;
+  const glsRetur = glsOrders.filter(o => getGlsStatusFinal(o) === 'retur').length;
 
   // Retururi suplimentare (din alte perioade, returnate în perioada curentă)
   const retururiExtra = allOrders.filter(o => {
@@ -513,7 +632,12 @@ export default function Dashboard() {
     const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
     return fd && fd >= rangeFromD && fd <= rangeToD;
   });
-  const returTotal = retur + retururiExtra.length;
+  // Retururi GLS din Excel (comenzi marcate ca retur în MyGLS dar nu în Shopify)
+  const glsReturExtra = glsDone ? glsOrders.filter(o => {
+    const glsSt = getGlsStatusFinal(o);
+    return glsSt === 'retur' && o.ts !== 'retur';
+  }).length : 0;
+  const returTotal = retur + retururiExtra.length + glsReturExtra;
 
   const courierBadgeCount = (courierId) => {
     return orders.filter(o => {
@@ -685,6 +809,7 @@ export default function Dashboard() {
               <button className="bsm" onClick={fetchOrders}>⟳ Sincronizează</button>
               <a href="/profit" style={{background:'#10b981',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>💹 Profit</a>
               <a href="/stats" style={{background:'#3b82f6',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>📊 Statistici</a>
+              <a href="/import" style={{background:'#a855f7',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>📦 Import</a>
               <button className="bsm" style={{borderColor:'rgba(244,63,94,.3)',color:'#f43f5e'}} onClick={disconnect}>✕</button>
             </>}
           </div>
@@ -847,17 +972,35 @@ export default function Dashboard() {
 
             {(glsOrders.length > 0 || sdOrders.length > 0) && (
               <div className="courier-grid" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
-                <div style={{background:'#0f1419',border:'1px solid #f97316',borderRadius:10,padding:'12px 14px'}}>
-                  <div style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,marginBottom:8,fontFamily:'monospace'}}>📦 GLS</div>
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
-                    <span style={{color:'#94a3b8'}}>Total</span><span style={{color:'#e8edf2',fontFamily:'monospace'}}>{glsOrders.length}</span>
+                <div style={{background:'#0f1419',border:`1px solid ${glsError?'#f43f5e':glsDone?'#10b981':'#f97316'}`,borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                    <span style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
+                      📦 GLS
+                      {glsDone?<span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {Object.keys(glsAwbMap).length} AWB</span>
+                              :<span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ fără export</span>}
+                    </span>
+                    <div style={{display:'flex',gap:5,alignItems:'center'}}>
+                      {glsDone&&<button onClick={clearGlsData} style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#4a5568',borderRadius:5,padding:'2px 6px',cursor:'pointer'}}>✕</button>}
+                      <label style={{fontSize:9,background:glsDone?'transparent':'rgba(249,115,22,.15)',border:`1px solid ${glsDone?'#243040':'#f97316'}`,color:glsDone?'#94a3b8':'#f97316',borderRadius:5,padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap'}}>
+                        {glsLoading?'⟳':glsDone?'+ Excel':'📊 Import MyGLS'}
+                        <input type="file" accept=".xlsx,.xls,.csv" multiple onChange={parseGlsExcel} style={{display:'none'}} />
+                      </label>
+                    </div>
                   </div>
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
-                    <span style={{color:'#94a3b8'}}>Livrate</span><span style={{color:'#10b981',fontFamily:'monospace'}}>{glsLivrate}</span>
-                  </div>
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
-                    <span style={{color:'#94a3b8'}}>Returnate</span><span style={{color:'#f43f5e',fontFamily:'monospace'}}>{glsRetur}</span>
-                  </div>
+                  {glsFiles.map((f,i)=><div key={i} style={{fontSize:8,color:'#4a5568',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={f}>📄 {f}</div>)}
+                  {glsError&&<div style={{fontSize:9,color:'#f43f5e',marginBottom:5}}>{glsError}</div>}
+                  {!glsDone&&glsOrders.length>0&&!glsError&&(
+                    <div style={{fontSize:9,color:'#f59e0b',marginBottom:6,lineHeight:1.5,background:'rgba(245,158,11,.07)',borderRadius:5,padding:'5px 7px'}}>
+                      ⚠️ Fără export MyGLS, statusurile vin doar din xConnector.<br/>
+                      <strong>MyGLS → Parcels → Export Excel</strong>
+                    </div>
+                  )}
+                  {[['Total',glsOrders.length,'#e8edf2'],['✅ Livrate',glsLivrate,'#10b981'],['↩️ Returnate',glsRetur,glsRetur>0?'#f43f5e':'#94a3b8']].map(([lbl,val,col])=>(
+                    <div key={lbl} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
+                      <span style={{color:'#94a3b8'}}>{lbl}</span>
+                      <span style={{color:col,fontFamily:'monospace',fontWeight:val>0&&lbl.includes('Retur')?700:400}}>{val}</span>
+                    </div>
+                  ))}
                 </div>
                 <div style={{background:'#0f1419',border:`1px solid ${sdError?'#f43f5e':sdDone?'#10b981':'#3b82f6'}`,borderRadius:10,padding:'12px 14px'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
