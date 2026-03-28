@@ -1,0 +1,107 @@
+[
+  {
+    "id": "DM56_SIL",
+    "sku": "DM56",
+    "pattern": "silicon",
+    "excludes": [
+      "metal",
+      "protectie",
+      "protecție"
+    ],
+    "name": "Delta Max Silicon (fără protecție)",
+    "cost": 154.8,
+    "updated": "2025-01"
+  },
+  {
+    "id": "DM56_SIL_PROT",
+    "sku": "DM56",
+    "pattern": "silicon",
+    "excludes": [
+      "metal"
+    ],
+    "name": "Delta Max Silicon + Protecție ecran",
+    "cost": 154.8,
+    "updated": "2025-01"
+  },
+  {
+    "id": "DM56_MET",
+    "sku": "DM56",
+    "pattern": "silicon+ metal",
+    "excludes": [],
+    "name": "Delta Max Silicon + Metal + Protecție",
+    "cost": 154.8,
+    "updated": "2025-01"
+  },
+  {
+    "id": "DM56_MET2",
+    "sku": "DM56",
+    "pattern": "silicon+metal",
+    "excludes": [],
+    "name": "Delta Max Silicon+Metal",
+    "cost": 154.8,
+    "updated": "2025-01"
+  },
+  {
+    "id": "HD300",
+    "sku": "HD300",
+    "pattern": "delta max pro",
+    "excludes": [],
+    "name": "Delta Max PRO HD300",
+    "cost": 181,
+    "updated": "—"
+  },
+  {
+    "id": "Z85",
+    "sku": "Z85",
+    "pattern": "z85",
+    "excludes": [],
+    "name": "Z85 (toate modelele)",
+    "cost": 65,
+    "updated": "—"
+  },
+  {
+    "id": "U8",
+    "sku": "U8",
+    "pattern": "u8",
+    "excludes": [],
+    "name": "U8 Ultra",
+    "cost": 208,
+    "updated": "—"
+  },
+  {
+    "id": "M99",
+    "sku": "M99",
+    "pattern": "delta max ultra",
+    "excludes": [],
+    "name": "Delta Max Ultra M99",
+    "cost": 244.77,
+    "updated": "2025-01"
+  },
+  {
+    "id": "DM58",
+    "sku": "DM58",
+    "pattern": "delta max plus",
+    "excludes": [],
+    "name": "Delta Max Plus DM58",
+    "cost": 158.85,
+    "updated": "2025-01"
+  },
+  {
+    "id": "DM58B",
+    "sku": "DM58",
+    "pattern": "dm58",
+    "excludes": [],
+    "name": "Delta Max Plus DM58 (SKU)",
+    "cost": 158.85,
+    "updated": "2025-01"
+  },
+  {
+    "id": "DM76",
+    "sku": "DM76",
+    "pattern": "dm76",
+    "excludes": [],
+    "name": "Smart watch DM76",
+    "cost": 163.16,
+    "updated": "2025-01"
+  }
+]
