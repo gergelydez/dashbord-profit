@@ -113,8 +113,11 @@ function procOrder(o) {
   const prods = (o.line_items || []).map(i => i.name || '').join(' + ');
   const fulfillmentData = (o.fulfillments || []).find(f => f.tracking_company || f.tracking_number);
   const trackingCompany = (fulfillmentData?.tracking_company || '').toLowerCase();
-  const courier = trackingCompany.includes('sameday') ? 'sameday'
-                : trackingCompany.includes('gls') ? 'gls'
+  const courier = trackingCompany.includes('sameday') || trackingCompany.includes('same day') ? 'sameday'
+                : trackingCompany.includes('gls') || trackingCompany.includes('mygls') ? 'gls'
+                : trackingCompany.includes('fan') ? 'fan'
+                : trackingCompany.includes('cargus') ? 'cargus'
+                : trackingCompany.includes('dpd') ? 'dpd'
                 : trackingCompany ? 'other' : 'unknown';
   const notes = o.note_attributes || [];
   const invUrlAttr   = notes.find(a => (a.name||'').toLowerCase().includes('invoice-url') && !(a.name||'').toLowerCase().includes('short'));
@@ -820,19 +823,26 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const sumCodInDrum = codInDrum.reduce((a,o) => a+o.total, 0);
 
   // GLS livrate după fulfilledAt în perioada curentă
-  const glsOrders  = orders.filter(o => o.courier === 'gls');
-  const sdOrders   = orders.filter(o => o.courier === 'sameday');
-  const glsLivrate = allOrders.filter(o => {
+  // glsOrders din allOrders filtrat pe perioadă (nu doar orders filtrat pe status)
+  const glsOrders  = applyTrackingOverrides(allOrders).filter(o => {
     if (o.courier !== 'gls') return false;
-    const st = getGlsStatusFinal(o);
-    if (st !== 'livrat') return false;
     const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
     return fd >= rangeFromD && fd <= rangeToD;
-  }).length;
-  const glsRetur  = glsOrders.filter(o => getGlsStatusFinal(o) === 'retur').length;
-  const glsIncurs = glsOrders.filter(o => getGlsStatusFinal(o) === 'incurs').length;
-  const glsOutfor = glsOrders.filter(o => getGlsStatusFinal(o) === 'outfor').length;
-  const glsPending= glsOrders.filter(o => getGlsStatusFinal(o) === 'pending').length;
+  });
+  const sdOrders   = applyTrackingOverrides(allOrders).filter(o => {
+    if (o.courier !== 'sameday') return false;
+    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
+    return fd >= rangeFromD && fd <= rangeToD;
+  });
+  // Toate calculele din glsOrders (cu overrides aplicate)
+  const glsLivrate  = glsOrders.filter(o => getFinalStatus(o) === 'livrat').length;
+  const glsRetur    = glsOrders.filter(o => getFinalStatus(o) === 'retur').length;
+  const glsIncurs   = glsOrders.filter(o => getFinalStatus(o) === 'incurs').length;
+  const glsOutfor   = glsOrders.filter(o => getFinalStatus(o) === 'outfor').length;
+  // "În livrare" = statusCode 4 din GLS (Out for delivery) = outfor în sistemul nostru
+  // Pending = label_printed / 51 = AWB creat dar nu ridicat încă
+  const glsInLivrare = glsOutfor; // outfor = la curier pentru livrare azi
+  const glsPending  = glsOrders.filter(o => getFinalStatus(o) === 'pending').length;
 
   // Retururi suplimentare (din alte perioade, returnate în perioada curentă)
   const retururiExtra = allOrders.filter(o => {
@@ -1143,12 +1153,11 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     </div>
                   )}
                   {[
-                    ['Total',glsOrders.length,'#e8edf2'],
-                    ['✅ Livrate',glsLivrate,'#10b981'],
-                    ['🚚 Tranzit',glsIncurs,'#3b82f6'],
-                    ['📬 La curier',glsOutfor,'#a855f7'],
-                    ['⏳ Pending',glsPending,'#f59e0b'],
-                    ['↩️ Returnate',glsRetur,glsRetur>0?'#f43f5e':'#94a3b8'],
+                    ['Total', glsOrders.length, '#e8edf2'],
+                    ['✅ Livrate', glsLivrate, '#10b981'],
+                    ['🚚 Tranzit', glsIncurs, '#3b82f6'],
+                    ['🚛 În livrare', glsInLivrare, '#a855f7'],
+                    ['↩️ Refuzate', glsRetur, glsRetur>0?'#f43f5e':'#94a3b8'],
                   ].map(([lbl,val,col])=>(
                     <div key={lbl} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
                       <span style={{color:'#94a3b8'}}>{lbl}</span>
