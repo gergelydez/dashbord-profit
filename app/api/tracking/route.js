@@ -18,14 +18,27 @@ function hashPassword(password) {
   );
 }
 
-// GLS Status Codes → status intern (din Appendix G)
+// GLS Status Codes → status intern (din Appendix G documentație MyGLS)
 function mapGLSStatus(statusCode) {
   const code = parseInt(statusCode);
-  if ([5, 54, 55, 58, 92].includes(code)) return 'delivered';
-  if ([4, 32].includes(code)) return 'out_for_delivery';
+  // LIVRAT
+  if ([5, 54, 55, 58, 92, 93].includes(code)) return 'delivered';
+  // LA CURIER / ÎN LIVRARE AZI
+  if ([4, 32, 85].includes(code)) return 'out_for_delivery';
+  // RETUR
   if ([23, 40].includes(code)) return 'returned';
-  if ([11,12,14,15,16,17,18,19,20,33,34,35,36].includes(code)) return 'failed_attempt';
-  if ([1,2,3,6,7,8,9,10,21,22,25,26,27,41,47,51,52,53].includes(code)) return 'in_transit';
+  // TENTATIVĂ EȘUATĂ
+  if ([11,12,14,15,16,17,18,19,20,33,34,35,36,43,68,87,88,89,90].includes(code)) return 'failed_attempt';
+  // ÎN TRANZIT (toate celelalte stări active)
+  // 1=preluat, 2=plecat din depozit, 3=ajuns depozit, 6=stocat, 7=stocat
+  // 8=ridicare proprie, 9=reprogramat, 10=scan normal
+  // 21=eroare sortare, 22=trimis la sortare, 25=redirecționat
+  // 26=ajuns depozit, 27=ajuns depozit, 41=redirecționat
+  // 47=plecat depozit, 51=date înregistrate, 52=date ramburs
+  // 53=tranzit depozit, 83=pickup înregistrat, 86=preluat de curier
+  if ([1,2,3,6,7,8,9,10,13,21,22,24,25,26,27,29,41,46,47,
+       51,52,53,56,59,80,83,84,85,86,97,99].includes(code)) return 'in_transit';
+  // Default
   return 'in_transit';
 }
 
@@ -78,11 +91,19 @@ async function trackGLS(awb) {
     const last = statusList[0];
     const mapped = mapGLSStatus(last.StatusCode);
 
+    // Parsăm data GLS: /Date(1774645401000+0100)/ → timestamp
+    const parseGLSDate = (dateStr) => {
+      if (!dateStr) return '';
+      const match = dateStr.match(/\/Date\((\d+)/);
+      if (match) return new Date(parseInt(match[1])).toISOString();
+      return dateStr;
+    };
+
     const result = {
       status: mapped,
       statusRaw: last.StatusCode,
       statusDescription: last.StatusDescription || '',
-      lastUpdate: last.StatusDate || '',
+      lastUpdate: parseGLSDate(last.StatusDate),
       location: last.DepotCity || '',
     };
 
