@@ -748,7 +748,11 @@ export default function Dashboard() {
             <div className="header-status">
               <div className="live"><div className={`dot ${connected?'on':''}`}></div><span>{connected ? `${orders.length} comenzi` : 'Deconectat'}</span></div>
               {connected && <>
-                <button className="bsm sync-btn" onClick={() => fetchOrders('force')}>⟳ Sincronizează</button>
+                <button className="bsm sync-btn" onClick={() => fetchOrders('force')}>⟳ Sync</button>
+                <button className="bsm" onClick={() => refreshTracking(false)} disabled={trackingLoading}
+                  style={{color:trackingLoading?'#475569':'#3b82f6',borderColor:'rgba(59,130,246,.3)',padding:'4px 8px'}}>
+                  {trackingLoading ? '⟳' : `📡${lastTrackingCheck?' ✓':''}`}
+                </button>
                 {bgLoading && <span className="bg-loading">⟳</span>}
                 <button className="disc-btn" onClick={disconnect}>✕</button>
               </>}
