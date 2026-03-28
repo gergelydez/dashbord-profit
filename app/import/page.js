@@ -417,26 +417,7 @@ export default function ImportCalc() {
 
   return (
     <>
-      <style>{`
-        *{margin:0;padding:0;box-sizing:border-box;}
-        body{background:#060b10;color:#e8edf2;font-family:'DM Sans',system-ui,sans-serif;min-height:100vh;}
-        .w{max-width:860px;margin:0 auto;padding:24px 16px 80px;}
-        input:focus{border-color:#f97316!important;}
-        input[type=number]{-moz-appearance:textfield;}
-        input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
-        .g2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-        .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
-        .nbtn{background:linear-gradient(135deg,#f97316,#ea580c);color:white;border:none;padding:12px 24px;border-radius:12px;font-weight:700;font-size:13px;cursor:pointer;width:100%;margin-top:12px;}
-        .nbtn:disabled{opacity:.4;cursor:not-allowed;}
-        .bbtn{background:#0c1520;border:1px solid #1a2535;color:#64748b;padding:12px 20px;border-radius:12px;font-weight:600;font-size:13px;cursor:pointer;}
-        .ubtn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:600;border:none;}
-        .aibtn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;border:none;}
-        .pulse{animation:pulse 1.5s ease-in-out infinite;}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-        .bdr{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1a2535;font-size:12px;}
-        .bdr:last-child{border-bottom:none;}
-        @media(max-width:600px){.g2,.g3{grid-template-columns:1fr!important;}.w{padding:14px 12px 60px;}}
-      `}</style>
+      
 
       <div className="w">
         {/* HEADER */}
@@ -865,3 +846,4 @@ export default function ImportCalc() {
     </>
   );
 }
+
