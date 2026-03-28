@@ -209,10 +209,20 @@ export default function ProfitPage() {
     const ssku = g('glamx_shopify_sku_costs'); if (ssku) setShopifySkuCosts(JSON.parse(ssku));
 
     // Load orders (saved from previous session) — profit estimat imediat
-    // Citeste din gx_orders_all (cheia salvata de dashboard) — contine si campul courier
+    // Citeste din gx_orders_all (cheia salvata de dashboard) — contine ultimele 60 zile
+    // Filtram doar luna curenta selectata
     const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
     if (sord) {
-      try { const p = JSON.parse(sord); setShopifyOrders(p); setShopifyDone(true); } catch {}
+      try {
+        const p = JSON.parse(sord);
+        // Filtreaza dupa luna curenta
+        const [y, m] = currentMonth.split('-');
+        const filtered = p.filter(o => {
+          const d = (o.createdAt || o.created_at || '').slice(0, 7);
+          return d === currentMonth;
+        });
+        if (filtered.length > 0) { setShopifyOrders(filtered); setShopifyDone(true); }
+      } catch {}
     }
 
     // Incarca costuri din product-costs.json (public folder) — are prioritate peste localStorage
@@ -234,6 +244,20 @@ export default function ProfitPage() {
   }, []);
 
   // ── FETCH SHOPIFY ──
+  // Re-filtreaza comenzile cand se schimba luna
+  useEffect(() => {
+    if (!month) return;
+    const g = (key) => localStorage.getItem(key);
+    const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
+    if (!sord) return;
+    try {
+      const p = JSON.parse(sord);
+      const filtered = p.filter(o => (o.createdAt || o.created_at || '').slice(0, 7) === month);
+      if (filtered.length > 0) { setShopifyOrders(filtered); setShopifyDone(true); }
+      else { setShopifyOrders([]); setShopifyDone(false); }
+    } catch {}
+  }, [month]);
+
   const fetchShopify = async () => {
     const domain = localStorage.getItem('gx_d');
     const token = localStorage.getItem('gx_t');
