@@ -140,16 +140,24 @@ export default function Stats() {
     const sumTranzit  = tranzit.reduce((a,o)=>a+o.total,0);
     const totalRevenue= sumLivrate; // Total = doar ce s-a livrat efectiv
 
-    // Produse — doar din comenzile LIVRATE (nu din toate comenzile)
+    // Produse — doar din comenzile LIVRATE
+    // Dacă prețul per item e 0 (nu e în cache), folosim totalul comenzii împărțit la nr. produse
     const prodMap = {};
     livrate.forEach(o => {
-      (o.items||[]).forEach(item => {
+      const items = o.items || [];
+      if (!items.length) return;
+      const totalItems = items.reduce((s, i) => s + (i.qty || 1), 0);
+      items.forEach(item => {
         const key = item.sku || item.name;
         if (!key) return;
-        if (!prodMap[key]) prodMap[key] = { name: item.name, sku: item.sku, qty: 0, revenue: 0, prices: [] };
-        prodMap[key].qty     += item.qty || 1;
-        prodMap[key].revenue += (item.price || 0) * (item.qty || 1);
-        prodMap[key].prices.push(item.price || 0);
+        if (!prodMap[key]) prodMap[key] = { name: item.name, sku: item.sku || '', qty: 0, revenue: 0 };
+        const qty = item.qty || 1;
+        // Dacă avem preț real folosim acel, altfel împărțim totalul comenzii proporțional
+        const unitPrice = (item.price && item.price > 0)
+          ? item.price
+          : (o.total / totalItems);
+        prodMap[key].qty     += qty;
+        prodMap[key].revenue += unitPrice * qty;
       });
     });
 
@@ -262,37 +270,59 @@ export default function Stats() {
       const d = new Date(str); d.setDate(d.getDate()+n);
       return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
     };
-    // GLS: livrare azi → ramburs peste 2 zile; livrare ieri → ramburs mâine; livrare alaltăieri → ramburs azi
-    // Sameday: livrare azi → ramburs mâine; livrare ieri → ramburs azi
-    // Shopify Payments: payout după 2 zile lucrătoare
+    // ── Logică zile LUCRĂTOARE pentru încasări ──
+    // Adaugă n zile lucrătoare (L-V) — sâmbătă/duminică nu se livrează, nu se numără
+    // Joi +2 zile lucrătoare = Luni | Vineri +2 = Marți
+    const nextBusinessDay = (str, plusWorkingDays) => {
+      const d = new Date(str + 'T12:00:00');
+      let added = 0;
+      while (added < plusWorkingDays) {
+        d.setDate(d.getDate() + 1);
+        const day = d.getDay();
+        if (day !== 0 && day !== 6) added++; // numărăm doar L-V
+      }
+      return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+    };
+
     const previziuni = { azi: {gls:0,sameday:0,shopify:0,total:0}, maine: {gls:0,sameday:0,shopify:0,total:0} };
-    // Toate comenzile livrate — indiferent de metoda de plată
+
     livrateInPeriod.forEach(o => {
       if (!o.fulfilledAt) return;
       if (o.courier === 'sameday' && getSdStatus(o) !== 'livrat') return;
       const livStr = o.fulfilledAt.slice(0,10);
       const isOnline = isOnlinePayment(o, onlineIds);
+      // Excludem Shopify Payments din COD curier
+      const isCOD = !isOnline;
       const net = isOnline ? o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed : o.total;
+
       const add = (day, courier, val) => {
         if (previziuni[day]) {
           previziuni[day][courier] += val;
           previziuni[day].total    += val;
         }
       };
-      if (o.courier === 'gls') {
-        if (livStr === addDays(todayStr,-2)) add('azi','gls',o.total);
-        if (livStr === addDays(todayStr,-1)) add('maine','gls',o.total);
-      } else if (o.courier === 'sameday') {
-        if (livStr === addDays(todayStr,-1)) add('azi','sameday',o.total);
-        if (livStr === todayStr)             add('maine','sameday',o.total);
+
+      if (o.courier === 'gls' && isCOD) {
+        // GLS COD: ramburs după 2 zile lucrătoare
+        const incasareGLS = nextBusinessDay(livStr, 2);
+        if (incasareGLS === todayStr)              add('azi','gls', o.total);
+        if (incasareGLS === addDays(todayStr, 1))  add('maine','gls', o.total);
+      } else if (o.courier === 'sameday' && isCOD) {
+        // Sameday COD: ramburs după 1 zi lucrătoare
+        const incasareSD = nextBusinessDay(livStr, 1);
+        if (incasareSD === todayStr)               add('azi','sameday', o.total);
+        if (incasareSD === addDays(todayStr, 1))   add('maine','sameday', o.total);
       } else if (isOnline) {
-        if (livStr === addDays(todayStr,-2)) add('azi','shopify',net);
-        if (livStr === addDays(todayStr,-1)) add('maine','shopify',net);
+        // Shopify Payments: payout după 2 zile lucrătoare
+        const incasareSP = nextBusinessDay(livStr, 2);
+        if (incasareSP === todayStr)               add('azi','shopify', net);
+        if (incasareSP === addDays(todayStr, 1))   add('maine','shopify', net);
       }
     });
 
     // Total încasat GLS, Sameday, Shopify din livrate
     // Totaluri COD per curier (excludem Shopify Payments - nu sunt ramburs)
+    // Total COD GLS = doar comenzi GLS plătite ramburs (excludem Shopify Payments/Card)
     const totalGLS     = livrate.filter(o=>o.courier==='gls' && !isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
     const totalSameday = livrate.filter(o=>o.courier==='sameday' && !isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
     const totalShopify = livrate.filter(o=>isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed,0);
@@ -688,4 +718,5 @@ export default function Stats() {
     </div>
   );
 }
+
 
