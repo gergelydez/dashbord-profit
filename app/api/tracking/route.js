@@ -141,19 +141,42 @@ export async function GET(request) {
 
     // Test 1: OAuth token
     try {
-      const tokenRes = await fetch('https://api-sandbox.gls-group.net/oauth/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
-        },
-        body: 'grant_type=client_credentials',
-        signal: AbortSignal.timeout(10000),
-      });
-      const tokenText = await tokenRes.text();
-      let tokenData;
-      try { tokenData = JSON.parse(tokenText); } catch { tokenData = tokenText.slice(0,200); }
-      results.oauth = { status: tokenRes.status, data: tokenData };
+      // Testăm toate OAuth endpoint-urile posibile GLS
+      const oauthUrls = [
+        'https://api-sandbox.gls-group.net/oauth/token',
+        'https://api-sandbox.gls-group.net/oauth2/token',
+        'https://api-sandbox.gls-group.net/auth/token',
+        'https://api-sandbox.gls-group.net/token',
+        'https://accounts.gls-group.eu/oauth/token',
+        'https://api.gls-group.eu/oauth/token',
+        'https://auth.gls-group.eu/oauth/token',
+        'https://api-sandbox.gls-group.net/track-and-trace-v1/oauth/token',
+      ];
+      results.oauthTests = [];
+      let bestToken = null;
+      for (const oauthUrl of oauthUrls) {
+        try {
+          const r = await fetch(oauthUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
+            },
+            body: 'grant_type=client_credentials',
+            signal: AbortSignal.timeout(6000),
+          });
+          const text = await r.text();
+          let data;
+          try { data = JSON.parse(text); } catch { data = text.slice(0,100); }
+          results.oauthTests.push({ url: oauthUrl, status: r.status, response: data });
+          if (r.ok && data?.access_token) { bestToken = data.access_token; break; }
+        } catch(e) {
+          results.oauthTests.push({ url: oauthUrl, error: e.message });
+        }
+      }
+      const tokenRes = { ok: !!bestToken };
+      const tokenData = bestToken ? { access_token: bestToken } : null;
+      results.oauth = { found: !!bestToken };
 
       // Test 2: dacă avem token, testăm tracking
       if (tokenRes.ok && tokenData.access_token) {
