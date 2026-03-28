@@ -598,8 +598,18 @@ export default function Dashboard() {
     const activeOrders = allOrders.filter(o =>
       ['incurs','outfor','pending'].includes(o.ts) && o.trackingNo
     );
+    console.log('[TRACKING] Comenzi active cu AWB:', activeOrders.length,
+      activeOrders.slice(0,3).map(o => ({id:o.id, awb:o.trackingNo, ts:o.ts, courier:o.courier}))
+    );
     if (!activeOrders.length) {
-      if (!silent) alert('Nicio comandă activă cu AWB pentru tracking.');
+      // Debug: arătăm comenzile incurs fără AWB
+      const faraAWB = allOrders.filter(o => ['incurs','outfor'].includes(o.ts) && !o.trackingNo);
+      if (!silent) alert(
+        faraAWB.length > 0
+          ? `⚠️ ${faraAWB.length} comenzi în tranzit dar FĂRĂ AWB în Shopify!
+Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
+          : 'Nicio comandă activă cu AWB pentru tracking.'
+      );
       return;
     }
     setTrackingLoading(true);
