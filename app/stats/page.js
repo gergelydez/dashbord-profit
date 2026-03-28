@@ -92,6 +92,13 @@ export default function Stats() {
 
   // livrateInPeriod = TOATE comenzile livrate în intervalul selectat (după fulfilledAt)
   // Include orice metodă de plată (COD, Shopify Payments, etc.)
+  // getSdStatus: prioritizează Excel > Shopify pentru Sameday
+  const getSdStatus = (o) => {
+    const awb = (o.trackingNo || '').trim();
+    if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
+    return o.ts !== 'pending' ? o.ts : null;
+  };
+
   const livrateInPeriod = useMemo(() => {
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
@@ -104,14 +111,7 @@ export default function Stats() {
       if (!livDate) return false;
       return livDate >= fromD && livDate <= toD;
     });
-  }, [allOrders, from, to]);
-
-  // getSdStatus: prioritizează Excel > Shopify pentru Sameday
-  const getSdStatus = (o) => {
-    const awb = (o.trackingNo || '').trim();
-    if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
-    return o.ts !== 'pending' ? o.ts : null;
-  };
+  }, [allOrders, from, to, getSdStatus]);
 
   const stats = useMemo(() => {
     const total    = orders.length;
