@@ -487,44 +487,24 @@ export default function Stats() {
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           {(stats.workDays||[]).slice(0,2).map((dateStr, idx) => {
             const p = stats.previziuni?.[dateStr] || {gls:0,sameday:0,shopify:0,total:0};
-            const label = idx===0 ? '⏰ De încasat AZI' : '📅 De încasat MÂINE';
+            const dayLabel = (stats.workDayLabels||[])[idx] || dateStr;
+            // Dacă idx=1 și e mai mult de 1 zi distanță față de azi (weekend între) → arătăm data reală
+            const isNextWorkday = idx === 1;
+            const label = idx===0 ? '⏰ De încasat AZI' : `📅 ${dayLabel}`;
             const color = idx===0 ? '#a855f7' : '#10b981';
             return (
-              <div key={dateStr} style={{background:'#0d1520',border:`1px solid ${color}33`,borderRadius:12,padding:'14px 16px',borderTop:`3px solid ${color}`}}>
-                <div style={{fontSize:9,color,textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>{label}</div>
-                <div style={{fontFamily:'Syne,sans-serif',fontSize:22,fontWeight:800,color,marginBottom:8}}>{fmt(p.total)} <span style={{fontSize:11,fontWeight:400}}>RON</span></div>
-                {p.gls>0     && <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>📦 GLS: <strong style={{color:'#f97316'}}>{fmt(p.gls)}</strong></div>}
-                {p.sameday>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>🚀 SD: <strong style={{color:'#3b82f6'}}>{fmt(p.sameday)}</strong></div>}
-                {p.shopify>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>💳 Card: <strong style={{color:'#a855f7'}}>{fmt(p.shopify)}</strong></div>}
-                {p.total===0 && <div style={{fontSize:11,color:'#334155'}}>Nimic programat</div>}
+              <div key={dateStr} style={{background:'#0d1520',border:`1px solid ${color}`,borderRadius:12,padding:'14px 16px'}}>
+                <div style={{fontSize:10,color,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{label}</div>
+                <div style={{fontSize:24,fontWeight:800,color,marginBottom:8}}>{fmt(p.total)} <span style={{fontSize:12}}>RON</span></div>
+                {p.gls>0     && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>📦 GLS: <strong style={{color:'#f97316'}}>{fmt(p.gls)} RON</strong></div>}
+                {p.sameday>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>🚀 SD: <strong style={{color:'#3b82f6'}}>{fmt(p.sameday)} RON</strong></div>}
+                {p.shopify>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>💳 Card: <strong style={{color:'#a855f7'}}>{fmt(p.shopify)} RON</strong></div>}
+                {p.total===0 && <div style={{fontSize:11,color:'#4a5568'}}>Nimic programat</div>}
               </div>
             );
           })}
         </div>
-        {/* Card "Următoarele zile" */}
-        {(stats.workDays||[]).slice(2).some(d => (stats.previziuni?.[d]?.total||0) > 0) && (
-          <div style={{background:'#0d1520',border:'1px solid #1e2a35',borderRadius:12,padding:'14px 16px',marginBottom:10}}>
-            <div style={{fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:2,marginBottom:10}}>📆 Următoarele zile</div>
-            {(stats.workDays||[]).slice(2).map((dateStr, idx) => {
-              const p = stats.previziuni?.[dateStr] || {gls:0,sameday:0,shopify:0,total:0};
-              const label = (stats.workDayLabels||[])[idx+2] || dateStr;
-              if (p.total === 0) return null;
-              return (
-                <div key={dateStr} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid #1a2535'}}>
-                  <div>
-                    <div style={{fontSize:12,fontWeight:700,color:'#e2e8f0'}}>{label}</div>
-                    <div style={{fontSize:10,color:'#475569',marginTop:2,display:'flex',gap:10}}>
-                      {p.gls>0     && <span>📦 {fmt(p.gls)} RON</span>}
-                      {p.sameday>0 && <span>🚀 {fmt(p.sameday)} RON</span>}
-                      {p.shopify>0 && <span>💳 {fmt(p.shopify)} RON</span>}
-                    </div>
-                  </div>
-                  <div style={{fontFamily:'Syne,sans-serif',fontSize:18,fontWeight:800,color:'#f97316'}}>{fmt(p.total)} <span style={{fontSize:10,fontWeight:400,color:'#64748b'}}>RON</span></div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+
 
         {/* TOTAL ÎNCASAT PE COURIER */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:10}}>
@@ -543,6 +523,30 @@ export default function Stats() {
             <div style={{fontSize:22,fontWeight:800,color:'#a855f7'}}>{fmt(stats.totalShopify||0)} <span style={{fontSize:11}}>RON</span></div>
             <div style={{fontSize:10,color:'#4a5568',marginTop:3}}>brut: {fmt(stats.totalShopifyBrut||0)} · comision: {fmt((stats.totalShopifyBrut||0)-(stats.totalShopify||0))} RON</div>
           </div>
+          {/* Card Următoarele zile - lângă Shopify */}
+          {(stats.workDays||[]).slice(2).some(d => (stats.previziuni?.[d]?.total||0) > 0) && (
+            <div style={{background:'#0d1520',border:'1px solid #f59e0b',borderRadius:12,padding:'14px 16px'}}>
+              <div style={{fontSize:10,color:'#f59e0b',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>📆 Următoarele zile</div>
+              {(stats.workDays||[]).slice(2).map((dateStr, idx) => {
+                const p = stats.previziuni?.[dateStr] || {gls:0,sameday:0,shopify:0,total:0};
+                const label = (stats.workDayLabels||[])[idx+2] || dateStr;
+                if (p.total === 0) return null;
+                return (
+                  <div key={dateStr} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #1a2535'}}>
+                    <div>
+                      <div style={{fontSize:11,fontWeight:600,color:'#e2e8f0'}}>{label}</div>
+                      <div style={{fontSize:10,color:'#475569',display:'flex',gap:8,marginTop:1}}>
+                        {p.gls>0     && <span>📦 {fmt(p.gls)}</span>}
+                        {p.sameday>0 && <span>🚀 {fmt(p.sameday)}</span>}
+                        {p.shopify>0 && <span>💳 {fmt(p.shopify)}</span>}
+                      </div>
+                    </div>
+                    <div style={{fontSize:15,fontWeight:800,color:'#f59e0b'}}>{fmt(p.total)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* ÎNCASĂRI PE ZILE */}
