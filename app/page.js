@@ -618,7 +618,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
-          orders: activeOrders.map(o => ({ id: o.id, awb: o.trackingNo, courier: o.courier }))
+          orders: activeOrders.map(o => ({ id: o.id, awb: o.trackingNo, courier: o.courier, createdAt: o.createdAt }))
         })
       });
       const data = await res.json();
@@ -1003,6 +1003,45 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                         {o.name}: {r.ok?`✓ ${r.series}${r.number}`:`✗ ${(r.error||'').slice(0,50)}`}
                       </span>;
                     })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TRACKING LIVE STATUS PANEL */}
+            {connected && allOrders.filter(o => ['incurs','outfor'].includes(o.ts) && o.trackingNo).length > 0 && (
+              <div style={{background:'rgba(59,130,246,.06)',border:'1px solid rgba(59,130,246,.15)',borderRadius:12,padding:'12px 14px',marginBottom:10}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                  <div style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,fontWeight:700}}>
+                    📡 Tracking Live GLS
+                    <span style={{fontSize:9,color:'#475569',marginLeft:6,fontWeight:400,textTransform:'none'}}>
+                      {allOrders.filter(o=>['incurs','outfor'].includes(o.ts)&&o.trackingNo).length} comenzi active
+                    </span>
+                  </div>
+                  <button onClick={() => refreshTracking(false)} disabled={trackingLoading}
+                    style={{background:'rgba(59,130,246,.12)',border:'1px solid rgba(59,130,246,.25)',color:trackingLoading?'#475569':'#3b82f6',padding:'4px 10px',borderRadius:20,fontSize:10,fontWeight:700,cursor:'pointer'}}>
+                    {trackingLoading ? '⟳ Se verifică...' : `🔄 Verifică${lastTrackingCheck?' ✓':''}`}
+                  </button>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  {allOrders.filter(o => ['incurs','outfor','pending'].includes(o.ts) && o.trackingNo).slice(0,10).map(o => {
+                    const ts = trackingResults[o.id];
+                    const statusColor = o.ts==='livrat'?'#10b981':o.ts==='retur'?'#f43f5e':o.ts==='outfor'?'#a855f7':'#3b82f6';
+                    const statusLabel = o.ts==='livrat'?'✅ Livrat':o.ts==='retur'?'↩ Retur':o.ts==='outfor'?'🚚 La curier':'🔄 Tranzit';
+                    return (
+                      <div key={o.id} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)'}}>
+                        <span style={{fontSize:11,color:'#f97316',fontFamily:'monospace',fontWeight:700,flexShrink:0}}>{o.name}</span>
+                        <span style={{fontSize:10,color:'#64748b',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.client}</span>
+                        <span style={{fontSize:9,color:'#475569',fontFamily:'monospace',flexShrink:0}}>{o.trackingNo}</span>
+                        <span style={{fontSize:9,fontWeight:700,color:statusColor,flexShrink:0,padding:'2px 6px',background:`${statusColor}15`,borderRadius:10,border:`1px solid ${statusColor}30`}}>{statusLabel}</span>
+                        {o.trackingStatus && <span style={{fontSize:8,color:'#475569',flexShrink:0,maxWidth:80,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={o.trackingStatus}>{o.trackingStatus}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {lastTrackingCheck && (
+                  <div style={{fontSize:9,color:'#334155',marginTop:6,textAlign:'right'}}>
+                    Ultima verificare: {lastTrackingCheck.toLocaleTimeString('ro-RO')}
                   </div>
                 )}
               </div>
