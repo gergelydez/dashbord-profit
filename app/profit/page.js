@@ -371,14 +371,8 @@ export default function ProfitPage() {
 
   // Colete refuzate — cost transport dus+retur + CPA pierdut
   const refusedTransportCost = returnedCount * costPerParcel; // doar retur (transportul dus e deja in costul GLS)
-  // CPA efectiv real: daca avem sume reale folosim alea, altfel cpaValue
-  const effectiveCPA = (!useCPA && totalOrders > 0 && totalMarketing > 0)
-    ? totalMarketing / totalOrders
-    : (parseFloat(cpaValue) || 0);
-  const refusedCpaCost = returnedCount * effectiveCPA;
-  const totalRefusedCost = refusedTransportCost + refusedCpaCost;
 
-  // Marketing
+  // Marketing — definit inainte de effectiveCPA ca sa poata fi folosit
   const metaNum = parseFloat(metaCost)||0;
   const tikTokNum = parseFloat(tikTokCost)||0;
   const googleNum = parseFloat(googleCost)||0;
@@ -387,6 +381,13 @@ export default function ProfitPage() {
   const manualMarketingTotal = metaNum + tikTokNum + googleNum + otherMktNum;
   const totalMarketing = useCPA ? cpaTotal : manualMarketingTotal;
   const roasMarketing = totalMarketing > 0 ? totalRevenue / totalMarketing : 0;
+
+  // CPA efectiv real: daca avem sume reale folosim alea, altfel cpaValue fix
+  const effectiveCPA = (!useCPA && totalOrders > 0 && totalMarketing > 0)
+    ? totalMarketing / totalOrders
+    : (parseFloat(cpaValue) || 0);
+  const refusedCpaCost = returnedCount * effectiveCPA;
+  const totalRefusedCost = refusedTransportCost + refusedCpaCost;
 
   // TVA intracomunitara pe Meta + Shopify (nu TikTok)
   const shopifyFixAmount = parseFloat(fixedCosts.find(c => c.name.toLowerCase().includes('shopify'))?.amount||'0')||0;
