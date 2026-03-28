@@ -14,17 +14,83 @@ function splitCSV(line) {
 }
 
 const DEFAULT_PRODUCT_COSTS = [
-  { id: 'DM56_SIL', pattern: 'silicon', excludes: ['metal','protectie','protecție'], name: 'Delta Max Silicon (fără protecție)', cost: 159 },
-  { id: 'DM56_SIL_PROT', pattern: 'silicon', excludes: ['metal'], name: 'Delta Max Silicon + Protecție ecran', cost: 159 },
-  { id: 'DM56_MET', pattern: 'silicon+ metal', excludes: [], name: 'Delta Max Silicon + Metal + Protecție', cost: 179 },
-  { id: 'DM56_MET2', pattern: 'silicon+metal', excludes: [], name: 'Delta Max Silicon+Metal', cost: 179 },
-  { id: 'HD300', pattern: 'delta max pro', excludes: [], name: 'Delta Max PRO HD300', cost: 181 },
-  { id: 'Z85', pattern: 'z85', excludes: [], name: 'Z85 (toate modelele)', cost: 65 },
-  { id: 'U8', pattern: 'u8', excludes: [], name: 'U8 Ultra', cost: 208 },
-  { id: 'M99', pattern: 'delta max ultra', excludes: [], name: 'Delta Max Ultra M99', cost: 275 },
-  { id: 'DM58', pattern: 'delta max plus', excludes: [], name: 'Delta Max Plus DM58', cost: 169 },
-  { id: 'DM58B', pattern: 'dm58', excludes: [], name: 'Delta Max Plus DM58 (SKU)', cost: 169 },
+  { id: 'DM56_SIL',      sku: 'DM56', pattern: 'silicon',        excludes: ['metal','protectie','protecție'], name: 'Delta Max Silicon (fără protecție)',    cost: 154.80, updated: '2025-01' },
+  { id: 'DM56_SIL_PROT', sku: 'DM56', pattern: 'silicon',        excludes: ['metal'],                         name: 'Delta Max Silicon + Protecție ecran',   cost: 154.80, updated: '2025-01' },
+  { id: 'DM56_MET',      sku: 'DM56', pattern: 'silicon+ metal', excludes: [],                                name: 'Delta Max Silicon + Metal + Protecție', cost: 154.80, updated: '2025-01' },
+  { id: 'DM56_MET2',     sku: 'DM56', pattern: 'silicon+metal',  excludes: [],                                name: 'Delta Max Silicon+Metal',               cost: 154.80, updated: '2025-01' },
+  { id: 'HD300',         sku: 'HD300',pattern: 'delta max pro',  excludes: [],                                name: 'Delta Max PRO HD300',                   cost: 181,    updated: '—' },
+  { id: 'Z85',           sku: 'Z85',  pattern: 'z85',            excludes: [],                                name: 'Z85 (toate modelele)',                  cost: 65,     updated: '—' },
+  { id: 'U8',            sku: 'U8',   pattern: 'u8',             excludes: [],                                name: 'U8 Ultra',                              cost: 208,    updated: '—' },
+  { id: 'M99',           sku: 'M99',  pattern: 'delta max ultra',excludes: [],                                name: 'Delta Max Ultra M99',                   cost: 244.77, updated: '2025-01' },
+  { id: 'DM58',          sku: 'DM58', pattern: 'delta max plus', excludes: [],                                name: 'Delta Max Plus DM58',                   cost: 158.85, updated: '2025-01' },
+  { id: 'DM58B',         sku: 'DM58', pattern: 'dm58',           excludes: [],                                name: 'Delta Max Plus DM58 (SKU)',              cost: 158.85, updated: '2025-01' },
+  { id: 'DM76',          sku: 'DM76', pattern: 'dm76',           excludes: [],                                name: 'Smart watch DM76',                      cost: 163.16, updated: '2025-01' },
 ];
+
+// URL-ul fișierului JSON de pe GitHub (raw) — actualizează cu repo-ul tău
+const COSTS_JSON_URL = '/product-costs.json';
+
+// Merge costuri noi peste costuri existente — update SKU-uri cunoscute, adauga SKU-uri noi
+function mergeCosts(existing, incoming) {
+  const result = [...existing];
+  incoming.forEach(newItem => {
+    const existingIdx = result.findIndex(e => e.sku === newItem.sku || e.id === newItem.id);
+    if (existingIdx >= 0) {
+      // Updateaza costul si data pentru toate variantele cu acelasi SKU
+      result.forEach((item, i) => {
+        if (item.sku === newItem.sku) {
+          result[i] = { ...item, cost: newItem.cost, updated: newItem.updated };
+        }
+      });
+    } else {
+      // Produs nou — adauga
+      result.push(newItem);
+    }
+  });
+  return result;
+}
+
+// Parseaza un fisier import-cost XLSX cu structura: SKU, Produs, Cant, ..., Col L = parte intreaga cost, Col M = zecimale
+function parseImportCostXLSX(file, existingCosts, onSuccess, onError) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const doImport = () => {
+      try {
+        const wb = window.XLSX.read(ev.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
+        const today = new Date().toISOString().slice(0,7);
+        const incoming = [];
+        rows.slice(1).forEach(row => {
+          const sku = String(row[0]||'').trim();
+          const name = String(row[1]||'').trim();
+          if (!sku || !name || sku === 'SKU') return;
+          // Col L (index 11) = parte intreaga, Col M (index 12) = zecimale
+          const intPart = parseFloat(row[11]) || 0;
+          const decPart = parseFloat(row[12]) || 0;
+          const cost = parseFloat(`${intPart}.${String(Math.round(decPart)).padStart(2,'0')}`);
+          if (cost > 0) {
+            incoming.push({
+              id: sku,
+              sku: sku,
+              pattern: sku.toLowerCase(),
+              excludes: [],
+              name: name,
+              cost: cost,
+              updated: today,
+            });
+          }
+        });
+        if (incoming.length === 0) { onError('Nu s-au găsit produse cu cost valid.'); return; }
+        const merged = mergeCosts(existingCosts, incoming);
+        onSuccess(merged, incoming);
+      } catch(e) { onError(e.message); }
+    };
+    if (window.XLSX) doImport();
+    else { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload=doImport; document.head.appendChild(s); }
+  };
+  reader.readAsArrayBuffer(file);
+}
 
 const DEFAULT_FIXED = [
   { id: 1, name: 'Shopify subscription', amount: '290', currency: 'RON', perOrder: false, perOrderAmt: '' },
@@ -110,6 +176,8 @@ export default function ProfitPage() {
   const [stdCosts, setStdCosts] = useState(() => {
     try { const s = localStorage.getItem('glamx_std_costs'); return s ? JSON.parse(s) : DEFAULT_PRODUCT_COSTS; } catch { return DEFAULT_PRODUCT_COSTS; }
   });
+  const [costsLoading, setCostsLoading] = useState(false);
+  const [costsLastUpdated, setCostsLastUpdated] = useState('');
   const [productCosts, setProductCosts] = useState({});
   const [shopifyCosts, setShopifyCosts] = useState({});
   const [shopifyVariantCosts, setShopifyVariantCosts] = useState({});
@@ -118,6 +186,7 @@ export default function ProfitPage() {
   const [costSource, setCostSource] = useState({});
 
   const xlsxImportRef = useRef(null);
+  const importCostRef = useRef(null);
 
   // ── LOAD SAVED SETTINGS ──
   useEffect(() => {
@@ -141,6 +210,23 @@ export default function ProfitPage() {
     if (sord) {
       try { const p = JSON.parse(sord); setShopifyOrders(p); setShopifyDone(true); } catch {}
     }
+
+    // Incarca costuri din product-costs.json (public folder) — are prioritate peste localStorage
+    // daca fisierul exista si e mai nou decat ce e salvat
+    fetch(COSTS_JSON_URL)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data || !Array.isArray(data)) return;
+        // Merge cu ce e in localStorage — costurile din JSON sunt mai fresh
+        const localRaw = localStorage.getItem('glamx_std_costs');
+        const local = localRaw ? JSON.parse(localRaw) : DEFAULT_PRODUCT_COSTS;
+        const merged = mergeCosts(local, data);
+        setStdCosts(merged);
+        localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
+        const lastUpd = data.find(d => d.updated && d.updated !== '—')?.updated || '';
+        if (lastUpd) setCostsLastUpdated(lastUpd);
+      })
+      .catch(() => { /* fisierul nu exista inca — folosim localStorage */ });
   }, []);
 
   // ── FETCH SHOPIFY ──
@@ -284,8 +370,12 @@ export default function ProfitPage() {
   const effectiveTransportCost = glsDone ? glsCost : totalItems * transportPerParcel;
 
   // Colete refuzate — cost transport dus+retur + CPA pierdut
-  const refusedTransportCost = returnedCount * costPerParcel * 2; // dus + retur
-  const refusedCpaCost = returnedCount * (parseFloat(cpaValue)||0);
+  const refusedTransportCost = returnedCount * costPerParcel; // doar retur (transportul dus e deja in costul GLS)
+  // CPA efectiv real: daca avem sume reale folosim alea, altfel cpaValue
+  const effectiveCPA = (!useCPA && totalOrders > 0 && totalMarketing > 0)
+    ? totalMarketing / totalOrders
+    : (parseFloat(cpaValue) || 0);
+  const refusedCpaCost = returnedCount * effectiveCPA;
   const totalRefusedCost = refusedTransportCost + refusedCpaCost;
 
   // Marketing
@@ -567,7 +657,7 @@ export default function ProfitPage() {
               <div className="pf-pl-row"><span className="pf-pl-label">📣 Marketing {useCPA?`(CPA ${cpaValue} RON)`:''}</span><span className="pf-pl-val neg-c">-{fmt(totalMarketing)} RON</span></div>
               {returnedCount > 0 && (
                 <div className="pf-pl-row returned-row">
-                  <span className="pf-pl-label">↩️ Retur {returnedCount} colete (transport×2 + CPA)</span>
+                  <span className="pf-pl-label">↩️ Retur {returnedCount} colete (transport retur + CPA {fmt(effectiveCPA,0)} RON)</span>
                   <span className="pf-pl-val neg-c">-{fmt(totalRefusedCost)} RON</span>
                 </div>
               )}
@@ -597,8 +687,8 @@ export default function ProfitPage() {
                 <div className="pf-card" style={{borderColor:'rgba(244,63,94,.2)'}}>
                   <div style={{fontSize:12,color:'var(--c-text3)',lineHeight:1.8}}>
                     <div>📦 Colete refuzate/returnate: <strong style={{color:'var(--c-red)'}}>{returnedCount}</strong></div>
-                    <div>🚚 Cost transport (dus + retur): <strong style={{color:'var(--c-red)'}}>{returnedCount} × {fmt(costPerParcel,2)} × 2 = {fmt(refusedTransportCost)} RON</strong></div>
-                    <div>📣 CPA pierdut: <strong style={{color:'var(--c-red)'}}>{returnedCount} × {cpaValue} RON = {fmt(refusedCpaCost)} RON</strong></div>
+                    <div>🚚 Cost transport retur: <strong style={{color:'var(--c-red)'}}>{returnedCount} × {fmt(costPerParcel,2)} = {fmt(refusedTransportCost)} RON</strong></div>
+                    <div>📣 CPA pierdut ({useCPA?`fix ${cpaValue}`:`efectiv ${fmt(effectiveCPA,0)}`} RON): <strong style={{color:'var(--c-red)'}}>{returnedCount} × {fmt(effectiveCPA,0)} = {fmt(refusedCpaCost)} RON</strong></div>
                     <div style={{borderTop:'1px solid rgba(244,63,94,.15)',marginTop:6,paddingTop:6,fontWeight:700}}>Total pierdut din refuzuri: <strong style={{color:'var(--c-red)'}}>{fmt(totalRefusedCost)} RON</strong></div>
                   </div>
                   <div style={{marginTop:10}}>
@@ -691,6 +781,7 @@ export default function ProfitPage() {
                   {totalMarketing>0&&<div style={{marginTop:8,padding:'8px 10px',background:'rgba(168,85,247,.06)',border:'1px solid rgba(168,85,247,.15)',borderRadius:8,fontSize:11,color:'var(--c-text3)',lineHeight:1.7}}>
                     <div>Total: <strong style={{color:'#a855f7'}}>{fmt(totalMarketing)} RON</strong></div>
                     {totalOrders>0&&<div>CPA efectiv: <strong>{fmt(totalMarketing/totalOrders)} RON/cmd</strong></div>}
+                    {totalOrders>0&&tvaOnMeta&&<div style={{color:'var(--c-yellow)'}}>CPA efectiv cu TVA 21%: <strong>{fmt((totalMarketing + totalTVA) / totalOrders)} RON/cmd</strong></div>}
                     {totalRevenue>0&&<div>ROAS: <strong>{roasMarketing.toFixed(2)}x</strong></div>}
                   </div>}
                 </>
@@ -791,16 +882,52 @@ export default function ProfitPage() {
               <button onClick={()=>setStdCosts(p=>[...p,{id:'new_'+Date.now(),pattern:'',excludes:[],name:'Produs nou',cost:0}])} style={{marginTop:8}} className="pf-btn pf-btn-ghost">+ Adaugă produs</button>
             </div>
 
-            <div className="pf-stitle">Import / Export XLSX</div>
+            <div className="pf-stitle">Import stoc nou / Export</div>
             <div className="pf-card">
-              <p style={{fontSize:12,color:'var(--c-text3)',marginBottom:10,lineHeight:1.6}}>Descarcă Excel cu prețurile, actualizează când primești stoc nou, reimportă.</p>
-              <div className="xlsx-actions">
-                <button className="pf-btn pf-btn-green" onClick={()=>exportCostsToXLSX(stdCosts)}>⬇️ Export XLSX</button>
-                <button className="pf-btn pf-btn-ghost" onClick={()=>xlsxImportRef.current?.click()}>⬆️ Import XLSX</button>
+              <p style={{fontSize:12,color:'var(--c-text3)',marginBottom:10,lineHeight:1.6}}>
+                Importă direct fișierul <strong>import-cost.xlsx</strong> primit la fiecare stoc nou.
+                Produsele existente se actualizează, produsele noi se adaugă automat.
+                {costsLastUpdated && <span style={{color:'var(--c-green)',marginLeft:6}}>✓ Actualizat {costsLastUpdated}</span>}
+              </p>
+              <div style={{display:'grid',gap:8}}>
+                <button className="pf-btn pf-btn-orange" onClick={()=>importCostRef.current?.click()}>
+                  📦 Import stoc nou (import-cost.xlsx)
+                </button>
+                <div className="xlsx-actions" style={{marginTop:0}}>
+                  <button className="pf-btn pf-btn-green" onClick={()=>exportCostsToXLSX(stdCosts)}>⬇️ Export listă curentă</button>
+                  <button className="pf-btn pf-btn-ghost" onClick={()=>xlsxImportRef.current?.click()}>⬆️ Import format standard</button>
+                </div>
               </div>
+              {/* Import stoc nou — format import-cost.xlsx */}
+              <input ref={importCostRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
+                onChange={e=>{
+                  const f=e.target.files[0];
+                  if(f) parseImportCostXLSX(f, stdCosts,
+                    (merged, incoming) => {
+                      setStdCosts(merged);
+                      localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
+                      // Salveaza si in product-costs.json (download pentru GitHub)
+                      const blob = new Blob([JSON.stringify(merged, null, 2)], {type:'application/json'});
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url; a.download = 'product-costs.json'; a.click();
+                      URL.revokeObjectURL(url);
+                      alert(\`✅ Actualizat \${incoming.length} produse! Uploadeaza product-costs.json pe GitHub în folderul /public.\`);
+                    },
+                    (err) => alert('Eroare import: ' + err)
+                  );
+                  e.target.value='';
+                }} />
+              {/* Import format standard XLSX */}
               <input ref={xlsxImportRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
                 onChange={e=>{const f=e.target.files[0]; if(f) importCostsFromXLSX(f,costs=>{setStdCosts(costs);localStorage.setItem('glamx_std_costs',JSON.stringify(costs));alert(`✅ Importat ${costs.length} produse!`);}); e.target.value='';}} />
-              <div style={{marginTop:10,fontSize:10,color:'var(--c-text4)',lineHeight:1.6}}>Format: ID | Nume produs | Pattern | Excluderi | Cost RON | Data</div>
+              <div style={{marginTop:10,padding:'8px 10px',background:'rgba(249,115,22,.06)',border:'1px solid rgba(249,115,22,.15)',borderRadius:8,fontSize:10,color:'var(--c-text3)',lineHeight:1.7}}>
+                <strong>Flux actualizare prețuri:</strong><br/>
+                1. Primești stoc nou → apasă "Import stoc nou" → selectezi fișierul<br/>
+                2. Se descarcă automat <code>product-costs.json</code><br/>
+                3. Uploadezi <code>product-costs.json</code> în <code>/public</code> pe GitHub<br/>
+                4. La orice reload, app-ul ia prețurile fresh din GitHub ✓
+              </div>
             </div>
 
             {uniqueProducts.length > 0 && (
