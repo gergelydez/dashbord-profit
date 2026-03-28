@@ -637,10 +637,10 @@ export default function Dashboard() {
               ? new Date().toISOString() : o.fulfilledAt,
           };
         });
-        // Salvăm în localStorage ca să persiste după refresh
+        // Salvăm în AMBELE cache-uri ca să persiste după refresh
         try {
-          const cacheKey = 'gx_orders_' + (ls.get('gx_d')||'');
-          ls.set(cacheKey, JSON.stringify(updated));
+          ls.set('gx_orders_all', JSON.stringify(updated));
+          ls.set('gx_orders_60', JSON.stringify(updated));
         } catch(e) {}
         return updated;
       });
