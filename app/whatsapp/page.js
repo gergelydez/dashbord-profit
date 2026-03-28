@@ -325,7 +325,7 @@ export default function WhatsAppPage() {
           <div style={{background:'#25d366',color:'white',fontWeight:800,fontSize:22,padding:'6px 12px',borderRadius:12}}>📱</div>
           <div>
             <div style={{fontSize:20,fontWeight:800,letterSpacing:-.3}}>WhatsApp Confirmare Comenzi</div>
-            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Trimitere automată + manuală · Twilio · GLAMX</div>
+            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Deschide WhatsApp direct · Confirmare manuală · GLAMX</div>
           </div>
           <div style={{marginLeft:'auto',display:'flex',gap:8,flexWrap:'wrap'}}>
             <a href="/" style={{background:'#0d1520',border:'1px solid #1a2535',color:'#64748b',padding:'6px 14px',borderRadius:20,fontSize:11,textDecoration:'none'}}>← Dashboard</a>
@@ -347,25 +347,9 @@ export default function WhatsAppPage() {
             <div style={{fontSize:10,color:'#f59e0b',padding:'7px 10px',background:'rgba(245,158,11,.07)',borderRadius:8,marginBottom:12}}>
               🔐 Credențialele sunt salvate local în browser, nu pe server.
             </div>
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:11,fontWeight:700,color:'#94a3b8',marginBottom:8}}>Twilio</div>
-              <div className="g2" style={{marginBottom:8}}>
-                <div><label className="lbl">Account SID</label><input className="inp" value={config.twilioSid} placeholder="ACxxxx..." onChange={e=>setConfig(c=>({...c,twilioSid:e.target.value}))}/></div>
-                <div><label className="lbl">Auth Token</label><input className="inp" type="password" value={config.twilioToken} onChange={e=>setConfig(c=>({...c,twilioToken:e.target.value}))}/></div>
-              </div>
-              <div>
-                <label className="lbl">Număr WhatsApp Twilio</label>
-                <input className="inp" value={config.twilioFrom} placeholder="+14155238886 sau whatsapp:+14155238886"
-                  onChange={e=>{
-                    let v = e.target.value.trim();
-                    // Auto-adaugă prefixul whatsapp: dacă lipsește
-                    if (v && !v.startsWith('whatsapp:')) v = 'whatsapp:' + v;
-                    setConfig(c=>({...c,twilioFrom:v}));
-                  }}/>
-                <div style={{fontSize:10,color:'#25d366',marginTop:3}}>
-                  Sandbox: whatsapp:+14155238886 · Se salvează automat cu prefix
-                </div>
-              </div>
+            <div style={{marginBottom:12,padding:'10px 12px',background:'rgba(37,211,102,.06)',borderRadius:8,border:'1px solid rgba(37,211,102,.15)'}}>
+              <div style={{fontSize:11,color:'#25d366',fontWeight:700,marginBottom:4}}>📱 Mod manual activat</div>
+              <div style={{fontSize:11,color:'#64748b'}}>Mesajele se trimit de pe telefonul tău prin WhatsApp. Apasă "Deschide WhatsApp" și mesajul e pre-completat automat.</div>
             </div>
             <div style={{marginBottom:12}}>
               <div style={{fontSize:11,fontWeight:700,color:'#94a3b8',marginBottom:8}}>Shopify</div>
@@ -423,12 +407,7 @@ export default function WhatsAppPage() {
           <button className="btn-green" onClick={loadShopifyOrders} disabled={loading==='orders'}>
             {loading==='orders'?<span className="pulse">⟳ Se încarcă...</span>:'🔄 Încarcă comenzi noi (7 zile)'}
           </button>
-          {orders.length > 0 && canSendNow() && (
-            <button onClick={autoSendCheck}
-              style={{background:'rgba(37,211,102,.12)',border:'1px solid rgba(37,211,102,.3)',color:'#25d366',padding:'10px 20px',borderRadius:10,fontWeight:700,fontSize:13,cursor:'pointer'}}>
-              📤 Trimite acum cele programate ({orders.filter(o=>!waOrders[o.id]&&new Date()>=getNextSendTime(o.created_at).time).length})
-            </button>
-          )}
+
         </div>
 
         {/* COMENZI */}
@@ -486,19 +465,34 @@ export default function WhatsAppPage() {
 
               {/* Acțiuni */}
               <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                {/* Trimitere manuală */}
-                {(!wa.status || wa.status === 'no_response') && phone && (
-                  <button className="btn-sm btn-green" onClick={()=>sendWhatsApp(order,true)} disabled={isSending}>
-                    {isSending?<span className="pulse">⟳</span>:'📤 Trimite acum'}
-                  </button>
+                {/* Deschide WhatsApp */}
+                {phone && (
+                  <a href={`https://wa.me/${phone.replace('+','')}?text=${encodeURIComponent(msg)}`}
+                    target="_blank" rel="noopener noreferrer"
+                    onClick={()=>{
+                      // Marchează ca trimis când apasă butonul
+                      if (!wa.status || wa.status === 'no_response') {
+                        const updated = {...waOrders, [order.id]: {
+                          status:'sent', phone, sentAt:new Date().toISOString(),
+                          message:msg, isManual:true
+                        }};
+                        saveWaOrders(updated);
+                      }
+                    }}
+                    style={{display:'inline-flex',alignItems:'center',gap:6,background:'linear-gradient(135deg,#25d366,#128c7e)',color:'white',padding:'6px 14px',borderRadius:8,fontSize:12,fontWeight:700,textDecoration:'none'}}>
+                    📱 Deschide WhatsApp
+                  </a>
                 )}
-
+                {!phone && (
+                  <span style={{fontSize:11,color:'#f43f5e'}}>⚠️ Fără număr de telefon</span>
+                )}
                 {/* Retrimite */}
-                {wa.status === 'sent' && (
-                  <button className="btn-sm" onClick={()=>sendWhatsApp(order,true)} disabled={isSending}
-                    style={{background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.2)'}}>
-                    🔄 Retrimite
-                  </button>
+                {wa.status === 'sent' && phone && (
+                  <a href={`https://wa.me/${phone.replace('+','')}?text=${encodeURIComponent(msg)}`}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{display:'inline-flex',alignItems:'center',gap:6,background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.2)',padding:'5px 12px',borderRadius:7,fontSize:11,fontWeight:600,textDecoration:'none'}}>
+                    🔄 Retrimite WhatsApp
+                  </a>
                 )}
 
                 {/* Confirmare manuală */}
@@ -531,14 +525,13 @@ export default function WhatsAppPage() {
 
         {/* INFO TWILIO */}
         <div className="card" style={{marginTop:16,background:'rgba(37,211,102,.03)',border:'1px solid rgba(37,211,102,.1)'}}>
-          <div style={{fontSize:11,fontWeight:700,color:'#25d366',marginBottom:8}}>📋 Cum configurezi Twilio WhatsApp</div>
-          <div style={{fontSize:11,color:'#64748b',lineHeight:1.7}}>
-            1. Creează cont pe <strong style={{color:'#94a3b8'}}>twilio.com</strong> → Console → Account SID + Auth Token<br/>
-            2. Activează <strong style={{color:'#94a3b8'}}>WhatsApp Sandbox</strong> sau cumpără un număr WhatsApp Business<br/>
-            3. Numărul sandbox e: <strong style={{color:'#25d366',fontFamily:'monospace'}}>whatsapp:+14155238886</strong><br/>
-            4. Clienții trebuie să trimită mai întâi un mesaj de join (<em>join [cuvânt]</em>) pentru sandbox<br/>
-            5. Pentru producție: aprobă template-ul mesajului la Meta Business<br/>
-            6. Webhook pentru răspunsuri automate: <strong style={{color:'#94a3b8',fontFamily:'monospace'}}>{typeof window!=='undefined'?window.location.origin:''}/api/whatsapp/webhook</strong>
+          <div style={{fontSize:11,fontWeight:700,color:'#25d366',marginBottom:8}}>📋 Cum funcționează</div>
+          <div style={{fontSize:11,color:'#64748b',lineHeight:1.8}}>
+            1. Apasă <strong style={{color:'#25d366'}}>Încarcă comenzi</strong> → apar comenzile UNFULFILLED din ultimele 7 zile<br/>
+            2. Apasă <strong style={{color:'#25d366'}}>📱 Deschide WhatsApp</strong> → se deschide WhatsApp cu mesajul pre-completat<br/>
+            3. Tu trimiți mesajul de pe telefonul tău personal<br/>
+            4. Clientul răspunde → tu marchezi manual <strong style={{color:'#25d366'}}>✓ Confirmat</strong> sau <strong style={{color:'#f43f5e'}}>✕ Refuzat</strong><br/>
+            5. Comenzile confirmate apar în statistici
           </div>
         </div>
       </div>
