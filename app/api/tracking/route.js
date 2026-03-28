@@ -144,20 +144,35 @@ export async function GET(request) {
 
     // Testăm endpoint-urile corecte din documentație
     const endpoints = [
+      // Production URLs (documentația zice sandbox = production)
       `https://api-sandbox.gls-group.net/track-and-trace-v1/tracking/simple/trackids/${awb}`,
       `https://api-sandbox.gls-group.net/track-and-trace-v1/tracking/simple/references/${awb}`,
+      // Alt format URL
+      `https://api.gls-group.eu/track-and-trace-v1/tracking/simple/trackids/${awb}`,
+      `https://api.gls-group.eu/track-and-trace-v1/tracking/simple/references/${awb}`,
+      // Fără versiune
+      `https://api-sandbox.gls-group.net/tracking/simple/trackids/${awb}`,
     ];
 
     for (const url of endpoints) {
       try {
-        const r = await fetch(url, {
-          headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(10000),
-        });
+        // Testăm 2 variante auth per URL
+        const authVariants = [
+          { 'Authorization': authHeader, 'Accept': 'application/json' },
+          { 'Authorization': `apikey ${GLS_API_KEY}`, 'Accept': 'application/json' },
+        ];
+        let r, text, parsed;
+        for (const headers of authVariants) {
+          r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+          text = await r.text();
+          try { parsed = JSON.parse(text); } catch { parsed = text.slice(0, 200); }
+          results.push({ url, authType: Object.values(headers)[0].slice(0,20)+'...', status: r.status, response: parsed });
+          if (r.status !== 401 && r.status !== 403) break;
+        }
+        continue;
         const text = await r.text();
         let parsed;
         try { parsed = JSON.parse(text); } catch { parsed = text.slice(0, 300); }
-        results.push({ url, status: r.status, response: parsed });
       } catch(e) {
         results.push({ url, error: e.message });
       }
