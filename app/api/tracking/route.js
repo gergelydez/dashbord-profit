@@ -141,29 +141,32 @@ export async function GET(request) {
     }
     try {
       // Testăm mai multe variante URL GLS
-      const urls = [
-        `https://api.gls-group.eu/public/v3/tracking/parcel-numbers/${awb}`,
-        `https://api.gls-group.eu/public/v1/tracking/${awb}`,
-        `https://gls-group.eu/app/service/open/rest/RO/ro/rstt001?match=${awb}`,
-        `https://api.gls-group.eu/public/v3/tracking?parcelNumber=${awb}`,
+      // Testăm combinații URL + auth method
+      const tests = [
+        { url: `https://api.gls-group.eu/public/v3/tracking/parcel-numbers/${awb}`,
+          headers: { 'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`, 'Accept': 'application/json' }},
+        { url: `https://api.gls-group.eu/public/v3/tracking/parcel-numbers/${awb}`,
+          headers: { 'Authorization': `apikey ${GLS_API_KEY}`, 'Accept': 'application/json' }},
+        { url: `https://api.gls-group.eu/public/v3/tracking/parcel-numbers/${awb}`,
+          headers: { 'Authorization': `Bearer ${GLS_API_KEY}`, 'Accept': 'application/json' }},
+        { url: `https://api.gls-group.eu/public/v3/tracking/parcel-numbers/${awb}?appid=${GLS_APP_ID}`,
+          headers: { 'Authorization': `apikey ${GLS_API_KEY}`, 'Accept': 'application/json' }},
+        { url: `https://api.gls-group.eu/public/v3/tracking/parcel-numbers/${awb}`,
+          headers: { 'x-api-key': GLS_API_KEY, 'Accept': 'application/json' }},
       ];
       const results = [];
-      for (const url of urls) {
+      for (const test of tests) {
         try {
-          const r = await fetch(url, {
-            headers: {
-              'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
-              'Accept': 'application/json',
-              'User-Agent': 'GLAMX-Dashboard/1.0',
-            },
+          const r = await fetch(test.url, {
+            headers: { ...test.headers, 'User-Agent': 'GLAMX-Dashboard/1.0' },
             signal: AbortSignal.timeout(8000),
           });
           const text = await r.text();
           let parsed;
           try { parsed = JSON.parse(text); } catch { parsed = text.slice(0, 200); }
-          results.push({ url, status: r.status, response: parsed });
+          results.push({ url: test.url, authType: Object.keys(test.headers)[0], status: r.status, response: parsed });
         } catch(e2) {
-          results.push({ url, error: e2.message });
+          results.push({ url: test.url, error: e2.message });
         }
       }
       return NextResponse.json({
