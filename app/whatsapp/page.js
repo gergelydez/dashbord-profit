@@ -301,31 +301,7 @@ Vă mulțumim! 🤍`);
 
   return (
     <>
-      <style>{`
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { background:#060a0f; color:#e2e8f0; font-family:'DM Sans',system-ui,sans-serif; min-height:100vh; }
-        .wrap { max-width:900px; margin:0 auto; padding:20px 14px 80px; }
-        .card { background:#0d1520; border:1px solid #1a2535; border-radius:14px; padding:16px 18px; margin-bottom:12px; }
-        .inp { background:#070d12; border:1px solid #1a2535; color:#e2e8f0; padding:9px 12px; border-radius:8px; font-size:13px; outline:none; width:100%; font-family:monospace; }
-        .inp:focus { border-color:#25d366; }
-        .lbl { font-size:10px; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; display:block; }
-        .g2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-        .btn-green { background:linear-gradient(135deg,#25d366,#128c7e); color:white; border:none; padding:10px 20px; border-radius:10px; font-weight:700; font-size:13px; cursor:pointer; }
-        .btn-green:disabled { opacity:.4; cursor:not-allowed; }
-        .btn-sm { padding:5px 12px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; border:none; }
-        .tag { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:20px; font-size:10px; font-weight:600; }
-        .order-card { background:#070d12; border:1px solid #1a2535; border-radius:10px; padding:14px; margin-bottom:8px; transition:border .2s; }
-        .order-card:hover { border-color:#25d366; }
-        .filter-btn { background:#0d1520; border:1px solid #1a2535; color:#64748b; padding:5px 14px; border-radius:20px; font-size:11px; cursor:pointer; }
-        .filter-btn.active { background:#25d366; border-color:#25d366; color:white; font-weight:700; }
-        .toggle { width:40px; height:22px; background:#1a2535; border-radius:11px; position:relative; cursor:pointer; transition:background .2s; }
-        .toggle.on { background:#25d366; }
-        .toggle::after { content:''; position:absolute; width:18px; height:18px; background:white; border-radius:50%; top:2px; left:2px; transition:left .2s; }
-        .toggle.on::after { left:20px; }
-        @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
-        .pulse { animation:pulse 1.5s ease-in-out infinite; }
-        @media(max-width:600px) { .g2 { grid-template-columns:1fr; } .wrap { padding:14px 10px 60px; } }
-      `}</style>
+      
 
       <div className="wrap">
         {/* HEADER */}
@@ -546,4 +522,5 @@ Vă mulțumim! 🤍`);
     </>
   );
 }
+
 
