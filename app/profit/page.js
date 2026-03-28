@@ -735,9 +735,7 @@ export default function ProfitPage() {
               {shopifyDone && !isEstimated && <span style={{fontSize:10,color:'var(--c-green)',fontWeight:700}}>✓ Real</span>}
             </div>
           </div>
-          <div className="pf-month">
-            <input type="month" value={month} onChange={e => { setPreset(e.target.value); setShopifyDone(false); setGlsDone(false); }} />
-          </div>
+
           <a href="/" className="pf-back">← Back</a>
         </div>
 
