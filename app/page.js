@@ -51,6 +51,28 @@ const PRESETS = [
   { id: 'custom',     label: '📅 Custom' },
 ];
 
+// ── TRACKING OVERRIDES ── statusuri persistente care supraviețuiesc sync-ului Shopify
+const trackingOverrides = {
+  get: () => { try { const s = typeof window!=='undefined'?localStorage.getItem('gx_track_ov'):null; return s?JSON.parse(s):{}; } catch { return {}; } },
+  set: (map) => { try { if(typeof window!=='undefined') localStorage.setItem('gx_track_ov', JSON.stringify(map)); } catch {} },
+  update: (id, data) => { const m=trackingOverrides.get(); m[id]={...data,at:new Date().toISOString()}; trackingOverrides.set(m); },
+};
+
+function applyTrackingOverrides(orders) {
+  const ov = trackingOverrides.get();
+  if (!Object.keys(ov).length) return orders;
+  return orders.map(o => {
+    const override = ov[o.id];
+    if (!override) return o;
+    // Nu suprascrie dacă Shopify confirmă deja livrat
+    if (o.ts === 'livrat' && override.ts !== 'retur') return o;
+    return { ...o, ts: override.ts,
+      trackingStatus: override.statusRaw || o.trackingStatus,
+      trackingLastUpdate: override.lastUpdate || o.trackingLastUpdate,
+      trackingLocation: override.location || o.trackingLocation };
+  });
+}
+
 function procOrder(o) {
   let ts = 'pending', fulfilledAt = '', trackingNo = '';
   if (o.fulfillments?.length > 0) {
