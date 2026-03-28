@@ -824,25 +824,16 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
 
   // GLS livrate după fulfilledAt în perioada curentă
   // glsOrders din allOrders filtrat pe perioadă (nu doar orders filtrat pe status)
-  const glsOrders  = applyTrackingOverrides(allOrders).filter(o => {
-    if (o.courier !== 'gls') return false;
-    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
-    return fd >= rangeFromD && fd <= rangeToD;
-  });
-  const sdOrders   = applyTrackingOverrides(allOrders).filter(o => {
-    if (o.courier !== 'sameday') return false;
-    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
-    return fd >= rangeFromD && fd <= rangeToD;
-  });
-  // Toate calculele din glsOrders (cu overrides aplicate)
-  const glsLivrate  = glsOrders.filter(o => getFinalStatus(o) === 'livrat').length;
-  const glsRetur    = glsOrders.filter(o => getFinalStatus(o) === 'retur').length;
-  const glsIncurs   = glsOrders.filter(o => getFinalStatus(o) === 'incurs').length;
-  const glsOutfor   = glsOrders.filter(o => getFinalStatus(o) === 'outfor').length;
-  // "În livrare" = statusCode 4 din GLS (Out for delivery) = outfor în sistemul nostru
-  // Pending = label_printed / 51 = AWB creat dar nu ridicat încă
-  const glsInLivrare = glsOutfor; // outfor = la curier pentru livrare azi
-  const glsPending  = glsOrders.filter(o => getFinalStatus(o) === 'pending').length;
+  // Folosim orders (filtrat pe perioadă + overrides aplicate) — ACELAȘI ca KPI-urile
+  const glsOrders = orders.filter(o => o.courier === 'gls');
+  const sdOrders  = orders.filter(o => o.courier === 'sameday');
+  // Calculele folosesc getFinalStatus — same logic ca KPI livrate de sus
+  const glsLivrate   = glsOrders.filter(o => getFinalStatus(o) === 'livrat').length;
+  const glsRetur     = glsOrders.filter(o => getFinalStatus(o) === 'retur').length;
+  const glsIncurs    = glsOrders.filter(o => getFinalStatus(o) === 'incurs').length;
+  const glsOutfor    = glsOrders.filter(o => getFinalStatus(o) === 'outfor').length;
+  const glsInLivrare = glsOutfor;
+  const glsPending   = glsOrders.filter(o => getFinalStatus(o) === 'pending').length;
 
   // Retururi suplimentare (din alte perioade, returnate în perioada curentă)
   const retururiExtra = allOrders.filter(o => {
