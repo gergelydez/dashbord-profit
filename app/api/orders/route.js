@@ -16,12 +16,12 @@ const buildQuery = (cursor, createdAtMin) => {
     pageInfo { hasNextPage endCursor }
     edges {
       node {
-        id name createdAt cancelledAt processedAt
+        id name createdAt cancelledAt processedAt phone
         displayFinancialStatus displayFulfillmentStatus
         paymentGatewayNames
         totalPriceSet { shopMoney { amount currencyCode } }
-        shippingAddress { name city province }
-        billingAddress { name city province }
+        shippingAddress { name city province phone }
+        billingAddress { name city province phone }
         lineItems(first: 10) {
           edges { node { name quantity } }
         }
@@ -119,7 +119,8 @@ function toRestOrder(node) {
     currency: node.totalPriceSet?.shopMoney?.currencyCode || 'RON',
     note_attributes: (node.customAttributes || []).map(a => ({ name: a.key, value: a.value })),
     utmSource: '', utmMedium: '', utmCampaign: '', referrerUrl: '', landingPage: '',
-    shipping_address: { name: addr.name||'', city: addr.city||'', province: addr.province||'', address1: '', address2: '' },
+    phone: node.phone || node.shippingAddress?.phone || node.billingAddress?.phone || '',
+    shipping_address: { name: addr.name||'', city: addr.city||'', province: addr.province||'', address1: '', address2: '', phone: addr.phone||'' },
     billing_address:  { name: baddr.name||'', city: baddr.city||'', province: baddr.province||'', address1: '', address2: '' },
     fulfillments,
     line_items: lineItems,
