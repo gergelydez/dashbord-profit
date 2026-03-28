@@ -39,6 +39,7 @@ export default function Stats() {
   const [preset, setPreset] = useState('month');
   const [onlineIds] = useState(() => { try { return JSON.parse(ls.get('online_payment_ids')||'[]'); } catch { return []; }});
   const [sdAwbMap] = useState(() => { try { return JSON.parse(ls.get('sd_awb_map')||'{}'); } catch { return {}; }});
+  const [glsAwbMap] = useState(() => { try { return JSON.parse(ls.get('gls_awb_map')||'{}'); } catch { return {}; }});
   // Comision Shopify Payments: procent + sumă fixă per tranzacție
   const [shopifyFeePercent, setShopifyFeePercent] = useState(() => parseFloat(ls.get('sp_fee_pct') || '1.9'));
   const [shopifyFeeFixed, setShopifyFeeFixed]     = useState(() => parseFloat(ls.get('sp_fee_fix') || '1.25'));
@@ -73,32 +74,32 @@ export default function Stats() {
 
   // livrateInPeriod = TOATE comenzile livrate în intervalul selectat (după fulfilledAt)
   // Include orice metodă de plată (COD, Shopify Payments, etc.)
-  const livrateInPeriod = useMemo(() => {
-    const fromD = new Date(from + 'T00:00:00');
-    const toD   = new Date(to   + 'T23:59:59');
-    const glsMap = (() => { try { const s = typeof window!=='undefined' ? localStorage.getItem('gls_awb_map') : null; return s ? JSON.parse(s) : {}; } catch { return {}; } })();
-    return allOrders.filter(o => {
-      // Filtru dupa createdAt — exact ca dashboard modul Create + filter Livrate
-      const created = new Date(o.createdAt || '');
-      if (created < fromD || created > toD) return false;
-      // getFinalStatus cu GLS AWB map
-      let finalTs = o.ts;
-      if (o.courier === 'gls') {
-        const awb = (o.trackingNo || '').trim();
-        if (awb && glsMap[awb]) finalTs = glsMap[awb];
-      } else if (o.courier === 'sameday') {
-        finalTs = getSdStatus(o) || o.ts;
-      }
-      return finalTs === 'livrat';
-    });
-  }, [allOrders, from, to, getSdStatus]);
-
-  // getSdStatus: prioritizează Excel > Shopify pentru Sameday
   const getSdStatus = (o) => {
     const awb = (o.trackingNo || '').trim();
     if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
     return o.ts !== 'pending' ? o.ts : null;
   };
+
+  const livrateInPeriod = useMemo(() => {
+    const fromD = new Date(from + 'T00:00:00');
+    const toD   = new Date(to   + 'T23:59:59');
+    return allOrders.filter(o => {
+      // Filtru dupa createdAt — exact ca dashboard modul Create + filter Livrate
+      const created = new Date(o.createdAt || '');
+      if (created < fromD || created > toD) return false;
+      // getFinalStatus cu GLS AWB map (citit din state, nu direct din localStorage)
+      let finalTs = o.ts;
+      if (o.courier === 'gls') {
+        const awb = (o.trackingNo || '').trim();
+        if (awb && glsAwbMap[awb]) finalTs = glsAwbMap[awb];
+      } else if (o.courier === 'sameday') {
+        finalTs = getSdStatus(o) || o.ts;
+      }
+      return finalTs === 'livrat';
+    });
+  }, [allOrders, from, to, getSdStatus, glsAwbMap]);
+
+  // getSdStatus: prioritizează Excel > Shopify pentru Sameday
 
   const stats = useMemo(() => {
     const total    = orders.length;
@@ -769,5 +770,6 @@ export default function Stats() {
     </div>
   );
 }
+
 
 
