@@ -792,3 +792,201 @@ td {
   .fb { padding: 4px 9px; font-size: 9px; }
   table { min-width: 420px; }
 }
+
+/* ══════════════════════════════════════
+   HEADER — MOBILE RESTRUCTURED
+══════════════════════════════════════ */
+
+/* Override header pentru layout pe 2 rânduri pe mobile */
+header {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.header-row1 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.header-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+
+/* Nav links row — full width centrat pe mobile */
+.header-nav {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-1);
+  width: 100%;
+}
+
+.header-nav .nav-link {
+  justify-content: center;
+  text-align: center;
+  padding: 8px var(--sp-2);
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: var(--r-sm);
+}
+
+.sync-btn { font-size: 10px; padding: 5px 8px; }
+.disc-btn {
+  background: rgba(244,63,94,.08);
+  border: 1px solid rgba(244,63,94,.2);
+  color: var(--c-red);
+  padding: 5px 8px; border-radius: var(--r-full);
+  font-size: 11px; font-weight: 700;
+  cursor: pointer; transition: all var(--t-fast);
+}
+.disc-btn:active { transform: scale(.93); }
+.bg-loading {
+  font-size: 12px; color: var(--c-yellow);
+  animation: spin .8s linear infinite;
+  display: inline-block;
+}
+
+/* ══════════════════════════════════════
+   KPI — 3+3 PE MOBILE
+══════════════════════════════════════ */
+.kgrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+/* ══════════════════════════════════════
+   STAT CARDS — 1 PE RÂND PE MOBILE
+══════════════════════════════════════ */
+.srow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.sc {
+  padding: 14px 16px;
+  gap: var(--sp-3);
+  align-items: center;
+}
+
+.sc .si { font-size: 26px; }
+
+.sc-body { flex: 1; min-width: 0; }
+.slbl {
+  font-size: 10px; color: var(--c-text3);
+  text-transform: uppercase; letter-spacing: 1px;
+  margin-bottom: 2px; font-weight: 700;
+}
+.sv {
+  font-family: 'Syne', sans-serif;
+  font-size: 22px; font-weight: 800;
+  line-height: 1.1; letter-spacing: -.5px;
+}
+.ssub { font-size: 11px; color: var(--c-text3); margin-top: 3px; line-height: 1.4; }
+
+/* ══════════════════════════════════════
+   COURIER PANELS — UNUL SUB CELĂLALT PE MOBILE
+══════════════════════════════════════ */
+.courier-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+/* ══════════════════════════════════════
+   FILTRE — MAI MARI PE MOBILE
+══════════════════════════════════════ */
+.frow .fb {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--r-full);
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.courier-row .fb {
+  padding: 6px 12px;
+  font-size: 11px;
+  min-height: 32px;
+}
+
+/* Preset buttons mai mari */
+.preset-btn {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  min-height: 36px;
+}
+
+/* ══════════════════════════════════════
+   DESKTOP OVERRIDES (min 768px)
+══════════════════════════════════════ */
+@media (min-width: 768px) {
+  header {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: var(--sp-3) var(--sp-5);
+  }
+
+  .header-row1 { flex: 1; }
+  .header-status { margin-left: 0; }
+
+  /* Nav links pe desktop: în linie în header */
+  .header-nav {
+    display: flex;
+    flex-direction: row;
+    width: auto;
+    gap: var(--sp-2);
+    margin-left: var(--sp-2);
+  }
+
+  .header-nav .nav-link {
+    padding: 6px 13px;
+    font-size: 11px;
+    border-radius: var(--r-full);
+  }
+
+  /* Stat cards desktop: grid */
+  .srow {
+    flex-direction: row;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  /* Courier panels desktop: side by side */
+  .courier-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sp-3);
+  }
+
+  /* KPI desktop: 6 pe rând */
+  .kgrid {
+    grid-template-columns: repeat(6, 1fr);
+  }
+
+  .kv { font-size: 30px; }
+  .kpi { padding: 18px 14px; }
+
+  .sv { font-size: 20px; }
+
+  .frow .fb { padding: 6px 14px; font-size: 11px; min-height: 32px; }
+  .preset-btn { padding: 7px 14px; font-size: 11px; min-height: 32px; }
+
+  /* Ascunde bottom nav pe desktop */
+  .bottom-nav { display: none !important; }
+}
+
