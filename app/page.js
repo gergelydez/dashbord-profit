@@ -159,6 +159,8 @@ export default function Dashboard() {
   const [glsError, setGlsError]   = useState('');
   const [glsLoading, setGlsLoading] = useState(false);
   const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingResults, setTrackingResults] = useState({}); // { orderId: { status, statusRaw, lastUpdate, location } }
+  const [lastTrackingCheck, setLastTrackingCheck] = useState(null);
   const [glsFiles, setGlsFiles]   = useState(() => { try { return JSON.parse(ls.get('gls_files') || '[]'); } catch { return []; } });
   const [courierFilter, setCourierFilter] = useState('toate');
 
@@ -640,13 +642,26 @@ export default function Dashboard() {
   const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = toISO(yesterday);
 
+  // ── COD încasat azi — cu logică weekend ──
+  // GLS și Sameday: dacă livrarea a fost sâmbătă sau duminică → banii vin luni
+  // Adaugă n zile LUCRĂTOARE (L-V) — sâmbătă/duminică nu contează
+  const nextBizDay = (dateStr, plusWorkingDays) => {
+    const d = new Date(dateStr + 'T12:00:00');
+    let added = 0;
+    while (added < plusWorkingDays) {
+      d.setDate(d.getDate() + 1);
+      const day = d.getDay();
+      if (day !== 0 && day !== 6) added++; // numărăm doar L-V
+    }
+    return d.toISOString().slice(0,10);
+  };
   const codIncasatAzi = allOrders.filter(o => {
     if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
-    if (isOnlinePayment(o)) return false;
-    const livrareStr = (o.fulfilledAt||'').slice(0,10);
-    if (o.courier === 'gls')     return livrareStr === twoDaysAgoStr;
-    if (o.courier === 'sameday') return livrareStr === yesterdayStr;
-    return livrareStr === twoDaysAgoStr;
+    if (isOnlinePayment(o)) return false; // Shopify Payments nu e ramburs COD
+    const livStr = o.fulfilledAt.slice(0,10);
+    if (o.courier === 'gls')     return nextBizDay(livStr, 2) === todayStr;
+    if (o.courier === 'sameday') return nextBizDay(livStr, 1) === todayStr;
+    return nextBizDay(livStr, 2) === todayStr;
   });
   const sumCodIncasatAzi = codIncasatAzi.reduce((a,o) => a+o.total, 0);
 
@@ -1082,8 +1097,8 @@ export default function Dashboard() {
                                 SD · {sdLabel}{!sdDone&&<span style={{color:'#4a5568'}}> ?</span>}
                               </span>;
                             })()}
-                            {o.trackingStatus&&<div style={{fontSize:8,color:'#64748b',marginTop:2,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={o.trackingStatus+(o.trackingLocation?' · '+o.trackingLocation:'')}>{o.trackingStatus}{o.trackingLocation?' · '+o.trackingLocation:''}</div>}
-                            {o.trackingLastUpdate&&<div style={{fontSize:7,color:'#334155'}}>{String(o.trackingLastUpdate).slice(0,16).replace('T',' ')}</div>}
+                            {o.trackingStatus&&<div style={{fontSize:9,color:'#64748b',marginTop:2,maxWidth:130,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.3}} title={o.trackingStatus+(o.trackingLocation?' · '+o.trackingLocation:'')}>{o.trackingStatus}{o.trackingLocation?<span style={{color:'#334155'}}> · {o.trackingLocation}</span>:''}</div>}
+                            {o.trackingLastUpdate&&<div style={{fontSize:8,color:'#334155',marginTop:1}}>{String(o.trackingLastUpdate).slice(0,16).replace('T',' ')}</div>}
                           </td>
                         </tr>
                       );
