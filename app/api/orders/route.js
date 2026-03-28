@@ -13,15 +13,12 @@ const buildQuery = (cursor, createdAtMin) => `{
       node {
         id name createdAt cancelledAt processedAt
         displayFinancialStatus displayFulfillmentStatus
-        tags email
         paymentGatewayNames
         totalPriceSet { shopMoney { amount currencyCode } }
-        shippingAddress { name city province address1 address2 }
-        billingAddress  { name city province address1 address2 }
+        shippingAddress { name city province }
+        billingAddress { name city province }
         lineItems(first: 10) {
-          edges {
-            node { name quantity }
-          }
+          edges { node { name quantity } }
         }
         fulfillments {
           updatedAt createdAt
@@ -29,11 +26,11 @@ const buildQuery = (cursor, createdAtMin) => `{
           displayStatus
         }
         customAttributes { key value }
-        # customerJourneySummary omis pentru viteză
       }
     }
   }
 }`;
+
 
 const mapFinancial = (s) => ({
   'PAID':'paid','PENDING':'pending','REFUNDED':'refunded','VOIDED':'voided',
