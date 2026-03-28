@@ -832,8 +832,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const glsRetur     = glsOrders.filter(o => getFinalStatus(o) === 'retur').length;
   const glsIncurs    = glsOrders.filter(o => getFinalStatus(o) === 'incurs').length;
   const glsOutfor    = glsOrders.filter(o => getFinalStatus(o) === 'outfor').length;
+  const glsAnulate   = glsOrders.filter(o => getFinalStatus(o) === 'anulat').length;
   const glsInLivrare = glsOutfor;
   const glsPending   = glsOrders.filter(o => getFinalStatus(o) === 'pending').length;
+  const sdAnulate    = sdOrders.filter(o => getSdStatus(o) === 'anulat' || o.ts === 'anulat').length;
 
   // Retururi suplimentare (din alte perioade, returnate în perioada curentă)
   const retururiExtra = allOrders.filter(o => {
@@ -1149,6 +1151,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     ['🚚 Tranzit', glsIncurs, '#3b82f6'],
                     ['🚛 În livrare', glsInLivrare, '#a855f7'],
                     ['↩️ Refuzate', glsRetur, glsRetur>0?'#f43f5e':'#94a3b8'],
+                    ['❌ Anulate', glsAnulate, glsAnulate>0?'#64748b':'#334155'],
                   ].map(([lbl,val,col])=>(
                     <div key={lbl} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
                       <span style={{color:'#94a3b8'}}>{lbl}</span>
@@ -1178,7 +1181,14 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                       ⚠️ Fără export, refuzurile nu sunt detectate.<br/><strong>eAWB → Listă AWB → Export Excel</strong>
                     </div>
                   )}
-                  {[['Total SD',sdOrders.length,'#e8edf2'],['✅ Livrate',sdLivrate,'#10b981'],['🚚 Tranzit',sdIncurs,'#3b82f6'],['📬 La curier',sdOutfor,'#a855f7'],['↩️ Refuzate',sdRetur,sdRetur>0?'#f43f5e':'#94a3b8']].map(([lbl,val,col])=>(
+                  {[
+                    ['Total SD', sdOrders.length, '#e8edf2'],
+                    ['✅ Livrate', sdLivrate, '#10b981'],
+                    ['🚚 Tranzit', sdIncurs, '#3b82f6'],
+                    ['📬 La curier', sdOutfor, '#a855f7'],
+                    ['↩️ Refuzate', sdRetur, sdRetur>0?'#f43f5e':'#94a3b8'],
+                    ['❌ Anulate', sdAnulate, sdAnulate>0?'#64748b':'#334155'],
+                  ].map(([lbl,val,col])=>(
                     <div key={lbl} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
                       <span style={{color:'#94a3b8'}}>{lbl}</span>
                       <span style={{color:col,fontFamily:'monospace',fontWeight:val>0&&lbl.includes('Refuz')?700:400}}>{val}</span>
