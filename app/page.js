@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // Helper safe pentru localStorage — returnează null pe server (SSR/prerender)
 const ls = {
@@ -64,12 +64,14 @@ function applyTrackingOverrides(orders) {
   return orders.map(o => {
     const override = ov[o.id];
     if (!override) return o;
-    // Nu suprascrie dacă Shopify confirmă deja livrat
-    if (o.ts === 'livrat' && override.ts !== 'retur') return o;
-    return { ...o, ts: override.ts,
+    // Suprascrie ÎNTOTDEAUNA cu statusul confirmat de GLS
+    // (excepție: dacă Shopify zice deja livrat și override e tot livrat — nu schimbăm nimic)
+    return { ...o,
+      ts: override.ts,
       trackingStatus: override.statusRaw || o.trackingStatus,
       trackingLastUpdate: override.lastUpdate || o.trackingLastUpdate,
-      trackingLocation: override.location || o.trackingLocation };
+      trackingLocation: override.location || o.trackingLocation,
+    };
   });
 }
 
@@ -231,7 +233,9 @@ export default function Dashboard() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        setAllOrders(parsed);
+        // Aplicăm overrides direct în o.ts la încărcare — stabile imediat
+        const parsedWithOv = applyTrackingOverrides(parsed);
+        setAllOrders(parsedWithOv);
         setConnected(true);
         const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
@@ -699,28 +703,49 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     setTrackingLoading(false);
   };
 
-  // Auto-refresh la 5s după conectare + la 60min
+  // Auto-tracking: rulează automat la 10s după conectare + la fiecare 30min
+  // Silent = fără alert, fără loading indicator vizibil
+  const lastAutoTrack = useRef(0);
   useEffect(() => {
-    if (!connected || allOrders.length === 0) return;
-    const t1 = setTimeout(() => refreshTracking(true), 5000);
-    const t2 = setInterval(() => refreshTracking(true), 60 * 60 * 1000);
+    if (!connected) return;
+    // Rulăm la 10 secunde după conectare
+    const t1 = setTimeout(() => {
+      refreshTracking(true);
+      lastAutoTrack.current = Date.now();
+    }, 10000);
+    // Repetăm la fiecare 30 minute
+    const t2 = setInterval(() => {
+      refreshTracking(true);
+      lastAutoTrack.current = Date.now();
+    }, 30 * 60 * 1000);
     return () => { clearTimeout(t1); clearInterval(t2); };
   }, [connected]);
+
+  // Re-rulăm tracking după ce faza 2+3 de sync termină (allOrders se schimbă mult)
+  const prevOrderCount = useRef(0);
+  useEffect(() => {
+    if (!connected || allOrders.length === 0) return;
+    const diff = Math.abs(allOrders.length - prevOrderCount.current);
+    prevOrderCount.current = allOrders.length;
+    // Dacă s-au adăugat >5 comenzi noi (sync complet), re-rulăm tracking după 3s
+    if (diff > 5 && Date.now() - lastAutoTrack.current > 60000) {
+      const t = setTimeout(() => {
+        refreshTracking(true);
+        lastAutoTrack.current = Date.now();
+      }, 3000);
+      return () => clearTimeout(t);
+    }
+  }, [allOrders.length, connected]);
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
   // ── KPI ──
   const n = orders.length;
   // Folosim getFinalStatus pentru KPI — nu o.ts direct
   // Dar getFinalStatus e definit mai jos — folosim trackingOverrides direct aici
-  const _ov = trackingOverrides.get();
-  const _getFinal = (o) => {
-    if (_ov[o.id]) return _ov[o.id].ts;
-    if (o.courier==='gls' && glsAwbMap[(o.trackingNo||'').trim()]) return glsAwbMap[(o.trackingNo||'').trim()];
-    if (o.courier==='sameday') { try { const sdMap=JSON.parse(ls.get('sd_awb_map')||'{}'); const s=sdMap[(o.trackingNo||'').trim()]; if(s) return s; } catch{} }
-    return o.ts;
-  };
-  const cnt = s => orders.filter(o=>_getFinal(o)===s).length;
-  const sum = ss => orders.filter(o=>ss.includes(_getFinal(o))).reduce((a,o)=>a+o.total,0);
+  // Folosim o.ts direct din allOrders (care include overrides aplicate)
+  // Nu mai recalculăm — o.ts e deja corect după applyTrackingOverrides
+  const cnt = s => orders.filter(o=>o.ts===s).length;
+  const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
   const incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
@@ -746,14 +771,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   };
 
   const getFinalStatus = (o) => {
-    // Prioritate 1: Tracking override persistent (din GLS/Sameday API live)
-    const ov = trackingOverrides.get();
-    if (ov[o.id]) return ov[o.id].ts;
-    // Prioritate 2: GLS Excel import
+    // o.ts e deja corect — include tracking overrides aplicate la load/sync
+    // Prioritate suplimentară: GLS Excel și Sameday Excel
     if (o.courier === 'gls') return getGlsStatusFinal(o);
-    // Prioritate 3: Sameday Excel import
     if (o.courier === 'sameday') return getSdStatus(o) || o.ts;
-    // Fallback: Shopify/xConnector
     return o.ts;
   };
 
