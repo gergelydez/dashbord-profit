@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
 const today = new Date();
-const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+// preset default: last_month (luna trecuta)
 const monthLabel = (m) => { const [y, mo] = m.split('-'); const d = new Date(y, mo - 1, 1); return d.toLocaleString('ro-RO', { month: 'long', year: 'numeric' }); };
 
 function splitCSV(line) {
@@ -102,6 +102,28 @@ const DEFAULT_FIXED = [
 const TRANSPORT_DEFAULT = 21.37;
 
 // ── IDENTIC CU DASHBOARD ──────────────────────────────────────────
+const pad2 = n => String(n).padStart(2, '0');
+const toISO2 = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+
+// getRange — copiat identic din page.js
+function getRange(preset, customFrom, customTo) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  switch (preset) {
+    case 'today':       return { from: toISO2(now), to: toISO2(now) };
+    case 'yesterday':   { const y2 = new Date(y,m,d-1); return { from: toISO2(y2), to: toISO2(y2) }; }
+    case 'week':        return { from: toISO2(new Date(y,m,d-6)), to: toISO2(now) };
+    case 'month':       return { from: `${y}-${pad2(m+1)}-01`, to: toISO2(now) };
+    case 'last_month':  { const lm = new Date(y,m,0); return { from: `${lm.getFullYear()}-${pad2(lm.getMonth()+1)}-01`, to: toISO2(lm) }; }
+    case 'last_7':      return { from: toISO2(new Date(y,m,d-6)), to: toISO2(now) };
+    case 'last_30':     return { from: toISO2(new Date(y,m,d-29)), to: toISO2(now) };
+    case 'last_90':     return { from: toISO2(new Date(y,m,d-89)), to: toISO2(now) };
+    case 'year':        return { from: `${y}-01-01`, to: toISO2(now) };
+    case 'custom':      return { from: customFrom, to: customTo };
+    default:            return { from: toISO2(new Date(y,m,d-29)), to: toISO2(now) };
+  }
+}
+
 // applyTrackingOverrides — copiat din page.js
 function applyTrackingOverrides(orders) {
   try {
@@ -120,37 +142,28 @@ function applyTrackingOverrides(orders) {
   } catch { return orders; }
 }
 
-// getLivrateInPeriod — copiat identic din page.js
-// filtrare dupa fulfilledAt in luna selectata + ts === 'livrat'
-function getLivrateInPeriod(allOrders, monthStr) {
-  const [y, m] = monthStr.split('-').map(Number);
-  const from = y + '-' + String(m).padStart(2,'0') + '-01';
-  const lastDay = new Date(y, m, 0).getDate();
-  const to = y + '-' + String(m).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0');
+// getLivrateInPeriod — identic cu dashboard modul Create + filter livrat:
+// filtreaza dupa createdAt in perioada, apoi ts === 'livrat'
+function getLivrateInPeriod(allOrders, preset, customFrom, customTo) {
+  const { from, to } = getRange(preset, customFrom, customTo);
   const fromD = new Date(from + 'T00:00:00');
   const toD   = new Date(to   + 'T23:59:59');
   return allOrders.filter(o => {
-    if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
-    const f = new Date(o.fulfilledAt);
-    return f >= fromD && f <= toD;
+    if (o.ts !== 'livrat') return false;
+    const created = new Date(o.createdAt || o.created_at || '');
+    return created >= fromD && created <= toD;
   });
 }
 
-// getReturInPeriod — returnate in luna selectata
-function getReturInPeriod(allOrders, monthStr) {
-  const [y, m] = monthStr.split('-').map(Number);
-  const from = y + '-' + String(m).padStart(2,'0') + '-01';
-  const lastDay = new Date(y, m, 0).getDate();
-  const to = y + '-' + String(m).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0');
+// getReturInPeriod — comenzi create in perioada cu ts=retur
+function getReturInPeriod(allOrders, preset, customFrom, customTo) {
+  const { from, to } = getRange(preset, customFrom, customTo);
   const fromD = new Date(from + 'T00:00:00');
   const toD   = new Date(to   + 'T23:59:59');
   return allOrders.filter(o => {
     if (o.ts !== 'retur') return false;
-    // folosim fulfilledAt sau createdAt
-    const dateStr = o.fulfilledAt || o.createdAt || '';
-    if (!dateStr) return false;
-    const f = new Date(dateStr);
-    return f >= fromD && f <= toD;
+    const created = new Date(o.createdAt || o.created_at || '');
+    return created >= fromD && created <= toD;
   });
 }
 const TVA_RATE = 0.21;
@@ -194,7 +207,9 @@ function importCostsFromXLSX(file, onSuccess) {
 }
 
 export default function ProfitPage() {
-  const [month, setMonth] = useState(currentMonth);
+  const [preset, setPreset] = useState('last_month');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [activeTab, setActiveTab] = useState('summary');
 
   // Shopify
@@ -269,7 +284,7 @@ export default function ProfitPage() {
       try {
         const p = JSON.parse(sord);
         const withOv = applyTrackingOverrides(p);
-        const livrate = getLivrateInPeriod(withOv, currentMonth);
+        const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
         setAllShopifyOrders(withOv);
         if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
       } catch {}
@@ -303,11 +318,11 @@ export default function ProfitPage() {
     try {
       const p = JSON.parse(sord);
       const withOv = applyTrackingOverrides(p);
-      const livrate = getLivrateInPeriod(withOv, month);
+      const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
       if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
       else { setShopifyOrders([]); setShopifyDone(false); }
     } catch {}
-  }, [month]);
+  }, [preset, customFrom, customTo]);
 
   const fetchShopify = async () => {
     const domain = localStorage.getItem('gx_d');
@@ -340,7 +355,7 @@ export default function ProfitPage() {
         };
       });
       const withOv = applyTrackingOverrides(processed);
-      const livrate = getLivrateInPeriod(withOv, month);
+      const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
       setAllShopifyOrders(withOv);
       setShopifyOrders(livrate.length > 0 ? livrate : processed);
       setShopifyDone(true);
@@ -453,7 +468,7 @@ export default function ProfitPage() {
 
   // Colete refuzate/returnate — aceeasi logica ca dashboard-ul principal
   // Retururi in luna selectata — din allShopifyOrders (nu doar cele livrate)
-  const returnedOrders = getReturInPeriod(allShopifyOrders, month);
+  const returnedOrders = getReturInPeriod(allShopifyOrders, preset, customFrom, customTo);
 
   const totalRevenue = deliveredOrders.reduce((s, o) => s + (o.total || 0), 0);
   const totalOrders = deliveredOrders.length;
@@ -689,13 +704,13 @@ export default function ProfitPage() {
           <div className="pf-title-wrap">
             <div className="pf-title">💹 Calculator Profit</div>
             <div style={{display:'flex',alignItems:'center',gap:6,marginTop:2}}>
-              <span className="pf-sub">{monthLabel(month)}</span>
+              <span className="pf-sub">{(()=>{const r=getRange(preset,customFrom,customTo);return r.from.slice(0,7)===r.to.slice(0,7)?new Date(r.from+'T12:00:00').toLocaleString('ro-RO',{month:'long',year:'numeric'}):r.from+' — '+r.to;})()}</span>
               {shopifyDone && isEstimated && <span className="pf-est-badge">⚡ Estimat</span>}
               {shopifyDone && !isEstimated && <span style={{fontSize:10,color:'var(--c-green)',fontWeight:700}}>✓ Real</span>}
             </div>
           </div>
           <div className="pf-month">
-            <input type="month" value={month} onChange={e => { setMonth(e.target.value); setShopifyDone(false); setGlsDone(false); }} />
+            <input type="month" value={month} onChange={e => { setPreset(e.target.value); setShopifyDone(false); setGlsDone(false); }} />
           </div>
           <a href="/" className="pf-back">← Back</a>
         </div>
