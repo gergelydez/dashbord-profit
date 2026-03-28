@@ -6,7 +6,8 @@ let glsToken = null;
 let glsTokenExpiry = 0;
 
 const GLS_APP_ID     = process.env.GLS_APP_ID     || ''; // client_id
-const GLS_API_KEY    = process.env.GLS_API_KEY    || ''; // client_secret (Owner)
+const GLS_API_KEY    = process.env.GLS_API_KEY    || '';
+const GLS_API_SECRET = process.env.GLS_API_SECRET || '';
 const OAUTH_URL      = 'https://api-sandbox.gls-group.net/oauth2/v2/token';
 const TRACKING_BASE  = 'https://api-sandbox.gls-group.net/track-and-trace-v1';
 
@@ -28,11 +29,12 @@ const GLS_EVENT_STATUS = {
 async function getGLSToken() {
   if (glsToken && Date.now() < glsTokenExpiry - 60000) return glsToken;
   try {
+    const secret = process.env.GLS_API_SECRET || GLS_API_KEY;
     const res = await fetch(OAUTH_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
+        'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${secret}`).toString('base64')}`,
       },
       body: 'grant_type=client_credentials',
       signal: AbortSignal.timeout(10000),
@@ -114,20 +116,43 @@ export async function GET(request) {
 
   if (debug) {
     const results = {};
-    // Step 1: OAuth
+    // Testăm toate combinațiile posibile
     try {
-      const r = await fetch(OAUTH_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
-        },
-        body: 'grant_type=client_credentials',
-        signal: AbortSignal.timeout(10000),
-      });
-      const text = await r.text();
-      let data; try { data = JSON.parse(text); } catch { data = text.slice(0,200); }
-      results.oauth = { status: r.status, data };
+      const secret = GLS_API_SECRET || GLS_API_KEY;
+      const combos = [
+        // AppID:Secret — varianta corectă OAuth2
+        { label: 'Basic AppID:Secret', headers: { 'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${secret}`).toString('base64')}` }, body: 'grant_type=client_credentials' },
+        // Body cu client_id + client_secret
+        { label: 'Body AppID+Secret', headers: {}, body: `grant_type=client_credentials&client_id=${GLS_APP_ID}&client_secret=${secret}` },
+        // Key:Secret
+        { label: 'Basic Key:Secret', headers: { 'Authorization': `Basic ${Buffer.from(`${GLS_API_KEY}:${secret}`).toString('base64')}` }, body: 'grant_type=client_credentials' },
+        // Doar AppID:Key (varianta veche)
+        { label: 'Basic AppID:Key', headers: { 'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}` }, body: 'grant_type=client_credentials' },
+      ];
+
+      results.oauthTests = [];
+      let bestToken = null;
+
+      for (const combo of combos) {
+        try {
+          const r = await fetch(OAUTH_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...combo.headers },
+            body: combo.body,
+            signal: AbortSignal.timeout(8000),
+          });
+          const text = await r.text();
+          let data; try { data = JSON.parse(text); } catch { data = text.slice(0,100); }
+          results.oauthTests.push({ label: combo.label, status: r.status, data });
+          if (r.ok && data?.access_token) { bestToken = data.access_token; break; }
+        } catch(e) {
+          results.oauthTests.push({ label: combo.label, error: e.message });
+        }
+      }
+
+      const r = { ok: !!bestToken };
+      const data = bestToken ? { access_token: bestToken } : null;
+      results.oauth = { found: !!bestToken };
 
       // Step 2: tracking cu token
       if (r.ok && data?.access_token) {
