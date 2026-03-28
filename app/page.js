@@ -275,10 +275,12 @@ export default function Dashboard() {
     ls.set('gx_d', domain);
     ls.set('gx_t', token);
     setLoading(true); setError('');
+
+    // FAZA 1: Ultimele 30 zile — rapid, eroarea e vizibilă
+    let fast = [];
     try {
-      // FAZA 1: Ultimele 30 zile — super rapid (1-2 sec)
       const d30 = toISO(new Date(Date.now() - 30*24*60*60*1000));
-      const fast = await fetchOrdersRange(d30, !!forceMode);
+      fast = await fetchOrdersRange(d30, !!forceMode);
       setAllOrders(fast);
       setConnected(true);
       setFetchedFrom(d30);
@@ -288,10 +290,17 @@ export default function Dashboard() {
       ls.set('gx_fetch_time', now.toISOString());
       ls.set('gx_fetched_from', d30);
       applyDateFilter(fast, preset, customFrom, customTo);
+    } catch (e) {
+      setError('Eroare: ' + e.message);
       setLoading(false);
+      return; // Oprим dacă faza 1 eșuează
+    } finally {
+      setLoading(false);
+    }
 
-      // FAZA 2: Background — 60 zile
-      setBgLoading(true);
+    // FAZA 2 + 3: Background silențios — erorile nu se afișează
+    setBgLoading(true);
+    try {
       const d60 = toISO(new Date(Date.now() - 60*24*60*60*1000));
       const mid = await fetchOrdersRange(d60, false);
       const fastIds = new Set(fast.map(o => o.id));
@@ -302,17 +311,20 @@ export default function Dashboard() {
       ls.set('gx_fetched_from', d60);
       applyDateFilter(merged60, preset, customFrom, customTo);
 
-      // FAZA 3: Background — până la 1 an (doar dacă utilizatorul vrea)
-      const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
-      const oldOrders = await fetchOrdersRange(d365, false);
-      const ids60 = new Set(merged60.map(o => o.id));
-      const merged = [...merged60, ...oldOrders.filter(o => !ids60.has(o.id))];
-      setAllOrders(merged);
-      setFetchedFrom(d365);
-      ls.set('gx_orders_all', JSON.stringify(merged));
-      ls.set('gx_fetched_from', d365);
-      applyDateFilter(merged, preset, customFrom, customTo);
-    } catch (e) { setError('Eroare: ' + e.message); setLoading(false); }
+      // Faza 3 — 1 an
+      try {
+        const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
+        const oldOrders = await fetchOrdersRange(d365, false);
+        const ids60 = new Set(merged60.map(o => o.id));
+        const merged = [...merged60, ...oldOrders.filter(o => !ids60.has(o.id))];
+        setAllOrders(merged);
+        setFetchedFrom(d365);
+        ls.set('gx_orders_all', JSON.stringify(merged));
+        ls.set('gx_fetched_from', d365);
+        applyDateFilter(merged, preset, customFrom, customTo);
+      } catch { /* ignorăm erorile din faza 3 */ }
+
+    } catch { /* ignorăm erorile din background */ }
     finally { setBgLoading(false); }
   };
 
@@ -1361,3 +1373,4 @@ export default function Dashboard() {
     </>
   );
 }
+
