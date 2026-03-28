@@ -100,6 +100,20 @@ const DEFAULT_FIXED = [
 
 // Calculat: 2522.34 RON / 118 colete = 21.37 RON/colet
 const TRANSPORT_DEFAULT = 21.37;
+
+// Filtreaza comenzile dupa luna — exact ca dashboard (fulfilledAt + ts=livrat)
+function filterByMonth(orders, monthStr) {
+  const [y, m] = monthStr.split('-').map(Number);
+  const from = new Date(y, m - 1, 1, 0, 0, 0);
+  const to   = new Date(y, m,     1, 0, 0, 0);
+  return orders.filter(o => {
+    // Foloseste fulfilledAt ca dashboard, fallback pe createdAt
+    const dateStr = o.fulfilledAt || o.createdAt || o.created_at || '';
+    if (!dateStr) return false;
+    const t = new Date(dateStr);
+    return t >= from && t < to;
+  });
+}
 const TVA_RATE = 0.21;
 
 // Statusuri Shopify care indică retur/refuz — aceeași logică ca dashboard-ul principal
@@ -210,17 +224,11 @@ export default function ProfitPage() {
 
     // Load orders (saved from previous session) — profit estimat imediat
     // Citeste din gx_orders_all (cheia salvata de dashboard) — contine ultimele 60 zile
-    // Filtram doar luna curenta selectata
     const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
     if (sord) {
       try {
         const p = JSON.parse(sord);
-        // Filtreaza dupa luna curenta
-        const [y, m] = currentMonth.split('-');
-        const filtered = p.filter(o => {
-          const d = (o.createdAt || o.created_at || '').slice(0, 7);
-          return d === currentMonth;
-        });
+        const filtered = filterByMonth(p, currentMonth);
         if (filtered.length > 0) { setShopifyOrders(filtered); setShopifyDone(true); }
       } catch {}
     }
@@ -252,7 +260,7 @@ export default function ProfitPage() {
     if (!sord) return;
     try {
       const p = JSON.parse(sord);
-      const filtered = p.filter(o => (o.createdAt || o.created_at || '').slice(0, 7) === month);
+      const filtered = filterByMonth(p, month);
       if (filtered.length > 0) { setShopifyOrders(filtered); setShopifyDone(true); }
       else { setShopifyOrders([]); setShopifyDone(false); }
     } catch {}
@@ -394,36 +402,27 @@ export default function ProfitPage() {
   // ── CALCULATIONS ──
 
   // Comenzi livrate si platite
-  // Criteriu: plătite + nu anulate + nu retururi
-  // Dashboard format: fin=financial_status, ts=status calculat, fara fulfillment_status
-  // Profit fetch direct: financial=financial_status, fulfillment=fulfillment_status
+  // Exact ca dashboard: ts === 'livrat' (statusul calculat)
+  // Fallback pentru fetch direct din profit: financial=paid + fulfillment=fulfilled
   const deliveredOrders = shopifyOrders.filter(o => {
-    const fin = o.fin || o.financial || '';
-    const ts  = o.ts || o.fulfillment || '';
-    if (fin !== 'paid') return false;
-    if (o.cancelled_at) return false;
-    if (ts === 'anulat' || ts === 'retur') return false;
-    // Daca are fulfillment_status direct din Shopify, verifica fulfilled
-    if (o.fulfillment_status && o.fulfillment_status !== 'fulfilled') return false;
-    return true;
+    if (o.ts) return o.ts === 'livrat'; // format dashboard — sursa de adevar
+    // format fetch direct din profit
+    const fin = o.financial || '';
+    const ful = o.fulfillment || '';
+    return fin === 'paid' && ful === 'fulfilled';
   });
 
   // Colete refuzate/returnate — aceeasi logica ca dashboard-ul principal
+  // Exact ca dashboard: ts === 'retur'
   const returnedOrders = shopifyOrders.filter(o => {
-    if (o.cancelled_at) return false;
-    // Dashboard format: ts field
-    const ts = o.ts || '';
-    if (ts === 'retur') return true;
-    // Direct fetch format: fulfillments array
+    if (o.ts) return o.ts === 'retur'; // format dashboard
+    // fallback fetch direct
     const ffs = o.fulfillments || [];
     if (ffs.length > 0) {
-      const deliveredF = ffs.find(f => (f.shipment_status||'').toLowerCase() === 'delivered');
-      const f = deliveredF || ffs[ffs.length - 1];
+      const f = ffs[ffs.length - 1];
       const ss = (f.shipment_status || '').toLowerCase();
       if (RETURNED_SHIPMENT.has(ss)) return true;
     }
-    const fin = o.financial || o.fin || '';
-    if (fin === 'refunded' || fin === 'partially_refunded') return true;
     return false;
   });
 
