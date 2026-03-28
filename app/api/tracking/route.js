@@ -140,22 +140,37 @@ export async function GET(request) {
       });
     }
     try {
-      const url = `https://api.gls-group.eu/public/v3/tracking/parcel-numbers/${awb}`;
-      const res = await fetch(url, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
-        signal: AbortSignal.timeout(10000),
-      });
-      const text = await res.text();
-      let raw;
-      try { raw = JSON.parse(text); } catch { raw = text.slice(0, 500); }
+      // Testăm mai multe variante URL GLS
+      const urls = [
+        `https://api.gls-group.eu/public/v3/tracking/parcel-numbers/${awb}`,
+        `https://api.gls-group.eu/public/v1/tracking/${awb}`,
+        `https://gls-group.eu/app/service/open/rest/RO/ro/rstt001?match=${awb}`,
+        `https://api.gls-group.eu/public/v3/tracking?parcelNumber=${awb}`,
+      ];
+      const results = [];
+      for (const url of urls) {
+        try {
+          const r = await fetch(url, {
+            headers: {
+              'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
+              'Accept': 'application/json',
+              'User-Agent': 'GLAMX-Dashboard/1.0',
+            },
+            signal: AbortSignal.timeout(8000),
+          });
+          const text = await r.text();
+          let parsed;
+          try { parsed = JSON.parse(text); } catch { parsed = text.slice(0, 200); }
+          results.push({ url, status: r.status, response: parsed });
+        } catch(e2) {
+          results.push({ url, error: e2.message });
+        }
+      }
       return NextResponse.json({
-        awb, httpStatus: res.status,
+        awb,
         apiKey: GLS_API_KEY ? `✅ ${GLS_API_KEY.slice(0,8)}...` : '❌ lipsă',
         appId: GLS_APP_ID ? `✅ ${GLS_APP_ID.slice(0,8)}...` : '❌ lipsă',
-        raw,
+        results,
       });
     } catch(e) {
       return NextResponse.json({ awb, error: e.message });
