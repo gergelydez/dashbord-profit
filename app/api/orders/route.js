@@ -18,13 +18,9 @@ const buildQuery = (cursor, createdAtMin) => `{
         totalPriceSet { shopMoney { amount currencyCode } }
         shippingAddress { name city province address1 address2 }
         billingAddress  { name city province address1 address2 }
-        lineItems(first: 20) {
+        lineItems(first: 10) {
           edges {
-            node {
-              name title quantity
-              variant { sku price id }
-              originalUnitPriceSet { shopMoney { amount } }
-            }
+            node { name quantity }
           }
         }
         fulfillments {
@@ -33,14 +29,7 @@ const buildQuery = (cursor, createdAtMin) => `{
           displayStatus
         }
         customAttributes { key value }
-        customerJourneySummary {
-          lastVisit {
-            source
-            referrerUrl
-            landingPage
-            utmParameters { source medium campaign }
-          }
-        }
+        # customerJourneySummary omis pentru viteză
       }
     }
   }
@@ -186,11 +175,19 @@ export async function GET(request) {
     let cursor = null;
     let hasNextPage = true;
 
+    const startTime = Date.now();
     while (hasNextPage) {
+      // Dacă am depășit 22 sec, returnăm ce avem (evităm timeout Vercel)
+      if (Date.now() - startTime > 22000) {
+        console.log('[ORDERS] Timeout preventiv după', allOrders.length, 'comenzi');
+        hasNextPage = false;
+        break;
+      }
       const res = await fetch(gqlUrl, {
         method: 'POST', headers,
         body: JSON.stringify({ query: buildQuery(cursor, createdMin) }),
         cache: 'no-store',
+        signal: AbortSignal.timeout(25000), // 25 sec timeout per pagină
       });
 
       if (!res.ok) {
@@ -218,7 +215,11 @@ export async function GET(request) {
       if (Date.now() - v.ts > 5 * 60 * 1000) serverCache.delete(k);
     }
 
-    return NextResponse.json({ orders: processed, source: 'graphql' }, {
+    return NextResponse.json({ 
+      orders: processed, 
+      source: 'graphql',
+      count: processed.length,
+    }, {
       status: 200,
       headers: { 'Access-Control-Allow-Origin': '*' },
     });
