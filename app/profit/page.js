@@ -912,7 +912,7 @@ export default function ProfitPage() {
                       const a = document.createElement('a');
                       a.href = url; a.download = 'product-costs.json'; a.click();
                       URL.revokeObjectURL(url);
-                      alert(\`✅ Actualizat \${incoming.length} produse! Uploadeaza product-costs.json pe GitHub în folderul /public.\`);
+                      alert('✅ Actualizat ' + incoming.length + ' produse! Uploadeaza product-costs.json pe GitHub in folderul /public.');
                     },
                     (err) => alert('Eroare import: ' + err)
                   );
