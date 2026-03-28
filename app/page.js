@@ -60,27 +60,28 @@ function procOrder(o) {
     fulfilledAt = f.updated_at || f.created_at || '';
     trackingNo = f.tracking_number || '';
     const ss = (f.shipment_status || '').toLowerCase();
-    if (ss === 'delivered') ts = 'livrat';
+    if (!ss || ss === 'null') { /* shipment_status gol/null — lăsăm cancelled_at să decidă */ }
+    else if (ss === 'delivered') ts = 'livrat';
     else if (['failure','failed_attempt','returned','failed_delivery','return_in_progress'].includes(ss)) ts = 'retur';
     else if (ss === 'out_for_delivery') ts = 'outfor';
     else if (ss === 'label_printed') ts = 'pending'; // AWB printat dar NEPREDAT curierului
     else if (['in_transit','confirmed'].includes(ss)) {
-      // Curierul a scanat coletul (l-a preluat fizic)
-      // Dacă e in_transit de mai mult de 10 zile → xConnector nu a actualizat → livrat
+      // Preluat de curier — dacă >10 zile fără update = xConnector blocat = livrat
       if (fulfilledAt) {
         const daysSince = (new Date() - new Date(fulfilledAt)) / (1000 * 60 * 60 * 24);
         ts = daysSince > 10 ? 'livrat' : 'incurs';
-      } else {
-        ts = 'incurs';
-      }
+      } else { ts = 'incurs'; }
+    }
+    else if (ss === 'failed_attempt') {
+      // Tentativă de livrare eșuată — mai încearcă
+      ts = 'outfor'; // afișăm ca "la curier" că va reîncerca
     }
     else if (o.fulfillment_status === 'fulfilled') {
+      // fulfillment creat dar fără shipment_status clar
       if (fulfilledAt) {
         const daysSince = (new Date() - new Date(fulfilledAt)) / (1000 * 60 * 60 * 24);
         ts = daysSince > 10 ? 'livrat' : 'incurs';
-      } else {
-        ts = 'incurs';
-      }
+      } else { ts = 'incurs'; }
     }
   }
   if (o.cancelled_at) ts = 'anulat';
@@ -157,6 +158,7 @@ export default function Dashboard() {
   const [glsDone, setGlsDone]     = useState(() => { try { return !!ls.get('gls_awb_map'); } catch { return false; } });
   const [glsError, setGlsError]   = useState('');
   const [glsLoading, setGlsLoading] = useState(false);
+  const [trackingLoading, setTrackingLoading] = useState(false);
   const [glsFiles, setGlsFiles]   = useState(() => { try { return JSON.parse(ls.get('gls_files') || '[]'); } catch { return []; } });
   const [courierFilter, setCourierFilter] = useState('toate');
 
@@ -192,6 +194,8 @@ export default function Dashboard() {
   const [rangeLabel, setRangeLabel] = useState('');
   const [allOrders, setAllOrders]   = useState([]);
   const [lastFetch, setLastFetch]   = useState(null);
+  const [fetchedFrom, setFetchedFrom] = useState(null); // cea mai veche dată încărcată
+  const [bgLoading, setBgLoading]   = useState(false);  // loading background
 
   useEffect(() => {
     const t = ls.get('gx_t');
@@ -199,7 +203,7 @@ export default function Dashboard() {
     if (t) setToken(t);
     if (d) setDomain(d);
     setTimeout(loadSbSeries, 500);
-    const saved = ls.get('gx_orders_all');
+    const saved = ls.get('gx_orders_all') || ls.get('gx_orders_60');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -207,6 +211,8 @@ export default function Dashboard() {
         setConnected(true);
         const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
+        const ff = ls.get('gx_fetched_from');
+        if (ff) setFetchedFrom(ff);
         applyDateFilter(parsed, 'last_30', '', '');
       } catch {}
     }
@@ -256,28 +262,48 @@ export default function Dashboard() {
     }
   }, [deliveryMode, preset, customFrom, customTo, getLivrateInPeriod, search, sortCol, sortDir, courierFilter, applyFilters]);
 
-  const fetchOrders = async () => {
+  const fetchOrdersRange = async (fromDate, force=false) => {
+    const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
+    return data.orders.map(procOrder);
+  };
+
+  const fetchOrders = async (forceMode) => {
     if (!domain || !token) { setError('Completează domeniul și tokenul!'); return; }
     ls.set('gx_d', domain);
     ls.set('gx_t', token);
     setLoading(true); setError('');
     try {
-      const yearAgo = toISO(new Date(new Date().setFullYear(new Date().getFullYear() - 1)));
-      const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${yearAgo}T00:00:00`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
-      const processed = data.orders.map(procOrder);
-      setAllOrders(processed);
+      // FAZA 1: Ultimele 60 zile — rapid
+      const d60 = toISO(new Date(Date.now() - 60*24*60*60*1000));
+      const fast = await fetchOrdersRange(d60, !!forceMode);
+      setAllOrders(fast);
       setConnected(true);
-      setError('');
+      setFetchedFrom(d60);
       const now = new Date();
       setLastFetch(now);
-      ls.set('gx_orders_all', JSON.stringify(processed));
+      ls.set('gx_orders_60', JSON.stringify(fast));
       ls.set('gx_fetch_time', now.toISOString());
-      applyDateFilter(processed, preset, customFrom, customTo);
-    } catch (e) { setError('Eroare: ' + e.message); }
-    finally { setLoading(false); }
+      ls.set('gx_fetched_from', d60);
+      applyDateFilter(fast, preset, customFrom, customTo);
+      setLoading(false);
+
+      // FAZA 2: Background — restul până la 1 an
+      const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
+      setBgLoading(true);
+      const old = await fetchOrdersRange(d365, false);
+      // Mergem comenzile vechi cu cele noi (evităm duplicate)
+      const fastIds = new Set(fast.map(o => o.id));
+      const merged = [...fast, ...old.filter(o => !fastIds.has(o.id))];
+      setAllOrders(merged);
+      setFetchedFrom(d365);
+      ls.set('gx_orders_all', JSON.stringify(merged));
+      ls.set('gx_fetched_from', d365);
+      applyDateFilter(merged, preset, customFrom, customTo);
+    } catch (e) { setError('Eroare: ' + e.message); setLoading(false); }
+    finally { setBgLoading(false); }
   };
 
   const handlePreset = (id) => {
@@ -806,7 +832,13 @@ export default function Dashboard() {
           <div className="hr">
             <div className="live"><div className={`dot ${connected?'on':''}`}></div><span>{connected ? `${orders.length} comenzi` : 'Deconectat'}</span></div>
             {connected && <>
-              <button className="bsm" onClick={fetchOrders}>⟳ Sincronizează</button>
+              <button className="bsm" onClick={() => fetchOrders('force')}>⟳ Sincronizează</button>
+              {bgLoading && <span style={{fontSize:10,color:'#f59e0b',display:'flex',alignItems:'center',gap:4}}>
+                <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Se încarcă istoric...
+              </span>}
+              {fetchedFrom && !bgLoading && <span style={{fontSize:9,color:'#334155'}}>
+                Date din: {fetchedFrom.slice(0,10)}
+              </span>}
               <a href="/profit" style={{background:'#10b981',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>💹 Profit</a>
               <a href="/stats" style={{background:'#3b82f6',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>📊 Statistici</a>
               <a href="/import" style={{background:'#a855f7',color:'white',border:'none',padding:'5px 12px',borderRadius:'20px',fontSize:'11px',cursor:'pointer',textDecoration:'none',fontWeight:600}}>📦 Import</a>
@@ -1147,6 +1179,8 @@ export default function Dashboard() {
                                 SD · {sdLabel}{!sdDone&&<span style={{color:'#4a5568'}}> ?</span>}
                               </span>;
                             })()}
+                            {o.trackingStatus&&<div style={{fontSize:8,color:'#64748b',marginTop:2,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={o.trackingStatus+(o.trackingLocation?' · '+o.trackingLocation:'')}>{o.trackingStatus}{o.trackingLocation?' · '+o.trackingLocation:''}</div>}
+                            {o.trackingLastUpdate&&<div style={{fontSize:7,color:'#334155'}}>{String(o.trackingLastUpdate).slice(0,16).replace('T',' ')}</div>}
                           </td>
                         </tr>
                       );
@@ -1317,3 +1351,4 @@ export default function Dashboard() {
     </>
   );
 }
+
