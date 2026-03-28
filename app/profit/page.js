@@ -156,6 +156,9 @@ export default function ProfitPage() {
   const [glsDone, setGlsDone] = useState(false);
   const [transportPerParcel, setTransportPerParcel] = useState(TRANSPORT_DEFAULT);
 
+  // SameDay — detectat automat din Shopify (courier field)
+  const [sdTransportPerParcel, setSdTransportPerParcel] = useState(28);
+
   // Marketing
   const [useCPA, setUseCPA] = useState(true);
   const [cpaValue, setCpaValue] = useState('65');
@@ -312,6 +315,50 @@ export default function ProfitPage() {
     }
   };
 
+  // ── SAMEDAY PARSE (acelasi format ca GLS) ──
+  const parseSameDayExcel = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const isXLSX = /\.xlsx?$/i.test(file.name);
+    const reader = new FileReader();
+    const processData = (hdrs, dataRows) => {
+      const findCol = (...names) => hdrs.find(h => names.some(n => h === n)) || hdrs.find(h => names.some(n => h.includes(n)));
+      const totalKey = findCol('total amount','total','amount','suma','valoare','cost');
+      const parcelKey = findCol('parcel number','parcel','colet','awb','tracking','expeditie');
+      let total = 0; const parsed = [];
+      dataRows.forEach(r => {
+        const rawVal = r[totalKey];
+        const cost = typeof rawVal === 'number' ? rawVal : parseFloat(String(rawVal||'0').replace(',','.').replace(/[^0-9.-]/g,''))||0;
+        const parcel = String(r[parcelKey]||'').trim();
+        if (cost > 0) { total += cost; parsed.push({ parcel, cost }); }
+      });
+      setSdRows(parsed); setSdCost(total); setSdDone(true);
+    };
+    if (isXLSX) {
+      reader.onload = (ev) => {
+        const load = () => {
+          const wb = window.XLSX.read(ev.target.result, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const json = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
+          const hdrs = (json[0]||[]).map(h => String(h||'').toLowerCase().trim());
+          const dataRows = json.slice(1).map(row => { const o={}; hdrs.forEach((h,i)=>o[h]=row[i]!==undefined?row[i]:''); return o; }).filter(r=>Object.values(r).some(v=>v!==''&&v!==null));
+          processData(hdrs, dataRows);
+        };
+        if (window.XLSX) load(); else { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload=load; document.head.appendChild(s); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = (ev) => {
+        const lines = ev.target.result.split(/
+?
+/).filter(l=>l.trim());
+        const hdrs = splitCSV(lines[0]).map(h=>h.replace(/"/g,'').trim().toLowerCase());
+        const dataRows = lines.slice(1).map(l=>{ const vals=splitCSV(l); const o={}; hdrs.forEach((h,i)=>o[h]=(vals[i]||'').replace(/"/g,'').trim()); return o; }).filter(r=>Object.values(r).some(v=>v));
+        processData(hdrs, dataRows);
+      };
+      reader.readAsText(file, 'UTF-8');
+    }
+  };
+
   // ── CALCULATIONS ──
 
   // Comenzi livrate si platite
@@ -365,9 +412,20 @@ export default function ProfitPage() {
   const cogs = getCOGS();
 
   // Transport
-  const costPerParcel = glsDone && glsRows.length > 0 ? glsCost / glsRows.length : transportPerParcel;
-  // Costul total transport = GLS real SAU estimat (nr produse × cost/colet)
-  const effectiveTransportCost = glsDone ? glsCost : totalItems * transportPerParcel;
+  // Detect courier per order from Shopify data
+  const glsOrders = deliveredOrders.filter(o => !o.courier || o.courier === 'gls' || o.courier === '');
+  const sdOrders  = deliveredOrders.filter(o => o.courier === 'sameday');
+  const glsCount  = glsOrders.length;
+  const sdCount   = sdOrders.length;
+  const totalParcelCount = totalOrders;
+
+  const costPerParcel    = glsDone && glsRows.length > 0 ? glsCost / glsRows.length : transportPerParcel;
+  const sdCostPerParcel  = sdTransportPerParcel;
+
+  // Transport: GLS real (din excel) + SameDay calculat automat
+  const glsEffective = glsDone ? glsCost : glsCount * transportPerParcel;
+  const sdEffective  = sdCount * sdTransportPerParcel;
+  const effectiveTransportCost = glsEffective + sdEffective;
 
   // Colete refuzate — cost transport dus+retur + CPA pierdut
   const refusedTransportCost = returnedCount * costPerParcel; // doar retur (transportul dus e deja in costul GLS)
@@ -428,6 +486,8 @@ export default function ProfitPage() {
     localStorage.setItem('glamx_cpa_value', cpaValue);
     localStorage.setItem('glamx_use_cpa', String(useCPA));
     localStorage.setItem('glamx_transport_per_parcel', String(transportPerParcel));
+    localStorage.setItem('glamx_sd_transport_per_parcel', String(sdTransportPerParcel));
+    localStorage.setItem('glamx_sd_transport_per_parcel', String(sdTransportPerParcel));
     alert('✅ Salvat!');
   };
 
@@ -633,7 +693,7 @@ export default function ProfitPage() {
             <div className="pf-kpi-grid">
               {[
                 {emoji:'📦',val:fmtK(cogs),label:'Cost produse',sub:cogs>0?`${totalRevenue>0?Math.round(cogs/totalRevenue*100):0}% venituri`:'Necompletat',accent:'#3b82f6'},
-                {emoji:'🚚',val:fmtK(effectiveTransportCost),label:'Transport',sub:glsDone?`${glsRows.length} colete · ${fmt(costPerParcel,2)} RON/col`:`Est. ${fmt(transportPerParcel,2)} RON/buc`,accent:'#f59e0b'},
+                {emoji:'🚚',val:fmtK(effectiveTransportCost),label:'Transport',sub:shopifyDone?`GLS ${glsCount}×${fmt(costPerParcel,0)} + SD ${sdCount}×${sdTransportPerParcel}`:`Est. ${fmt(transportPerParcel,2)} RON/col`,accent:'#f59e0b'},
                 {emoji:'📣',val:fmtK(totalMarketing),label:'Marketing',sub:useCPA?`CPA ${cpaValue} RON · ROAS ${roasMarketing.toFixed(1)}x`:`ROAS ${roasMarketing.toFixed(1)}x`,accent:'#a855f7'},
                 {emoji:'↩️',val:returnedCount>0?fmtK(totalRefusedCost):'0',label:'Colete refuzate',sub:returnedCount>0?`${returnedCount} retur · transport+CPA`:'Detectate automat din Shopify',accent:returnedCount>0?'#f43f5e':'#64748b'},
                 {emoji:'🧾',val:fmt(totalTVA,0),label:'TVA de plată',sub:'Meta+Shopify · 21%',accent:'#f59e0b'},
@@ -654,7 +714,12 @@ export default function ProfitPage() {
               <div className="pf-pl-row"><span className="pf-pl-label">💰 Venituri brute</span><span className="pf-pl-val orange">+{fmt(totalRevenue)} RON</span></div>
               <div className="pf-pl-row"><span className="pf-pl-label">📦 Cost produse (COGS)</span><span className="pf-pl-val neg-c">-{fmt(cogs)} RON</span></div>
               <div className="pf-pl-row subtotal"><span className="pf-pl-label" style={{fontWeight:700}}>= Profit brut</span><span className={`pf-pl-val ${grossProfit>=0?'pos':'neg-c'}`}>{grossProfit>=0?'+':''}{fmt(grossProfit)} RON <span style={{fontSize:9,opacity:.6}}>({totalRevenue>0?Math.round(grossProfit/totalRevenue*100):0}%)</span></span></div>
-              <div className="pf-pl-row"><span className="pf-pl-label">🚚 Transport {glsDone?'GLS':'(estimat)'}</span><span className="pf-pl-val neg-c">-{fmt(effectiveTransportCost)} RON</span></div>
+              <div className="pf-pl-row">
+                <span className="pf-pl-label">🚚 Transport {glsDone?'GLS (real)':'GLS (est.)'}{sdCount>0?' + SameDay':''}</span>
+                <span className="pf-pl-val neg-c">-{fmt(effectiveTransportCost)} RON
+                  {sdCount>0&&<span style={{fontSize:9,opacity:.6,marginLeft:4}}>({fmt(glsEffective)}+{fmt(sdEffective)})</span>}
+                </span>
+              </div>
               <div className="pf-pl-row"><span className="pf-pl-label">📣 Marketing {useCPA?`(CPA ${cpaValue} RON)`:''}</span><span className="pf-pl-val neg-c">-{fmt(totalMarketing)} RON</span></div>
               {returnedCount > 0 && (
                 <div className="pf-pl-row returned-row">
@@ -715,7 +780,7 @@ export default function ProfitPage() {
               <div className="pf-card-header">
                 <span className="pf-card-icon">🚚</span>
                 <span className="pf-card-title">Cost transport</span>
-                <span className={`pf-card-status ${glsDone?'ok':''}`}>{glsDone?`✓ ${fmt(glsCost)} RON (${fmt(costPerParcel,2)}/col)`:`Est. ${fmt(transportPerParcel,2)} RON/colet`}</span>
+                <span className={`pf-card-status ${glsDone?'ok':''}`}>{glsDone?`✓ ${fmt(glsCost)} RON${sdDone?' · Total: '+fmt(effectiveTransportCost)+' RON':' ('+fmt(costPerParcel,2)+'/col)'}`:`Est. ${fmt(transportPerParcel,2)} RON/colet`}</span>
               </div>
               <label className="pf-label">Excel lunar GLS (.csv / .xlsx)</label>
               <input type="file" accept=".csv,.xlsx,.xls" onChange={parseGLSExcel} style={{fontSize:12,color:'var(--c-text3)',marginBottom:8}} />
@@ -737,6 +802,25 @@ export default function ProfitPage() {
                   <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>📊 Calculat luna trecută: 2522.34 ÷ 118 = <strong>21.37 RON/colet</strong></div>
                 </>
               )}
+            </div>
+
+            {/* SameDay — auto din Shopify */}
+            <div className="pf-stitle">Transport SameDay</div>
+            <div className="pf-card" style={{borderColor:sdCount>0?'rgba(16,185,129,.25)':'rgba(255,255,255,.06)'}}>
+              <div className="pf-card-header">
+                <span className="pf-card-icon">⚡</span>
+                <span className="pf-card-title">Cost transport SameDay</span>
+                <span className="pf-card-status" style={{color:sdCount>0?'var(--c-green)':'var(--c-text4)'}}>
+                  {sdCount>0?`✓ ${sdCount} colete · ${fmt(sdEffective)} RON`:'0 colete detectate'}
+                </span>
+              </div>
+              <div style={{background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.15)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'var(--c-text3)',marginBottom:10,lineHeight:1.7}}>
+                <div>📦 Comenzi SameDay detectate automat din Shopify: <strong style={{color:'var(--c-green)'}}>{sdCount}</strong></div>
+                <div>📦 Comenzi GLS: <strong>{glsCount}</strong></div>
+              </div>
+              <label className="pf-label">Cost per colet SameDay (RON)</label>
+              <input className="pf-input" type="number" step="0.5" value={sdTransportPerParcel} onChange={e=>setSdTransportPerParcel(parseFloat(e.target.value)||0)} />
+              {sdCount>0&&<div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>{sdCount} × {sdTransportPerParcel} RON = <strong>{fmt(sdEffective)} RON</strong></div>}
             </div>
 
             {/* Marketing */}
@@ -983,7 +1067,9 @@ export default function ProfitPage() {
               {[
                 {label:'Venituri totale',val:fmt(totalRevenue)+' RON',c:'var(--c-orange)'},
                 {label:'Cost produse (COGS)',val:fmt(cogs)+' RON',c:'#3b82f6'},
-                {label:'Transport',val:fmt(effectiveTransportCost)+' RON',c:'var(--c-yellow)'},
+                {label:'Transport GLS',val:fmt(glsEffective)+' RON',c:'var(--c-yellow)'},
+                {label:'Transport SameDay',val:fmt(sdEffective)+' RON',c:'var(--c-yellow)'},
+                {label:'Transport total',val:fmt(effectiveTransportCost)+' RON',c:'var(--c-orange)'},
                 {label:'Marketing',val:fmt(totalMarketing)+' RON',c:'#a855f7'},
                 {label:'Colete refuzate (transport+CPA)',val:fmt(totalRefusedCost)+' RON',c:'var(--c-red)'},
                 {label:'Costuri fixe + variabile',val:fmt(totalFixed+totalOther)+' RON',c:'var(--c-text3)'},
