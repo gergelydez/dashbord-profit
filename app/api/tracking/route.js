@@ -1,110 +1,152 @@
 import { NextResponse } from 'next/server';
 
-// ── Mapare statusuri GLS → statusul nostru intern ──
+// Cache în memorie — nu verificăm același AWB mai des de 30 min
+const trackingCache = new Map();
+const CACHE_TTL = 30 * 60 * 1000; // 30 minute
+
+// ── GLS România status codes ──
+// Documentație: https://gls-group.eu/app/service/open/rest/RO/ro/rstt001
 const GLS_STATUS_MAP = {
-  // Coduri GLS cunoscute
-  'DELIVERED':           'delivered',
-  'DELIVERED_PS':        'delivered',    // livrat la punct de ridicare
-  'IN_TRANSIT':          'in_transit',
-  'OUT_FOR_DELIVERY':    'out_for_delivery',
-  'PICKED_UP':           'in_transit',   // preluat de curier
-  'INWAREHOUSE':         'in_transit',   // în depozit GLS
-  'INDELIVERY':          'out_for_delivery',
-  'NOTDELIVERED':        'failed_attempt',
-  'RETURNED':            'returned',
-  'CANCELLED':           'failure',
+  // Text descriptiv (evtDscr)
+  'DELIVERED':              'delivered',
+  'DELIVERED_PS':           'delivered',
+  'PICKED_UP':              'in_transit',
+  'IN_TRANSIT':             'in_transit',
+  'IN_WAREHOUSE':           'in_transit',
+  'INWAREHOUSE':            'in_transit',
+  'OUT_FOR_DELIVERY':       'out_for_delivery',
+  'INDELIVERY':             'out_for_delivery',
+  'AT_DELIVERY':            'out_for_delivery',
+  'NOT_DELIVERED':          'failed_attempt',
+  'NOTDELIVERED':           'failed_attempt',
+  'RETURN_TO_SENDER':       'returned',
+  'RETURNED':               'returned',
+  'CANCELLED':              'failure',
   // Coduri numerice GLS
-  '1':  'in_transit',    // Colet preluat
-  '2':  'in_transit',    // În tranzit
-  '3':  'out_for_delivery', // În livrare
-  '4':  'delivered',     // Livrat
-  '5':  'failed_attempt',// Tentativă eșuată
-  '6':  'returned',      // Retur
-  '7':  'in_transit',    // În depozit
+  '0': 'in_transit',   // AWB creat
+  '1': 'in_transit',   // Preluat de la expeditor
+  '2': 'in_transit',   // Ajuns în depozit
+  '3': 'out_for_delivery', // Ieșit pentru livrare
+  '4': 'delivered',    // Livrat
+  '5': 'failed_attempt',  // Tentativă eșuată
+  '6': 'returned',     // Retur
+  '7': 'in_transit',   // Reprogramat
 };
 
-// ── Mapare statusuri Sameday → statusul nostru intern ──
+// ── Sameday status codes ──
 const SAMEDAY_STATUS_MAP = {
-  '1':   'in_transit',      // Awb creat
-  '2':   'in_transit',      // Preluat de curier
-  '3':   'in_transit',      // În tranzit
-  '4':   'out_for_delivery',// În livrare
-  '5':   'delivered',       // Livrat
-  '6':   'failed_attempt',  // Tentativă eșuată
-  '7':   'returned',        // Retur în curs
-  '8':   'returned',        // Retur finalizat
-  '9':   'failed_attempt',  // Livrare parțială
-  '10':  'in_transit',      // Reprogramat
-  '11':  'failure',         // Anulat
-  '24':  'out_for_delivery',// La curier pentru livrare
-  '25':  'in_transit',      // Sosit în depozit local
+  '1':  'in_transit',       // AWB creat
+  '2':  'in_transit',       // Preluat de curier
+  '3':  'in_transit',       // În tranzit
+  '4':  'out_for_delivery', // Ieșit pentru livrare
+  '5':  'delivered',        // Livrat
+  '6':  'failed_attempt',   // Tentativă eșuată
+  '7':  'returned',         // Retur în curs
+  '8':  'returned',         // Retur finalizat
+  '9':  'failed_attempt',   // Livrare parțială
+  '10': 'in_transit',       // Reprogramat
+  '11': 'failure',          // Anulat
+  '24': 'out_for_delivery', // La curier local
+  '25': 'in_transit',       // Sosit depozit local
 };
 
 async function trackGLS(awb) {
+  // Check cache
+  const cacheKey = `gls_${awb}`;
+  const cached = trackingCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return { ...cached.data, fromCache: true };
+  }
+
   try {
     const url = `https://gls-group.eu/app/service/open/rest/RO/ro/rstt001?match=${awb}`;
     const res = await fetch(url, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0',
+        'User-Agent': 'Mozilla/5.0 (compatible; GLAMX-Dashboard)',
+        'Origin': 'https://gls-group.eu',
       },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(10000),
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.log('[GLS TRACK] Error:', res.status, awb);
+      return null;
+    }
+
     const data = await res.json();
+    console.log('[GLS TRACK] Raw response for', awb, ':', JSON.stringify(data).slice(0, 200));
 
-    // GLS returnează { tuStatus: [...], ...}
-    const events = data.tuStatus?.[0]?.history || [];
-    if (!events.length) return null;
+    // GLS API response structure: { tuStatus: [{ history: [...], progressBar: {...} }] }
+    const tuStatus = data.tuStatus?.[0];
+    if (!tuStatus) return null;
 
-    // Ultimul eveniment = statusul curent
-    const last = events[events.length - 1];
-    const statusCode = (last.evtDscr || last.status || '').toUpperCase();
-    const mapped = GLS_STATUS_MAP[statusCode] || 'in_transit';
+    const history = tuStatus.history || [];
+    const progressBar = tuStatus.progressBar || {};
 
-    return {
+    // Status curent din progressBar (mai fiabil) sau ultimul eveniment
+    const currentStatus = progressBar.statusText || '';
+    const statusCode = String(progressBar.status || '');
+
+    // Determinăm statusul mapped
+    let mapped = GLS_STATUS_MAP[currentStatus.toUpperCase()] 
+              || GLS_STATUS_MAP[statusCode]
+              || 'in_transit';
+
+    // Ultimul eveniment din history
+    const lastEvent = history.length > 0 ? history[history.length - 1] : null;
+    if (lastEvent) {
+      const evtCode = String(lastEvent.evtDscr || '').toUpperCase();
+      const altMapped = GLS_STATUS_MAP[evtCode];
+      if (altMapped) mapped = altMapped;
+    }
+
+    const result = {
       status: mapped,
-      statusRaw: last.evtDscr || '',
-      lastUpdate: last.date || last.evtDateTime || '',
-      location: last.address?.city || last.location || '',
-      events: events.slice(-5).reverse().map(e => ({
+      statusRaw: currentStatus || lastEvent?.evtDscr || '',
+      lastUpdate: lastEvent?.date || lastEvent?.evtDateTime || '',
+      location: lastEvent?.address?.city || lastEvent?.depotName || '',
+      events: history.slice(-5).reverse().map(e => ({
         date: e.date || e.evtDateTime || '',
-        description: e.evtDscr || e.description || '',
-        location: e.address?.city || e.location || '',
+        description: e.evtDscr || '',
+        location: e.address?.city || e.depotName || '',
       })),
     };
-  } catch {
+
+    // Cache rezultatul
+    trackingCache.set(cacheKey, { data: result, ts: Date.now() });
+    return result;
+  } catch (e) {
+    console.log('[GLS TRACK] Exception:', e.message, 'awb:', awb);
     return null;
   }
 }
 
 async function trackSameday(awb) {
+  const cacheKey = `sd_${awb}`;
+  const cached = trackingCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return { ...cached.data, fromCache: true };
+  }
+
   try {
-    // Sameday API public - unele endpoint-uri nu necesită auth
     const url = `https://api.sameday.ro/api/public/awb/${awb}/awb-history`;
     const res = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0',
-      },
-      signal: AbortSignal.timeout(8000),
+      headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(10000),
     });
 
-    if (!res.ok) {
-      // Fallback: tracking page scraping
-      return await trackSamedayScrape(awb);
-    }
-
+    if (!res.ok) return null;
     const data = await res.json();
+
     const history = data.awbHistory || data.history || [];
     if (!history.length) return null;
 
-    const last = history[0]; // Sameday returnează descrescător
+    const last = history[0];
     const statusCode = String(last.statusId || last.status || '');
     const mapped = SAMEDAY_STATUS_MAP[statusCode] || 'in_transit';
 
-    return {
+    const result = {
       status: mapped,
       statusRaw: last.statusLabel || last.description || '',
       lastUpdate: last.statusDate || last.date || '',
@@ -115,38 +157,15 @@ async function trackSameday(awb) {
         location: e.county || e.transitLocation || '',
       })),
     };
+
+    trackingCache.set(cacheKey, { data: result, ts: Date.now() });
+    return result;
   } catch {
     return null;
   }
 }
 
-async function trackSamedayScrape(awb) {
-  try {
-    const url = `https://www.sameday.ro/tracking?awb=${awb}`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-
-    // Extrage statusul din HTML
-    const statusMatch = html.match(/class="[^"]*status[^"]*"[^>]*>([^<]+)</i);
-    if (!statusMatch) return null;
-
-    const statusText = statusMatch[1].trim().toLowerCase();
-    let mapped = 'in_transit';
-    if (statusText.includes('livrat')) mapped = 'delivered';
-    else if (statusText.includes('livrare')) mapped = 'out_for_delivery';
-    else if (statusText.includes('retur')) mapped = 'returned';
-    else if (statusText.includes('anulat')) mapped = 'failure';
-
-    return { status: mapped, statusRaw: statusMatch[1].trim(), lastUpdate: '', location: '', events: [] };
-  } catch {
-    return null;
-  }
-}
-
+// GET: tracking single AWB
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const awb = searchParams.get('awb');
@@ -155,51 +174,46 @@ export async function GET(request) {
   if (!awb) return NextResponse.json({ error: 'AWB lipsă' }, { status: 400 });
 
   let result = null;
-
-  if (courier.includes('gls')) {
-    result = await trackGLS(awb);
-  } else if (courier.includes('sameday') || courier.includes('same day')) {
-    result = await trackSameday(awb);
-  } else {
-    // Încearcă ambii
-    result = await trackGLS(awb) || await trackSameday(awb);
-  }
-
-  if (!result) {
-    return NextResponse.json({
-      status: null,
-      error: 'Nu am putut obține statusul de la curier',
-      awb, courier,
-    });
-  }
+  if (courier.includes('gls')) result = await trackGLS(awb);
+  else if (courier.includes('sameday')) result = await trackSameday(awb);
+  else result = await trackGLS(awb) || await trackSameday(awb);
 
   return NextResponse.json({ ...result, awb, courier });
 }
 
-// POST pentru tracking multiplu (batch) - folosit la sincronizare
+// POST: batch tracking pentru mai multe comenzi
 export async function POST(request) {
   try {
     const { orders } = await request.json();
     if (!orders?.length) return NextResponse.json({ results: [] });
 
-    // Procesăm maxim 20 comenzi în paralel (evităm rate limiting)
-    const batch = orders.slice(0, 20);
-    const results = await Promise.allSettled(
-      batch.map(async ({ id, awb, courier }) => {
-        if (!awb) return { id, status: null };
-        let tracking = null;
-        if (courier?.includes('gls')) tracking = await trackGLS(awb);
-        else if (courier?.includes('sameday')) tracking = await trackSameday(awb);
-        else tracking = await trackGLS(awb) || await trackSameday(awb);
-        return { id, awb, ...tracking };
-      })
-    );
+    // Max 15 concurrent pentru a nu supraîncărca API-ul GLS
+    const results = [];
+    const batches = [];
+    for (let i = 0; i < orders.length; i += 5) {
+      batches.push(orders.slice(i, i + 5));
+    }
 
-    return NextResponse.json({
-      results: results.map((r, i) =>
-        r.status === 'fulfilled' ? r.value : { id: batch[i].id, status: null, error: r.reason?.message }
-      ),
-    });
+    for (const batch of batches) {
+      const batchResults = await Promise.allSettled(
+        batch.map(async ({ id, awb, courier }) => {
+          if (!awb) return { id, status: null };
+          let tracking = null;
+          const c = (courier || '').toLowerCase();
+          if (c.includes('gls')) tracking = await trackGLS(awb);
+          else if (c.includes('sameday')) tracking = await trackSameday(awb);
+          else tracking = await trackGLS(awb);
+          return { id, awb, courier, ...tracking };
+        })
+      );
+      results.push(...batchResults.map((r, i) =>
+        r.status === 'fulfilled' ? r.value : { id: batch[i].id, status: null }
+      ));
+      // Pauză mică între batch-uri
+      if (batches.length > 1) await new Promise(r => setTimeout(r, 500));
+    }
+
+    return NextResponse.json({ results });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
