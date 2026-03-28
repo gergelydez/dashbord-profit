@@ -152,17 +152,28 @@ export default function WhatsAppPage() {
   };
 
   const getPhone = (order) => {
-    // Încearcă să ia telefonul din adresă sau note
     const addr = order.shipping_address || order.billing_address || {};
-    let phone = addr.phone || order.phone || '';
+    // Încearcă toate sursele posibile de telefon
+    let phone = order.phone || addr.phone || '';
     if (!phone) {
-      const note = (order.note_attributes || []).find(a => a.name?.toLowerCase().includes('phone') || a.name?.toLowerCase().includes('telefon'));
+      const note = (order.note_attributes || []).find(a =>
+        a.name?.toLowerCase().includes('phone') ||
+        a.name?.toLowerCase().includes('telefon') ||
+        a.name?.toLowerCase().includes('tel')
+      );
       phone = note?.value || '';
     }
-    // Normalizăm numărul RO: 07xx → +407xx
-    phone = phone.replace(/\s/g, '').replace(/[-().]/g, '');
-    if (phone.startsWith('07') || phone.startsWith('02')) phone = '+4' + phone;
-    if (phone.startsWith('4') && !phone.startsWith('+')) phone = '+' + phone;
+    if (!phone) return '';
+    // Normalizăm: scoatem spații și caractere speciale
+    phone = phone.replace(/[\s\-().+]/g, '');
+    // România: 07xx sau 02xx → +407xx
+    if (phone.startsWith('07') || phone.startsWith('02') || phone.startsWith('03')) {
+      phone = '+4' + phone;
+    } else if (phone.startsWith('40') && !phone.startsWith('+')) {
+      phone = '+' + phone;
+    } else if (!phone.startsWith('+')) {
+      phone = '+4' + phone; // asumăm RO
+    }
     return phone;
   };
 
@@ -342,8 +353,19 @@ export default function WhatsAppPage() {
                 <div><label className="lbl">Account SID</label><input className="inp" value={config.twilioSid} placeholder="ACxxxx..." onChange={e=>setConfig(c=>({...c,twilioSid:e.target.value}))}/></div>
                 <div><label className="lbl">Auth Token</label><input className="inp" type="password" value={config.twilioToken} onChange={e=>setConfig(c=>({...c,twilioToken:e.target.value}))}/></div>
               </div>
-              <div><label className="lbl">Număr WhatsApp Twilio (format: whatsapp:+14155238886)</label>
-                <input className="inp" value={config.twilioFrom} placeholder="whatsapp:+14155238886" onChange={e=>setConfig(c=>({...c,twilioFrom:e.target.value}))}/></div>
+              <div>
+                <label className="lbl">Număr WhatsApp Twilio</label>
+                <input className="inp" value={config.twilioFrom} placeholder="+14155238886 sau whatsapp:+14155238886"
+                  onChange={e=>{
+                    let v = e.target.value.trim();
+                    // Auto-adaugă prefixul whatsapp: dacă lipsește
+                    if (v && !v.startsWith('whatsapp:')) v = 'whatsapp:' + v;
+                    setConfig(c=>({...c,twilioFrom:v}));
+                  }}/>
+                <div style={{fontSize:10,color:'#25d366',marginTop:3}}>
+                  Sandbox: whatsapp:+14155238886 · Se salvează automat cu prefix
+                </div>
+              </div>
             </div>
             <div style={{marginBottom:12}}>
               <div style={{fontSize:11,fontWeight:700,color:'#94a3b8',marginBottom:8}}>Shopify</div>
