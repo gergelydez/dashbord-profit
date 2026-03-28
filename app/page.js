@@ -736,6 +736,19 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   // Dar getFinalStatus e definit mai jos — folosim trackingOverrides direct aici
   // Folosim o.ts direct din allOrders (care include overrides aplicate)
   // Nu mai recalculăm — o.ts e deja corect după applyTrackingOverrides
+  // GLS status: prioritizăm Excel din MyGLS > Shopify/xConnector
+  const getGlsStatusFinal = (o) => {
+    const awb = (o.trackingNo || '').trim();
+    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
+    return o.ts;
+  };
+
+  const getFinalStatus = (o) => {
+    if (o.courier === 'gls') return getGlsStatusFinal(o);
+    if (o.courier === 'sameday') return getSdStatus(o) || o.ts;
+    return o.ts;
+  };
+
   const cnt = s => orders.filter(o=>getFinalStatus(o)===s).length;
   const sum = ss => orders.filter(o=>ss.includes(getFinalStatus(o))).reduce((a,o)=>a+o.total,0);
   const incurs=cnt('incurs'), outfor=cnt('outfor');
@@ -755,20 +768,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     return false;
   };
 
-  // GLS status: prioritizăm Excel din MyGLS > Shopify/xConnector
-  const getGlsStatusFinal = (o) => {
-    const awb = (o.trackingNo || '').trim();
-    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
-    return o.ts;
-  };
-
-  const getFinalStatus = (o) => {
-    // o.ts e deja corect — include tracking overrides aplicate la load/sync
-    // Prioritate suplimentară: GLS Excel și Sameday Excel
-    if (o.courier === 'gls') return getGlsStatusFinal(o);
-    if (o.courier === 'sameday') return getSdStatus(o) || o.ts;
-    return o.ts;
-  };
+  // getGlsStatusFinal și getFinalStatus mutate sus
 
   // orders = comenzile din perioadă cu overrides aplicate (sursa corectă pentru KPI)
   const livrateOrders = orders.filter(o => getFinalStatus(o) === 'livrat');
@@ -1473,3 +1473,4 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
+
