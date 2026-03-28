@@ -348,9 +348,7 @@ export default function ProfitPage() {
       reader.readAsArrayBuffer(file);
     } else {
       reader.onload = (ev) => {
-        const lines = ev.target.result.split(/
-?
-/).filter(l=>l.trim());
+        const lines = ev.target.result.split(/\r?\n/).filter(l=>l.trim());
         const hdrs = splitCSV(lines[0]).map(h=>h.replace(/"/g,'').trim().toLowerCase());
         const dataRows = lines.slice(1).map(l=>{ const vals=splitCSV(l); const o={}; hdrs.forEach((h,i)=>o[h]=(vals[i]||'').replace(/"/g,'').trim()); return o; }).filter(r=>Object.values(r).some(v=>v));
         processData(hdrs, dataRows);
