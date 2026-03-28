@@ -75,12 +75,20 @@ function toRestOrder(node) {
       'LABEL_PRINTED':'label_printed',
       'CONFIRMED':'confirmed',
       'NOT_DELIVERED':'failure',
-      'FULFILLED':'delivered',
+      'FULFILLED':'confirmed', // AWB creat + predat curier = în tranzit, NU livrat
     };
     const ds = (f.displayStatus||'').toUpperCase();
+    const rawStatus = f.displayStatus || '';
     const mappedStatus = ssMap[ds] || ds.toLowerCase();
-    // Log pentru statusuri necunoscute - ajută la debugging
-    if (ds && !ssMap[ds]) console.log('[GLS STATUS UNKNOWN]', ds, 'order:', node.name);
+    // Log TOATE statusurile pentru debugging
+    if (ds) console.log('[FULFILLMENT STATUS]', 
+      'order:', node.name,
+      '| displayStatus:', rawStatus,
+      '| mapped:', mappedStatus,
+      '| AWB:', ti.number || '-',
+      '| courier:', ti.company || '-'
+    );
+    if (ds && !ssMap[ds]) console.log('[STATUS NECUNOSCUT - NEADAUGAT IN MAP]', ds, 'order:', node.name);
     return {
       updated_at: f.updatedAt, created_at: f.createdAt,
       tracking_number: ti.number || '', tracking_company: ti.company || '',
@@ -191,3 +199,4 @@ export async function OPTIONS() {
     headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': '*' },
   });
 }
+
