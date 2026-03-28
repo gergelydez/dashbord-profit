@@ -1,5 +1,3 @@
-import './globals.css'
-
 export const metadata = {
   title: 'GLAMX Dashboard',
   description: 'Dashboard comenzi GLAMX - Shopify Live',
