@@ -617,21 +617,33 @@ export default function Dashboard() {
       results.forEach(r => { if (r.id && r.status) trackMap[r.id] = r; });
 
       let changed = 0;
-      setAllOrders(prev => prev.map(o => {
-        const t = trackMap[o.id];
-        if (!t || !t.status) return o;
-        const liveTs =
-          t.status === 'delivered'         ? 'livrat' :
-          t.status === 'out_for_delivery'  ? 'outfor' :
-          t.status === 'in_transit'        ? 'incurs' :
-          t.status === 'failed_attempt'    ? 'outfor' :
-          (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
-        if (liveTs !== o.ts) changed++;
-        return { ...o, ts: liveTs,
-          trackingStatus: t.statusRaw || '',
-          trackingLastUpdate: t.lastUpdate || '',
-          trackingLocation: t.location || '' };
-      }));
+      setAllOrders(prev => {
+        const updated = prev.map(o => {
+          const t = trackMap[o.id];
+          if (!t || !t.status) return o;
+          const liveTs =
+            t.status === 'delivered'         ? 'livrat' :
+            t.status === 'out_for_delivery'  ? 'outfor' :
+            t.status === 'in_transit'        ? 'incurs' :
+            t.status === 'failed_attempt'    ? 'outfor' :
+            (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
+          if (liveTs !== o.ts) changed++;
+          return { ...o, ts: liveTs,
+            trackingStatus: t.statusRaw || '',
+            trackingLastUpdate: t.lastUpdate || '',
+            trackingLocation: t.location || '',
+            // Dacă livrat, setăm fulfilledAt dacă nu există
+            fulfilledAt: (liveTs === 'livrat' && !o.fulfilledAt)
+              ? new Date().toISOString() : o.fulfilledAt,
+          };
+        });
+        // Salvăm în localStorage ca să persiste după refresh
+        try {
+          const cacheKey = 'gx_orders_' + (ls.get('gx_d')||'');
+          ls.set(cacheKey, JSON.stringify(updated));
+        } catch(e) {}
+        return updated;
+      });
 
       setLastTrackingCheck(new Date());
       if (!silent) {
