@@ -736,8 +736,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   // Dar getFinalStatus e definit mai jos — folosim trackingOverrides direct aici
   // Folosim o.ts direct din allOrders (care include overrides aplicate)
   // Nu mai recalculăm — o.ts e deja corect după applyTrackingOverrides
-  const cnt = s => orders.filter(o=>o.ts===s).length;
-  const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
+  const cnt = s => orders.filter(o=>getFinalStatus(o)===s).length;
+  const sum = ss => orders.filter(o=>ss.includes(getFinalStatus(o))).reduce((a,o)=>a+o.total,0);
   const incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
@@ -770,12 +770,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     return o.ts;
   };
 
-  const livrateOrders = allOrders.filter(o => {
-    const finalTs = getFinalStatus(o);
-    if (finalTs !== 'livrat') return false;
-    const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
-    return fd >= rangeFromD && fd <= rangeToD;
-  });
+  // orders = comenzile din perioadă cu overrides aplicate (sursa corectă pentru KPI)
+  const livrateOrders = orders.filter(o => getFinalStatus(o) === 'livrat');
   const livrate = livrateOrders.length;
   const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
   const sICOD  = livrateOrders.filter(o => !isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
