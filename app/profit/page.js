@@ -233,7 +233,7 @@ function importCostsFromXLSX(file, onSuccess) {
 }
 
 export default function ProfitPage() {
-  const [preset, setPreset] = useState('last_month');
+  const [preset, setPreset] = useState('month');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [activeTab, setActiveTab] = useState('summary');
