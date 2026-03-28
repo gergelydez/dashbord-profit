@@ -283,12 +283,13 @@ export default function Dashboard() {
     try {
       const d30 = toISO(new Date(Date.now() - 30*24*60*60*1000));
       fast = await fetchOrdersRange(d30, !!forceMode);
-      setAllOrders(fast);
+      const fastWithOverrides = applyTrackingOverrides(fast);
+      setAllOrders(fastWithOverrides);
       setConnected(true);
       setFetchedFrom(d30);
       const now = new Date();
       setLastFetch(now);
-      ls.set('gx_orders_60', JSON.stringify(fast));
+      ls.set('gx_orders_60', JSON.stringify(fastWithOverrides));
       ls.set('gx_fetch_time', now.toISOString());
       ls.set('gx_fetched_from', d30);
       applyDateFilter(fast, preset, customFrom, customTo);
@@ -306,7 +307,8 @@ export default function Dashboard() {
       const d60 = toISO(new Date(Date.now() - 60*24*60*60*1000));
       const mid = await fetchOrdersRange(d60, false);
       const fastIds = new Set(fast.map(o => o.id));
-      const merged60 = [...fast, ...mid.filter(o => !fastIds.has(o.id))];
+      const merged60raw = [...fast, ...mid.filter(o => !fastIds.has(o.id))];
+      const merged60 = applyTrackingOverrides(merged60raw);
       setAllOrders(merged60);
       setFetchedFrom(d60);
       ls.set('gx_orders_all', JSON.stringify(merged60));
@@ -318,7 +320,8 @@ export default function Dashboard() {
         const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
         const oldOrders = await fetchOrdersRange(d365, false);
         const ids60 = new Set(merged60.map(o => o.id));
-        const merged = [...merged60, ...oldOrders.filter(o => !ids60.has(o.id))];
+        const mergedRaw = [...merged60, ...oldOrders.filter(o => !ids60.has(o.id))];
+        const merged = applyTrackingOverrides(mergedRaw);
         setAllOrders(merged);
         setFetchedFrom(d365);
         ls.set('gx_orders_all', JSON.stringify(merged));
@@ -637,7 +640,12 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             t.status === 'in_transit'        ? 'incurs' :
             t.status === 'failed_attempt'    ? 'outfor' :
             (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
-          if (liveTs !== o.ts) changed++;
+          if (liveTs !== o.ts) {
+            changed++;
+            // Salvăm override persistent — nu va fi suprascris de Shopify sync
+            trackingOverrides.update(o.id, { ts: liveTs, statusRaw: t.statusRaw,
+              lastUpdate: t.lastUpdate, location: t.location });
+          }
           return { ...o, ts: liveTs,
             trackingStatus: t.statusRaw || '',
             trackingLastUpdate: t.lastUpdate || '',
