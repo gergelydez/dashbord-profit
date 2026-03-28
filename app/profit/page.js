@@ -142,28 +142,54 @@ function applyTrackingOverrides(orders) {
   } catch { return orders; }
 }
 
-// getLivrateInPeriod — identic cu dashboard modul Create + filter livrat:
-// filtreaza dupa createdAt in perioada, apoi ts === 'livrat'
+// ── getFinalStatus — copiat identic din page.js ──────────────────
+// Citeste glsAwbMap si sdAwbMap din localStorage
+function getGlsAwbMap() {
+  try { const s = localStorage.getItem('gls_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+}
+function getSdAwbMap() {
+  try { const s = localStorage.getItem('sd_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+}
+function getFinalStatus(o, glsAwbMap, sdAwbMap) {
+  if (o.courier === 'gls') {
+    const awb = (o.trackingNo || '').trim();
+    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
+    return o.ts;
+  }
+  if (o.courier === 'sameday') {
+    const awb = (o.trackingNo || '').trim();
+    if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
+    return o.ts !== 'pending' ? o.ts : null;
+  }
+  return o.ts;
+}
+
+// getLivrateInPeriod — identic cu dashboard:
+// createdAt in perioada + getFinalStatus === 'livrat' (include GLS AWB map)
 function getLivrateInPeriod(allOrders, preset, customFrom, customTo) {
   const { from, to } = getRange(preset, customFrom, customTo);
   const fromD = new Date(from + 'T00:00:00');
   const toD   = new Date(to   + 'T23:59:59');
+  const glsMap = getGlsAwbMap();
+  const sdMap  = getSdAwbMap();
   return allOrders.filter(o => {
-    if (o.ts !== 'livrat') return false;
     const created = new Date(o.createdAt || o.created_at || '');
-    return created >= fromD && created <= toD;
+    if (created < fromD || created > toD) return false;
+    return getFinalStatus(o, glsMap, sdMap) === 'livrat';
   });
 }
 
-// getReturInPeriod — comenzi create in perioada cu ts=retur
+// getReturInPeriod — createdAt in perioada + getFinalStatus === 'retur'
 function getReturInPeriod(allOrders, preset, customFrom, customTo) {
   const { from, to } = getRange(preset, customFrom, customTo);
   const fromD = new Date(from + 'T00:00:00');
   const toD   = new Date(to   + 'T23:59:59');
+  const glsMap = getGlsAwbMap();
+  const sdMap  = getSdAwbMap();
   return allOrders.filter(o => {
-    if (o.ts !== 'retur') return false;
     const created = new Date(o.createdAt || o.created_at || '');
-    return created >= fromD && created <= toD;
+    if (created < fromD || created > toD) return false;
+    return getFinalStatus(o, glsMap, sdMap) === 'retur';
   });
 }
 const TVA_RATE = 0.21;
@@ -311,7 +337,7 @@ export default function ProfitPage() {
   // ── FETCH SHOPIFY ──
   // Re-filtreaza comenzile cand se schimba luna
   useEffect(() => {
-    if (!month) return;
+    if (!preset) return;
     const g = (key) => localStorage.getItem(key);
     const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
     if (!sord) return;
@@ -330,10 +356,9 @@ export default function ProfitPage() {
     if (!domain || !token) { alert('Conectează-te mai întâi la Shopify din pagina principală!'); return; }
     setShopifyLoading(true);
     try {
-      const [year, m] = month.split('-');
-      const daysInMonth = new Date(year, m, 0).getDate();
+      const { from: fetchFrom, to: fetchTo } = getRange(preset, customFrom, customTo);
       const fields = 'id,name,financial_status,fulfillment_status,fulfillments,cancelled_at,created_at,total_price,line_items,note_attributes,tags';
-      const res = await fetch(`/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${year}-${m}-01T00:00:00&created_at_max=${year}-${m}-${daysInMonth}T23:59:59&fields=${fields}&force=1`);
+      const res = await fetch(`/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${fetchFrom}T00:00:00&created_at_max=${fetchTo}T23:59:59&fields=${fields}&force=1`);
       const data = await res.json();
       const orders = (data.orders || []).filter(o => !o.cancelled_at && o.financial_status !== 'voided');
       const processed = orders.map(o => {
@@ -503,10 +528,11 @@ export default function ProfitPage() {
 
   // Transport
   // Detect courier per order from Shopify data
+  const glsMapC = getGlsAwbMap();
+  const sdMapC  = getSdAwbMap();
   const sdOrders   = deliveredOrders.filter(o => o.courier === 'sameday');
-  const glsOrders  = deliveredOrders.filter(o => o.courier === 'gls');
-  const restOrders = deliveredOrders.filter(o => !o.courier || o.courier === 'unknown' || o.courier === '' || o.courier === 'other');
-  const glsCount   = glsOrders.length + restOrders.length; // necunoscutii merg la GLS ca fallback
+  const glsOrders  = deliveredOrders.filter(o => o.courier === 'gls' || !o.courier || o.courier === 'unknown' || o.courier === '');
+  const glsCount   = glsOrders.length;
   const sdCount    = sdOrders.length;
   const totalParcelCount = totalOrders;
 
