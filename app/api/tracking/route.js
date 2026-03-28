@@ -48,7 +48,7 @@ async function getGLSToken() {
   } catch(e) { console.log('[GLS AUTH]', e.message); return null; }
 }
 
-async function trackGLS(awb) {
+async function trackGLS(awb, createdAt = null) {
   const cacheKey = `gls_${awb}`;
   const cached = trackingCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
@@ -67,9 +67,17 @@ async function trackGLS(awb) {
 
     const parcel = data?.parcels?.[0] || data?.[0] || data;
 
-    // E_404_01 = colet nu mai există în sistem = livrat și arhivat
+    // E_404_01 = AWB negăsit/arhivat în GLS
+    // Dacă comanda e mai veche de 14 zile → aproape sigur livrat și arhivat
+    // Dacă e mai nouă → AWB poate nu e înregistrat încă în GLS
     if (parcel?.errorCode === 'E_404_01') {
-      return { status: 'delivered', statusRaw: 'ARCHIVED', lastUpdate: '', location: '' };
+      if (createdAt) {
+        const ageDays = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24);
+        if (ageDays > 14) {
+          return { status: 'delivered', statusRaw: 'ARCHIVED_GLS', lastUpdate: '', location: '' };
+        }
+      }
+      return null; // Comandă recentă → nu schimbăm statusul
     }
 
     const events = parcel?.events || [];
@@ -161,15 +169,24 @@ export async function GET(request) {
       const data = bestToken ? { access_token: bestToken } : null;
       results.oauth = { found: !!bestToken };
 
-      // Step 2: tracking cu token
+      // Step 2: tracking cu token - răspuns COMPLET
       if (r.ok && data?.access_token) {
-        const tr = await fetch(`${TRACKING_BASE}/tracking/simple/trackids/${awb}`, {
-          headers: { 'Authorization': `Bearer ${data.access_token}`, 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(10000),
-        });
-        const ttext = await tr.text();
-        let tdata; try { tdata = JSON.parse(ttext); } catch { tdata = ttext.slice(0,300); }
-        results.tracking = { status: tr.status, data: tdata };
+        // Testăm ambele endpoint-uri
+        for (const endpoint of [
+          `${TRACKING_BASE}/tracking/simple/trackids/${awb}`,
+          `${TRACKING_BASE}/tracking/simple/references/${awb}`,
+        ]) {
+          const tr = await fetch(endpoint, {
+            headers: { 'Authorization': `Bearer ${data.access_token}`, 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(10000),
+          });
+          const ttext = await tr.text();
+          let tdata; try { tdata = JSON.parse(ttext); } catch { tdata = ttext.slice(0,500); }
+          results['tracking_' + endpoint.split('/').pop()] = { 
+            status: tr.status, 
+            data: tdata  // Răspuns COMPLET netrunchiat
+          };
+        }
       }
     } catch(e) { results.error = e.message; }
 
@@ -199,10 +216,10 @@ export async function POST(request) {
     for (let i = 0; i < orders.length; i += 5) {
       const batch = orders.slice(i, i + 5);
       const batchRes = await Promise.allSettled(
-        batch.map(async ({ id, awb, courier }) => {
+        batch.map(async ({ id, awb, courier, createdAt }) => {
           if (!awb) return { id, status: null };
           const t = (courier||'').toLowerCase().includes('sameday')
-            ? await trackSameday(awb) : await trackGLS(awb);
+            ? await trackSameday(awb) : await trackGLS(awb, createdAt);
           return { id, awb, courier, ...t };
         })
       );
@@ -216,3 +233,4 @@ export async function POST(request) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
+
