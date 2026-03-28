@@ -710,8 +710,17 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
 
   // ── KPI ──
   const n = orders.length;
-  const cnt = s => orders.filter(o=>o.ts===s).length;
-  const sum = ss => orders.filter(o=>ss.includes(o.ts)).reduce((a,o)=>a+o.total,0);
+  // Folosim getFinalStatus pentru KPI — nu o.ts direct
+  // Dar getFinalStatus e definit mai jos — folosim trackingOverrides direct aici
+  const _ov = trackingOverrides.get();
+  const _getFinal = (o) => {
+    if (_ov[o.id]) return _ov[o.id].ts;
+    if (o.courier==='gls' && glsAwbMap[(o.trackingNo||'').trim()]) return glsAwbMap[(o.trackingNo||'').trim()];
+    if (o.courier==='sameday') { try { const sdMap=JSON.parse(ls.get('sd_awb_map')||'{}'); const s=sdMap[(o.trackingNo||'').trim()]; if(s) return s; } catch{} }
+    return o.ts;
+  };
+  const cnt = s => orders.filter(o=>_getFinal(o)===s).length;
+  const sum = ss => orders.filter(o=>ss.includes(_getFinal(o))).reduce((a,o)=>a+o.total,0);
   const incurs=cnt('incurs'), outfor=cnt('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
@@ -737,9 +746,14 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   };
 
   const getFinalStatus = (o) => {
-    // Prioritate: GLS Excel → Sameday Excel → Tracking live → Shopify/xConnector
+    // Prioritate 1: Tracking override persistent (din GLS/Sameday API live)
+    const ov = trackingOverrides.get();
+    if (ov[o.id]) return ov[o.id].ts;
+    // Prioritate 2: GLS Excel import
     if (o.courier === 'gls') return getGlsStatusFinal(o);
+    // Prioritate 3: Sameday Excel import
     if (o.courier === 'sameday') return getSdStatus(o) || o.ts;
+    // Fallback: Shopify/xConnector
     return o.ts;
   };
 
