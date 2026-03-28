@@ -592,6 +592,68 @@ export default function Dashboard() {
   };
 
   const disconnect = () => { setOrders([]); setConnected(false); setError(''); ls.del('gx_t'); };
+
+  // ── TRACKING LIVE GLS / Sameday ──
+  const refreshTracking = async (silent = false) => {
+    const activeOrders = allOrders.filter(o =>
+      ['incurs','outfor','pending'].includes(o.ts) && o.trackingNo
+    );
+    if (!activeOrders.length) {
+      if (!silent) alert('Nicio comandă activă cu AWB pentru tracking.');
+      return;
+    }
+    setTrackingLoading(true);
+    try {
+      const res = await fetch('/api/tracking', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          orders: activeOrders.map(o => ({ id: o.id, awb: o.trackingNo, courier: o.courier }))
+        })
+      });
+      const data = await res.json();
+      const results = data.results || [];
+      const trackMap = {};
+      results.forEach(r => { if (r.id && r.status) trackMap[r.id] = r; });
+
+      let changed = 0;
+      setAllOrders(prev => prev.map(o => {
+        const t = trackMap[o.id];
+        if (!t || !t.status) return o;
+        const liveTs =
+          t.status === 'delivered'         ? 'livrat' :
+          t.status === 'out_for_delivery'  ? 'outfor' :
+          t.status === 'in_transit'        ? 'incurs' :
+          t.status === 'failed_attempt'    ? 'outfor' :
+          (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
+        if (liveTs !== o.ts) changed++;
+        return { ...o, ts: liveTs,
+          trackingStatus: t.statusRaw || '',
+          trackingLastUpdate: t.lastUpdate || '',
+          trackingLocation: t.location || '' };
+      }));
+
+      setLastTrackingCheck(new Date());
+      if (!silent) {
+        alert(changed > 0
+          ? `✅ ${changed} comenzi actualizate din ${results.length} verificate!`
+          : `✅ ${results.length} comenzi verificate — nicio schimbare de status.`
+        );
+      }
+    } catch(e) {
+      console.error('[TRACKING]', e);
+      if (!silent) alert('Eroare la tracking: ' + e.message);
+    }
+    setTrackingLoading(false);
+  };
+
+  // Auto-refresh la 5s după conectare + la 60min
+  useEffect(() => {
+    if (!connected || allOrders.length === 0) return;
+    const t1 = setTimeout(() => refreshTracking(true), 5000);
+    const t2 = setInterval(() => refreshTracking(true), 60 * 60 * 1000);
+    return () => { clearTimeout(t1); clearInterval(t2); };
+  }, [connected]);
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
   // ── KPI ──
