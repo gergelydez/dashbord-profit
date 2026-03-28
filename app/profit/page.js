@@ -497,7 +497,7 @@ export default function ProfitPage() {
 
   const totalRevenue = deliveredOrders.reduce((s, o) => s + (o.total || 0), 0);
   const totalOrders = deliveredOrders.length;
-  const totalItems = deliveredOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.qty, 0), 0);
+  const totalItems = deliveredOrders.reduce((s, o) => s + (o.items||[]).reduce((ss, i) => ss + (i.qty||1), 0), 0);
   const returnedCount = returnedOrders.length;
 
   const resolveCost = (item) => {
@@ -521,7 +521,7 @@ export default function ProfitPage() {
 
   const getCOGS = useCallback(() => {
     if (!shopifyOrders.length) return 0;
-    return deliveredOrders.reduce((total, order) => total + order.items.reduce((s, item) => s + (resolveCost(item).cost * item.qty), 0), 0);
+    return deliveredOrders.reduce((total, order) => total + (order.items||[]).reduce((s, item) => s + (resolveCost(item).cost * (item.qty||1)), 0), 0);
   }, [deliveredOrders, productCosts, shopifyCosts, shopifyVariantCosts, shopifySkuCosts, manualCosts, costSource, stdCosts]);
 
   const cogs = getCOGS();
@@ -608,7 +608,7 @@ export default function ProfitPage() {
     alert('✅ Salvat!');
   };
 
-  const uniqueProducts = [...new Set(deliveredOrders.flatMap(o => o.items.map(i => i.name)))];
+  const uniqueProducts = [...new Set(deliveredOrders.flatMap(o => (o.items||[]).map(i => i.name).filter(Boolean)))];
 
   const CSS = `
     .profit-wrap{max-width:900px;margin:0 auto;padding:12px 12px 100px}
@@ -737,6 +737,25 @@ export default function ProfitPage() {
           </div>
 
           <a href="/" className="pf-back">← Back</a>
+        </div>
+
+        {/* PRESET BUTTONS */}
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+          {[
+            {id:'month',     l:'Luna aceasta'},
+            {id:'last_month',l:'Luna trecută'},
+            {id:'last_30',   l:'30 zile'},
+            {id:'last_7',    l:'7 zile'},
+            {id:'last_90',   l:'90 zile'},
+          ].map(p=>(
+            <button key={p.id} onClick={()=>setPreset(p.id)}
+              style={{padding:'7px 12px',borderRadius:20,border:'1px solid',fontSize:11,fontWeight:700,cursor:'pointer',transition:'all .15s',
+                background:preset===p.id?'rgba(249,115,22,.2)':'rgba(255,255,255,.04)',
+                borderColor:preset===p.id?'var(--c-orange)':'rgba(255,255,255,.1)',
+                color:preset===p.id?'var(--c-orange)':'var(--c-text4)'}}>
+              {p.l}
+            </button>
+          ))}
         </div>
 
         {/* NAV */}
