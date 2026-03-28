@@ -1,4 +1,3 @@
-
   'use client';
 import { useState, useEffect, useCallback } from 'react';
 
@@ -377,122 +376,12 @@ export default function ProfitPage() {
 
   return (
     <>
-      <style>{`
-        *{margin:0;padding:0;box-sizing:border-box;}
-        body{background:#080c10;color:#e8edf2;font-family:'DM Sans',system-ui,sans-serif;}
-        .wrap{max-width:1340px;margin:0 auto;padding:20px 14px 80px;}
-        
-        /* HEADER */
-        .ph{display:flex;align-items:center;gap:10px;margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid #1e2a35;flex-wrap:wrap;}
-        .logo{background:#f97316;color:#fff;font-weight:800;font-size:14px;padding:6px 10px;border-radius:8px;}
-        .ph h1{font-size:18px;font-weight:700;}
-        .ph p{font-size:11px;color:#94a3b8;}
-        .month-sel{margin-left:auto;display:flex;align-items:center;gap:8px;}
-        .month-sel label{font-size:11px;color:#94a3b8;}
-        .month-sel input{background:#161d24;border:1px solid #243040;color:#e8edf2;padding:6px 10px;border-radius:8px;font-size:12px;outline:none;}
-        .month-sel input:focus{border-color:#f97316;}
-        .back-btn{background:#161d24;border:1px solid #243040;color:#94a3b8;padding:6px 12px;border-radius:20px;font-size:11px;cursor:pointer;text-decoration:none;}
-        .back-btn:hover{border-color:#f97316;color:#f97316;}
-
-        /* SECTION TITLE */
-        .st{font-size:10px;color:#f97316;text-transform:uppercase;letter-spacing:2.5px;margin-bottom:10px;display:flex;align-items:center;gap:8px;}
-        .st::after{content:'';flex:1;height:1px;background:#1e2a35;}
-
-        /* GRID LAYOUT */
-        .main-grid{display:grid;grid-template-columns:1fr 360px;gap:16px;align-items:start;}
-        @media(max-width:900px){.main-grid{grid-template-columns:1fr;}}
-
-        /* SUMMARY CARD (top) */
-        .summary-top{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px;}
-        .sum-card{background:#0f1419;border-radius:12px;padding:16px 14px;position:relative;overflow:hidden;}
-        .sum-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--c,#f97316);}
-        .sum-emoji{font-size:18px;display:block;margin-bottom:6px;}
-        .sum-val{font-size:26px;font-weight:800;color:var(--c,#f97316);letter-spacing:-0.5px;line-height:1;}
-        .sum-val.neg{color:#f43f5e;}
-        .sum-label{font-size:11px;color:#94a3b8;margin-top:4px;}
-        .sum-sub{font-size:10px;color:#4a5568;margin-top:2px;}
-
-        /* PROFIT BREAKDOWN */
-        .breakdown{background:#0f1419;border:1px solid #1e2a35;border-radius:12px;overflow:hidden;margin-bottom:14px;}
-        .brow{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #1e2a35;font-size:12px;}
-        .brow:last-child{border-bottom:none;}
-        .brow.total{background:#161d24;font-weight:700;}
-        .brow.profit-pos{background:rgba(16,185,129,.06);}
-        .brow.profit-neg{background:rgba(244,63,94,.06);}
-        .blbl{color:#94a3b8;display:flex;align-items:center;gap:6px;}
-        .bval{font-family:monospace;font-weight:500;}
-        .bval.g{color:#10b981;}.bval.r{color:#f43f5e;}.bval.y{color:#f59e0b;}.bval.o{color:#f97316;}.bval.b{color:#3b82f6;}
-        .bar-wrap{height:3px;background:#1e2a35;border-radius:2px;margin-top:4px;overflow:hidden;}
-        .bar-fill{height:100%;border-radius:2px;transition:width .8s;}
-
-        /* DATA SOURCE CARDS */
-        .source-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;}
-        @media(max-width:600px){.source-grid{grid-template-columns:1fr;}}
-        .src-card{background:#0f1419;border:1px solid #1e2a35;border-radius:11px;padding:14px;}
-        .src-card.done{border-color:#10b981;}
-        .src-header{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
-        .src-icon{font-size:20px;}
-        .src-title{font-size:13px;font-weight:600;}
-        .src-status{font-size:10px;color:#94a3b8;margin-left:auto;}
-        .src-status.ok{color:#10b981;}
-        .lbl{display:block;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;margin-top:8px;}
-        input[type=text],input[type=email],input[type=password],input[type=number]{width:100%;background:#161d24;border:1px solid #243040;color:#e8edf2;padding:8px 10px;border-radius:7px;font-size:12px;font-family:monospace;outline:none;}
-        input:focus{border-color:#f97316;}
-        input[type=file]{background:#161d24;border:1px solid #243040;color:#94a3b8;padding:7px 10px;border-radius:7px;font-size:11px;width:100%;}
-        .btn{border:none;padding:8px 14px;border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;transition:all .2s;}
-        .btn-orange{background:#f97316;color:white;width:100%;margin-top:8px;}
-        .btn-orange:hover{background:#fb923c;}
-        .btn-gray{background:#161d24;border:1px solid #243040;color:#94a3b8;font-size:11px;padding:5px 10px;border-radius:6px;}
-        .btn-gray:hover{border-color:#f97316;color:#f97316;}
-        .btn-green{background:#10b981;color:white;}
-        .btn-red{background:transparent;border:1px solid rgba(244,63,94,.3);color:#f43f5e;font-size:11px;padding:4px 8px;border-radius:6px;}
-        .err-msg{color:#f43f5e;font-size:11px;margin-top:6px;}
-
-        /* COST ROWS */
-        .cost-row{display:flex;gap:6px;margin-bottom:6px;align-items:center;}
-        .cost-row input[type=text]{flex:2;}
-        .cost-row input[type=number]{flex:1;}
-        .cost-row .ccy{background:#161d24;border:1px solid #243040;color:#94a3b8;padding:8px 6px;border-radius:7px;font-size:11px;width:60px;}
-
-        /* MARKETING */
-        .mkt-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
-        @media(max-width:500px){.mkt-grid{grid-template-columns:1fr;}}
-        .mkt-item label{display:block;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;}
-
-        /* PRODUCT COST TABLE */
-        .pc-table{width:100%;font-size:11px;border-collapse:collapse;margin-top:8px;}
-        .pc-table th{background:#161d24;padding:7px 10px;text-align:left;font-size:9px;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #1e2a35;}
-        .pc-table td{padding:7px 10px;border-bottom:1px solid #1e2a35;vertical-align:middle;}
-        .pc-table tr:last-child td{border-bottom:none;}
-        .pc-table input{padding:5px 7px;font-size:11px;}
-        .match-ok{color:#10b981;font-size:10px;}
-        .match-no{color:#f59e0b;font-size:10px;}
-
-        /* SIDEBAR (right) */
-        .sidebar{display:flex;flex-direction:column;gap:12px;}
-        .side-card{background:#0f1419;border:1px solid #1e2a35;border-radius:11px;padding:14px;}
-        .side-card h3{font-size:13px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px;}
-
-        /* ROAS GAUGE */
-        .roas-big{font-size:36px;font-weight:800;color:#a855f7;font-family:system-ui;letter-spacing:-1px;}
-        .roas-label{font-size:11px;color:#94a3b8;margin-top:2px;}
-
-        /* SAVE BTN */
-        .save-bar{position:fixed;bottom:16px;right:16px;z-index:100;}
-        .save-btn{background:#f97316;color:white;border:none;padding:12px 20px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 4px 20px rgba(249,115,22,.4);}
-        .save-btn:hover{background:#fb923c;}
-
-        .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:white;border-radius:50%;animation:spin .8s linear infinite;display:inline-block;margin-right:6px;vertical-align:middle;}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        .tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:20px;font-size:10px;}
-        .tag-green{background:rgba(16,185,129,.11);color:#10b981;border:1px solid rgba(16,185,129,.2);}
-        .tag-yellow{background:rgba(245,158,11,.11);color:#f59e0b;border:1px solid rgba(245,158,11,.2);}
-      `}</style>
+      
 
       <div className="wrap">
         {/* HEADER */}
-        <div className="ph">
-          <div className="logo">GLAMX</div>
+        <div className="profit-header">
+          <div className="logo"><img src="/icon-192.png" alt="GLAMX"/></div>
           <div>
             <h1>💹 Calculator Profit</h1>
             <p>Analiză completă venituri &amp; costuri</p>
@@ -501,11 +390,18 @@ export default function ProfitPage() {
             <label>Lună:</label>
             <input type="month" value={month} onChange={e => { setMonth(e.target.value); setShopifyDone(false); setSbDone(false); setGlsDone(false); }} />
           </div>
-          <a href="/" className="back-btn">← Dashboard</a>
+          <a href="/" className="bsm">← Dashboard</a>
         </div>
 
+        <nav className="header-nav" style={{marginBottom:'14px'}}>
+          <a href="/profit" className="nav-link" style={{background:'rgba(16,185,129,.12)',color:'#10b981',border:'1px solid rgba(16,185,129,.25)'}}>💹 Profit</a>
+          <a href="/stats" className="nav-link" style={{background:'rgba(59,130,246,.12)',color:'#3b82f6',border:'1px solid rgba(59,130,246,.25)'}}>📊 Statistici</a>
+          <a href="/import" className="nav-link" style={{background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.25)'}}>📦 Import</a>
+          <a href="/whatsapp" className="nav-link" style={{background:'rgba(37,211,102,.12)',color:'#25d366',border:'1px solid rgba(37,211,102,.25)'}}>📱 WhatsApp</a>
+        </nav>
+
         {/* TOP SUMMARY */}
-        <div className="st">Sumar {monthLabel(month)}</div>
+        <div className="stitle">Sumar {monthLabel(month)}</div>
         <div className="summary-top">
           {[
             { e: '💰', v: fmtK(totalRevenue), lbl: 'Venituri totale', sub: `${totalOrders} comenzi livrate`, c: '#f97316' },
@@ -522,11 +418,11 @@ export default function ProfitPage() {
               neg: netProfit < 0
             },
           ].map((s, i) => (
-            <div key={i} className="sum-card" style={{ '--c': s.c }}>
-              <span className="sum-emoji">{s.e}</span>
+            <div key={i} className="kpi sum-card" style={{ '--c': s.c }}>
+              <span className="ke sum-emoji">{s.e}</span>
               <div className={`sum-val ${s.neg ? 'neg' : ''}`}>{s.v} RON</div>
-              <div className="sum-label">{s.lbl}</div>
-              <div className="sum-sub">{s.sub}</div>
+              <div className="kl sum-label">{s.lbl}</div>
+              <div className="kp sum-sub">{s.sub}</div>
             </div>
           ))}
         </div>
@@ -534,8 +430,8 @@ export default function ProfitPage() {
         <div className="main-grid">
           <div>
             {/* BREAKDOWN */}
-            <div className="st">Detaliu P&amp;L</div>
-            <div className="breakdown">
+            <div className="stitle">Detaliu P&amp;L</div>
+            <div className="tcard breakdown">
               <div className="brow">
                 <span className="blbl">💰 Venituri brute</span>
                 <span className="bval o">+{fmt(totalRevenue)} RON</span>
@@ -581,7 +477,7 @@ export default function ProfitPage() {
             </div>
 
             {/* DATA SOURCES */}
-            <div className="st">Surse de date</div>
+            <div className="stitle">Surse de date</div>
             <div className="source-grid">
 
               {/* SHOPIFY */}
@@ -665,7 +561,7 @@ export default function ProfitPage() {
               </div>
 
               {/* MARKETING */}
-              <div className="src-card">
+              <div className="card src-card">
                 <div className="src-header">
                   <span className="src-icon">📣</span>
                   <span className="src-title">Marketing</span>
@@ -689,8 +585,8 @@ export default function ProfitPage() {
             </div>
 
             {/* FIXED COSTS */}
-            <div className="st">Costuri fixe lunare</div>
-            <div className="src-card" style={{ marginBottom: 12 }}>
+            <div className="stitle">Costuri fixe lunare</div>
+            <div className="card src-card" style={{ marginBottom: 12 }}>
               {fixedCosts.map(c => (
                 <div key={c.id} className="cost-row">
                   <input type="text" placeholder="Nume cost (ex: Shopify)" value={c.name} onChange={e => updateFixed(c.id, 'name', e.target.value)} style={{ flex: 2 }} />
@@ -702,8 +598,8 @@ export default function ProfitPage() {
             </div>
 
             {/* OTHER COSTS */}
-            <div className="st">Alte costuri variabile</div>
-            <div className="src-card" style={{ marginBottom: 12 }}>
+            <div className="stitle">Alte costuri variabile</div>
+            <div className="card src-card" style={{ marginBottom: 12 }}>
               {otherCosts.length === 0 && <div style={{ fontSize: 12, color: '#4a5568', marginBottom: 8 }}>Nu ai adăugat costuri variabile.</div>}
               {otherCosts.map(c => (
                 <div key={c.id} className="cost-row">
@@ -716,8 +612,8 @@ export default function ProfitPage() {
             </div>
 
             {/* STANDARD COSTS EDITOR */}
-            <div className="st" style={{marginTop:16}}>Costuri standard produse</div>
-            <div className="src-card" style={{marginBottom:14}}>
+            <div className="stitle" style={{marginTop:16}}>Costuri standard produse</div>
+            <div className="card src-card" style={{marginBottom:14}}>
               <p style={{fontSize:12,color:'#94a3b8',marginBottom:12,lineHeight:1.5}}>
                 Se aplică automat prin potrivire de nume. Editează și apasă <strong>Salvează setările</strong>.
               </p>
@@ -754,8 +650,8 @@ export default function ProfitPage() {
             {/* PRODUCT COST MAPPING */}
             {uniqueProducts.length > 0 && (
               <>
-                <div className="st">Cost produse per SKU</div>
-                <div className="src-card">
+                <div className="stitle">Cost produse per SKU</div>
+                <div className="card src-card">
                   <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10 }}>
                     {sbDone ? 'Costurile au fost detectate automat din SmartBill. Poți corecta manual mai jos.' : 'SmartBill nu e conectat. Introdu costul per produs manual.'}
                   </p>
@@ -832,7 +728,7 @@ export default function ProfitPage() {
           {/* SIDEBAR */}
           <div className="sidebar">
             {/* ROAS */}
-            <div className="side-card">
+            <div className="card side-card">
               <h3>📣 ROAS Marketing</h3>
               <div className="roas-big">{roasMarketing.toFixed(2)}x</div>
               <div className="roas-label">Return on Ad Spend</div>
@@ -851,7 +747,7 @@ export default function ProfitPage() {
             </div>
 
             {/* MARGINS */}
-            <div className="side-card">
+            <div className="card side-card">
               <h3>📊 Marje</h3>
               {[
                 { lbl: 'Marjă brută', val: totalRevenue > 0 ? Math.round(grossProfit / totalRevenue * 100) : 0, color: '#3b82f6' },
@@ -871,7 +767,7 @@ export default function ProfitPage() {
             </div>
 
             {/* PER ORDER */}
-            <div className="side-card">
+            <div className="card side-card">
               <h3>🧮 Per comandă</h3>
               {totalOrders > 0 ? [
                 { lbl: 'Venit mediu', val: fmt(totalRevenue / totalOrders) + ' RON', c: '#f97316' },
@@ -888,7 +784,7 @@ export default function ProfitPage() {
             </div>
 
             {/* COST BREAKDOWN PIE-like */}
-            <div className="side-card">
+            <div className="card side-card">
               <h3>🥧 Structură costuri</h3>
               {totalCosts > 0 ? [
                 { lbl: 'Produse (COGS)', val: cogs, c: '#3b82f6' },
@@ -918,4 +814,5 @@ export default function ProfitPage() {
     </>
   );
 }  
+
 
