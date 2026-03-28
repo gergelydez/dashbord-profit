@@ -107,7 +107,15 @@ export default function WhatsAppPage() {
       try { setWaOrders(JSON.parse(savedOrders)); } catch {}
     }
     const savedTpl = ls.get('wa_template');
-    setMsgTemplate(savedTpl || 'Bună {{client}}, comanda ta #{{nr}} de {{total}} RON a fost plasată cu succes! Confirmi comanda? Răspunde cu DA sau NU. Mulțumim! 🙏 GLAMX');
+    setMsgTemplate(savedTpl || `👋 Bună ziua, {{client}}! Vă contactăm din partea glamx.ro în legătură cu comanda dumneavoastră #{{nr}} pentru {{produse}}.
+
+📦 Pentru a putea expedia comanda în valoare de {{total}} RON, vă rugăm să ne confirmați dacă aceasta rămâne valabilă.
+
+👉 Răspundeți cu:
+DA – dacă doriți să primiți comanda
+NU – dacă doriți anularea acesteia
+
+Vă mulțumim! 🤍`);
   }, []);
 
   const saveConfig = () => {
@@ -467,7 +475,7 @@ export default function WhatsAppPage() {
               <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
                 {/* Deschide WhatsApp */}
                 {phone && (
-                  <a href={`https://wa.me/${phone.replace('+','')}?text=${encodeURIComponent(msg)}`}
+                  <a href={`https://api.whatsapp.com/send?phone=${phone.replace('+','')}&text=${encodeURIComponent(msg)}`}
                     target="_blank" rel="noopener noreferrer"
                     onClick={()=>{
                       // Marchează ca trimis când apasă butonul
@@ -488,7 +496,7 @@ export default function WhatsAppPage() {
                 )}
                 {/* Retrimite */}
                 {wa.status === 'sent' && phone && (
-                  <a href={`https://wa.me/${phone.replace('+','')}?text=${encodeURIComponent(msg)}`}
+                  <a href={`https://api.whatsapp.com/send?phone=${phone.replace('+','')}&text=${encodeURIComponent(msg)}`}
                     target="_blank" rel="noopener noreferrer"
                     style={{display:'inline-flex',alignItems:'center',gap:6,background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.2)',padding:'5px 12px',borderRadius:7,fontSize:11,fontWeight:600,textDecoration:'none'}}>
                     🔄 Retrimite WhatsApp
