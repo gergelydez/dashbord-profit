@@ -36,8 +36,8 @@ const DEFAULT_FIXED = [
 const TRANSPORT_DEFAULT = 21.37;
 const TVA_RATE = 0.21;
 
-// Statusuri Shopify care indică retur/refuz
-const RETURNED_STATUSES = new Set(['returned', 'return_in_progress', 'failure']);
+// Statusuri Shopify care indică retur/refuz — aceeași logică ca dashboard-ul principal
+const RETURNED_SHIPMENT = new Set(['failure','failed_attempt','returned','failed_delivery','return_in_progress']);
 
 function exportCostsToXLSX(stdCosts) {
   const doExport = () => {
@@ -233,11 +233,18 @@ export default function ProfitPage() {
     o.fulfillment === 'fulfilled' && o.financial === 'paid'
   );
 
-  // Colete refuzate/returnate — detectate automat din fulfillments
+  // Colete refuzate/returnate — aceeasi logica ca dashboard-ul principal
   const returnedOrders = shopifyOrders.filter(o => {
-    if (o.financial === 'refunded' || o.financial === 'partially_refunded') return true;
+    if (o.cancelled_at) return false;
     const ffs = o.fulfillments || [];
-    return ffs.some(f => RETURNED_STATUSES.has(f.shipment_status));
+    if (ffs.length > 0) {
+      const deliveredF = ffs.find(f => (f.shipment_status||'').toLowerCase() === 'delivered');
+      const f = deliveredF || ffs[ffs.length - 1];
+      const ss = (f.shipment_status || '').toLowerCase();
+      if (RETURNED_SHIPMENT.has(ss)) return true;
+    }
+    if (o.financial === 'refunded' || o.financial === 'partially_refunded') return true;
+    return false;
   });
 
   const totalRevenue = deliveredOrders.reduce((s, o) => s + o.total, 0);
@@ -873,3 +880,4 @@ export default function ProfitPage() {
     </>
   );
 }
+
