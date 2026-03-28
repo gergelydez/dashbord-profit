@@ -5,24 +5,6 @@ const ls = {
   get: (k) => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
 };
 
-// Tracking overrides — statusuri confirmate de GLS API
-const trackingOverrides = {
-  get: () => { try { const s = typeof window!=='undefined'?localStorage.getItem('gx_track_ov'):null; return s?JSON.parse(s):{}; } catch { return {}; } },
-};
-
-function applyTrackingOverrides(orders) {
-  const ov = trackingOverrides.get();
-  if (!Object.keys(ov).length) return orders;
-  return orders.map(o => {
-    const override = ov[o.id];
-    if (!override) return o;
-    return { ...o, ts: override.ts,
-      trackingStatus: override.statusRaw || o.trackingStatus,
-      trackingLastUpdate: override.lastUpdate || o.trackingLastUpdate,
-    };
-  });
-}
-
 const pad = n => String(n).padStart(2, '0');
 const toISO = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const fmt = n => Number(n||0).toLocaleString('ro-RO', { minimumFractionDigits:2, maximumFractionDigits:2 });
@@ -68,8 +50,7 @@ export default function Stats() {
     const saved = ls.get('gx_orders_all');
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
-        setAllOrders(applyTrackingOverrides(parsed));
+        setAllOrders(JSON.parse(saved));
         const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
       } catch {}
@@ -92,6 +73,26 @@ export default function Stats() {
 
   // livrateInPeriod = TOATE comenzile livrate în intervalul selectat (după fulfilledAt)
   // Include orice metodă de plată (COD, Shopify Payments, etc.)
+  const livrateInPeriod = useMemo(() => {
+    const fromD = new Date(from + 'T00:00:00');
+    const toD   = new Date(to   + 'T23:59:59');
+    const glsMap = (() => { try { const s = typeof window!=='undefined' ? localStorage.getItem('gls_awb_map') : null; return s ? JSON.parse(s) : {}; } catch { return {}; } })();
+    return allOrders.filter(o => {
+      // Filtru dupa createdAt — exact ca dashboard modul Create + filter Livrate
+      const created = new Date(o.createdAt || '');
+      if (created < fromD || created > toD) return false;
+      // getFinalStatus cu GLS AWB map
+      let finalTs = o.ts;
+      if (o.courier === 'gls') {
+        const awb = (o.trackingNo || '').trim();
+        if (awb && glsMap[awb]) finalTs = glsMap[awb];
+      } else if (o.courier === 'sameday') {
+        finalTs = getSdStatus(o) || o.ts;
+      }
+      return finalTs === 'livrat';
+    });
+  }, [allOrders, from, to, getSdStatus]);
+
   // getSdStatus: prioritizează Excel > Shopify pentru Sameday
   const getSdStatus = (o) => {
     const awb = (o.trackingNo || '').trim();
@@ -99,26 +100,12 @@ export default function Stats() {
     return o.ts !== 'pending' ? o.ts : null;
   };
 
-  const livrateInPeriod = useMemo(() => {
-    const fromD = new Date(from + 'T00:00:00');
-    const toD   = new Date(to   + 'T23:59:59');
-    return allOrders.filter(o => {
-      // ts deja include tracking overrides (GLS API)
-      const isLivrat = o.ts === 'livrat' ||
-        (o.courier === 'sameday' && getSdStatus(o) === 'livrat');
-      if (!isLivrat) return false;
-      const livDate = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
-      if (!livDate) return false;
-      return livDate >= fromD && livDate <= toD;
-    });
-  }, [allOrders, from, to, getSdStatus]);
-
   const stats = useMemo(() => {
     const total    = orders.length;
     // livrate = TOATE comenzile livrate (COD + Shopify Payments + orice metodă)
     const livrate = livrateInPeriod.filter(o => {
       if (o.courier === 'sameday') return getSdStatus(o) === 'livrat';
-      return o.ts === 'livrat'; // ts deja include tracking overrides
+      return o.ts === 'livrat'; // include paid, pending, orice financial status
     });
     // retururi = comenzi cu status retur în perioada selectată
     // Folosim fulfilledAt (data ultimei actualizări) sau createdAt
@@ -129,9 +116,9 @@ export default function Stats() {
         ? getSdStatus(o) === 'retur'
         : o.ts === 'retur';
       if (!isRetur) return false;
-      // Include dacă a fost creată SAU actualizată (retur sosit) în perioadă
-      const refDate = new Date(o.fulfilledAt || o.createdAt);
-      return refDate >= fromD2 && refDate <= toD2;
+      // Filtru dupa createdAt — exact ca dashboard
+      const created = new Date(o.createdAt || '');
+      return created >= fromD2 && created <= toD2;
     });
     const anulate  = orders.filter(o => o.ts === 'anulat');
     const tranzit  = orders.filter(o => ['incurs','outfor'].includes(o.ts));
@@ -246,48 +233,28 @@ export default function Stats() {
     // GLS COD: livrare + 2 zile → banii intră în cont
     // Sameday COD: livrare + 1 zi
     // Shopify Payments: livrare + 2 zile (payout)
-    // Adaugă N zile LUCRĂTOARE (L-V) — sâmbătă/duminică nu contează
-    const addWorkDays = (str, n) => {
+    const addDaysToStr = (str, n) => {
       if (!str) return '';
-      const d = new Date(str + 'T12:00:00');
-      let added = 0;
-      while (added < n) {
-        d.setDate(d.getDate() + 1);
-        const day = d.getDay();
-        if (day !== 0 && day !== 6) added++; // 0=dum, 6=sâm
-      }
+      const d = new Date(str); d.setDate(d.getDate() + n);
       const p = x => String(x).padStart(2,'0');
       return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
     };
 
     const incasariPerZi = {};
+    // Toate comenzile livrate — indiferent de metoda de plată
     livrateInPeriod.forEach(o => {
+      if (!o.fulfilledAt) return;
       if (o.courier === 'sameday' && getSdStatus(o) !== 'livrat') return;
+      const livStr = o.fulfilledAt.slice(0,10);
       const isOnline = isOnlinePayment(o, onlineIds);
       const net = isOnline ? o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed : o.total;
 
+      // Data încasării = livrare + zile specifice curierului
       let incasareStr = '';
-      if (isOnline) {
-        // Shopify Payments: 2 zile lucrătoare de la DATA PLASĂRII comenzii (nu livrare)
-        const baseStr = (o.createdAt || o.fulfilledAt || '').slice(0,10);
-        if (!baseStr) return;
-        incasareStr = addWorkDays(baseStr, 2);
-      } else if (o.courier === 'gls') {
-        // GLS COD: 2 zile lucrătoare de la livrare
-        // Joi livrat → Luni bani | Vineri livrat → Marți bani
-        const livStr = (o.fulfilledAt || o.createdAt || '').slice(0,10);
-        if (!livStr) return;
-        incasareStr = addWorkDays(livStr, 2);
-      } else if (o.courier === 'sameday') {
-        // Sameday COD: 1 zi lucrătoare de la livrare
-        const livStr = (o.fulfilledAt || o.createdAt || '').slice(0,10);
-        if (!livStr) return;
-        incasareStr = addWorkDays(livStr, 1);
-      } else {
-        const livStr = (o.fulfilledAt || o.createdAt || '').slice(0,10);
-        if (!livStr) return;
-        incasareStr = addWorkDays(livStr, 2);
-      }
+      if (isOnline)                                  incasareStr = addDaysToStr(livStr, 2); // Shopify payout după 2 zile
+      else if (o.courier === 'gls')                  incasareStr = addDaysToStr(livStr, 2); // GLS ramburs după 2 zile
+      else if (o.courier === 'sameday')              incasareStr = addDaysToStr(livStr, 1); // SD ramburs după 1 zi
+      else                                           incasareStr = addDaysToStr(livStr, 2);
 
       if (!incasareStr) return;
       if (!incasariPerZi[incasareStr]) incasariPerZi[incasareStr] = { gls:0, sameday:0, shopify:0, total:0, count:0 };
