@@ -61,25 +61,40 @@ function toRestOrder(node) {
   const fulfillments = (node.fulfillments || []).map(f => {
     const ti = (f.trackingInfo || [])[0] || {};
     const ssMap = {
-      'DELIVERED':'delivered',
-      'IN_TRANSIT':'in_transit',
-      'OUT_FOR_DELIVERY':'out_for_delivery',
-      'ATTEMPTED_DELIVERY':'attempted_delivery',
-      'FAILURE':'failure',
-      'FAILED_ATTEMPT':'failed_attempt',
-      'RETURNED':'returned',
-      'RETURN_IN_PROGRESS':'return_in_progress',
-      'DELIVERY_EXCEPTION':'failure',
-      'FAILED_DELIVERY':'failed_delivery',
-      'REFUSED':'failure',
-      'LABEL_PRINTED':'label_printed',
-      'CONFIRMED':'confirmed',
-      'NOT_DELIVERED':'failure',
-      'FULFILLED':'confirmed', // AWB creat + predat curier = în tranzit, NU livrat
+      // ── LIVRAT ──
+      'DELIVERED':          'delivered',
+      'DELIVERED_TO_PICKUP_POINT': 'delivered',
+
+      // ── ÎN TRANZIT ──
+      'IN_TRANSIT':         'in_transit',
+      'CONFIRMED':          'in_transit',   // colet preluat de curier
+      'FULFILLED':          'in_transit',   // AWB creat / predat curier
+      'LABEL_PRINTED':      'label_printed',// AWB printat, nepredat încă
+
+      // ── ÎN LIVRARE ──
+      'OUT_FOR_DELIVERY':   'out_for_delivery',
+      'WITH_COURIER':       'out_for_delivery', // la curier local
+      'AT_PICKUP_POINT':    'out_for_delivery',
+
+      // ── TENTATIVĂ EȘUATĂ ──
+      'ATTEMPTED_DELIVERY': 'failed_attempt',
+      'FAILED_ATTEMPT':     'failed_attempt',
+      'NOT_DELIVERED':      'failed_attempt',
+      'DELIVERY_EXCEPTION': 'failed_attempt',
+
+      // ── RETUR ──
+      'FAILURE':            'failure',
+      'FAILED_DELIVERY':    'failure',
+      'REFUSED':            'failure',
+      'RETURNED':           'returned',
+      'RETURN_IN_PROGRESS': 'return_in_progress',
+      'RETURN_TO_SENDER':   'return_in_progress',
+      'CANCELED':           '', // ignorat — comanda anulată se detectează din cancelled_at
     };
     const ds = (f.displayStatus||'').toUpperCase();
     const rawStatus = f.displayStatus || '';
-    const mappedStatus = ssMap[ds] || ds.toLowerCase();
+    // CANCELED pe fulfillment = comanda anulată → null ca să nu suprascrie cancelled_at
+    const mappedStatus = ds === 'CANCELED' ? null : (ssMap[ds] || ds.toLowerCase());
     // Log TOATE statusurile pentru debugging
     if (ds) console.log('[FULFILLMENT STATUS]', 
       'order:', node.name,
@@ -92,7 +107,7 @@ function toRestOrder(node) {
     return {
       updated_at: f.updatedAt, created_at: f.createdAt,
       tracking_number: ti.number || '', tracking_company: ti.company || '',
-      shipment_status: mappedStatus,
+      shipment_status: mappedStatus || null,
     };
   });
 
@@ -144,6 +159,7 @@ function toRestOrder(node) {
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
+  const forceRefresh = searchParams.get('force') === '1';
   const domain     = searchParams.get('domain');
   const token      = searchParams.get('token');
   const createdMin = (searchParams.get('created_at_min') || '2020-01-01T00:00:00').slice(0,10);
@@ -154,6 +170,16 @@ export async function GET(request) {
 
   const gqlUrl = `https://${domain}/admin/api/2024-01/graphql.json`;
   const headers = { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' };
+
+  // Cache key bazat pe domain + perioadă
+  const cacheKey = `${domain}_${createdMin}`;
+  const cached = serverCache.get(cacheKey);
+  if (!forceRefresh && cached && (Date.now() - cached.ts) < CACHE_TTL) {
+    return NextResponse.json({ orders: cached.orders, source: 'cache' }, {
+      status: 200,
+      headers: { 'Access-Control-Allow-Origin': '*' },
+    });
+  }
 
   try {
     let allOrders = [];
@@ -184,7 +210,15 @@ export async function GET(request) {
       cursor      = ordersData.pageInfo.endCursor;
     }
 
-    return NextResponse.json({ orders: allOrders }, {
+    const processed = allOrders; // deja procesate în toRestOrder
+    // Salvăm în cache
+    serverCache.set(cacheKey, { orders: processed, ts: Date.now() });
+    // Curățăm cache-urile vechi (>5 min)
+    for (const [k, v] of serverCache.entries()) {
+      if (Date.now() - v.ts > 5 * 60 * 1000) serverCache.delete(k);
+    }
+
+    return NextResponse.json({ orders: processed, source: 'graphql' }, {
       status: 200,
       headers: { 'Access-Control-Allow-Origin': '*' },
     });
