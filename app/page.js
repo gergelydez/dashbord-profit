@@ -241,7 +241,7 @@ export default function Dashboard() {
         if (ts) setLastFetch(new Date(ts));
         const ff = ls.get('gx_fetched_from');
         if (ff) setFetchedFrom(ff);
-        applyDateFilter(parsed, 'last_30', '', '');
+        applyDateFilter(parsedWithOv, 'last_30', '', '');
       } catch {}
     }
   }, []);
@@ -250,7 +250,9 @@ export default function Dashboard() {
     const { from, to } = getRange(p, cf, ct);
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
-    const inRange = ords.filter(o => {
+    // Aplicăm ÎNTOTDEAUNA overrides înainte de a seta orders
+    const ordsWithOv = applyTrackingOverrides(ords);
+    const inRange = ordsWithOv.filter(o => {
       const created = new Date(o.createdAt);
       return created >= fromD && created <= toD;
     });
@@ -318,7 +320,7 @@ export default function Dashboard() {
       ls.set('gx_orders_60', JSON.stringify(fastWithOverrides));
       ls.set('gx_fetch_time', now.toISOString());
       ls.set('gx_fetched_from', d30);
-      applyDateFilter(fast, preset, customFrom, customTo);
+      applyDateFilter(fastWithOverrides, preset, customFrom, customTo);
     } catch (e) {
       setError('Eroare: ' + e.message);
       setLoading(false);
@@ -340,6 +342,8 @@ export default function Dashboard() {
       ls.set('gx_orders_all', JSON.stringify(merged60));
       ls.set('gx_fetched_from', d60);
       applyDateFilter(merged60, preset, customFrom, customTo);
+      // Rulăm tracking după faza 2
+      setTimeout(() => refreshTracking(true), 2000);
 
       // Faza 3 — 1 an
       try {
@@ -353,6 +357,8 @@ export default function Dashboard() {
         ls.set('gx_orders_all', JSON.stringify(merged));
         ls.set('gx_fetched_from', d365);
         applyDateFilter(merged, preset, customFrom, customTo);
+        // Tracking după faza 3 completă
+        setTimeout(() => refreshTracking(true), 2000);
       } catch { /* ignorăm erorile din faza 3 */ }
 
     } catch { /* ignorăm erorile din background */ }
@@ -712,7 +718,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     const t1 = setTimeout(() => {
       refreshTracking(true);
       lastAutoTrack.current = Date.now();
-    }, 10000);
+    }, 2000);
     // Repetăm la fiecare 30 minute
     const t2 = setInterval(() => {
       refreshTracking(true);
@@ -721,21 +727,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     return () => { clearTimeout(t1); clearInterval(t2); };
   }, [connected]);
 
-  // Re-rulăm tracking după ce faza 2+3 de sync termină (allOrders se schimbă mult)
-  const prevOrderCount = useRef(0);
-  useEffect(() => {
-    if (!connected || allOrders.length === 0) return;
-    const diff = Math.abs(allOrders.length - prevOrderCount.current);
-    prevOrderCount.current = allOrders.length;
-    // Dacă s-au adăugat >5 comenzi noi (sync complet), re-rulăm tracking după 3s
-    if (diff > 5 && Date.now() - lastAutoTrack.current > 60000) {
-      const t = setTimeout(() => {
-        refreshTracking(true);
-        lastAutoTrack.current = Date.now();
-      }, 3000);
-      return () => clearTimeout(t);
-    }
-  }, [allOrders.length, connected]);
+  // Tracking se rulează direct din fetchOrders după fiecare fază
   const handleSort = (col) => { if (sortCol===col) setSortDir(d=>d*-1); else { setSortCol(col); setSortDir(1); } };
 
   // ── KPI ──
@@ -1477,4 +1469,3 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
-
