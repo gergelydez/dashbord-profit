@@ -101,7 +101,8 @@ const DEFAULT_FIXED = [
 // Calculat: 2522.34 RON / 118 colete = 21.37 RON/colet
 const TRANSPORT_DEFAULT = 21.37;
 
-// Aplica tracking overrides exact ca dashboard (gx_track_ov)
+// ── IDENTIC CU DASHBOARD ──────────────────────────────────────────
+// applyTrackingOverrides — copiat din page.js
 function applyTrackingOverrides(orders) {
   try {
     const raw = typeof window !== 'undefined' ? localStorage.getItem('gx_track_ov') : null;
@@ -111,23 +112,44 @@ function applyTrackingOverrides(orders) {
       const override = ov[o.id];
       if (!override) return o;
       return { ...o, ts: override.ts,
-        fulfilledAt: override.ts === 'livrat' ? (override.lastUpdate || o.fulfilledAt) : o.fulfilledAt,
+        trackingStatus: override.statusRaw || o.trackingStatus,
+        trackingLastUpdate: override.lastUpdate || o.trackingLastUpdate,
+        trackingLocation: override.location || o.trackingLocation,
       };
     });
   } catch { return orders; }
 }
 
-// Exact ca dashboard getLivrateInPeriod:
-// ts === 'livrat' AND fulfilledAt in luna selectata
-function filterByMonth(orders, monthStr) {
+// getLivrateInPeriod — copiat identic din page.js
+// filtrare dupa fulfilledAt in luna selectata + ts === 'livrat'
+function getLivrateInPeriod(allOrders, monthStr) {
   const [y, m] = monthStr.split('-').map(Number);
-  const fromD = new Date(y + '-' + String(m).padStart(2,'0') + '-01T00:00:00');
+  const from = y + '-' + String(m).padStart(2,'0') + '-01';
   const lastDay = new Date(y, m, 0).getDate();
-  const toD   = new Date(y + '-' + String(m).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0') + 'T23:59:59');
-  return orders.filter(o => {
-    if (!o.fulfilledAt) return false;
-    if (o.ts && o.ts !== 'livrat') return false; // dashboard format: doar livrate
+  const to = y + '-' + String(m).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0');
+  const fromD = new Date(from + 'T00:00:00');
+  const toD   = new Date(to   + 'T23:59:59');
+  return allOrders.filter(o => {
+    if (o.ts !== 'livrat' || !o.fulfilledAt) return false;
     const f = new Date(o.fulfilledAt);
+    return f >= fromD && f <= toD;
+  });
+}
+
+// getReturInPeriod — returnate in luna selectata
+function getReturInPeriod(allOrders, monthStr) {
+  const [y, m] = monthStr.split('-').map(Number);
+  const from = y + '-' + String(m).padStart(2,'0') + '-01';
+  const lastDay = new Date(y, m, 0).getDate();
+  const to = y + '-' + String(m).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0');
+  const fromD = new Date(from + 'T00:00:00');
+  const toD   = new Date(to   + 'T23:59:59');
+  return allOrders.filter(o => {
+    if (o.ts !== 'retur') return false;
+    // folosim fulfilledAt sau createdAt
+    const dateStr = o.fulfilledAt || o.createdAt || '';
+    if (!dateStr) return false;
+    const f = new Date(dateStr);
     return f >= fromD && f <= toD;
   });
 }
@@ -176,7 +198,8 @@ export default function ProfitPage() {
   const [activeTab, setActiveTab] = useState('summary');
 
   // Shopify
-  const [shopifyOrders, setShopifyOrders] = useState([]);
+  const [shopifyOrders, setShopifyOrders] = useState([]); // comenzi livrate in luna selectata
+  const [allShopifyOrders, setAllShopifyOrders] = useState([]); // toate comenzile (pentru retur)
   const [shopifyLoading, setShopifyLoading] = useState(false);
   const [shopifyDone, setShopifyDone] = useState(false);
 
@@ -245,9 +268,10 @@ export default function ProfitPage() {
     if (sord) {
       try {
         const p = JSON.parse(sord);
-        const withOv = applyTrackingOverrides(p); // aplica overrides ca dashboard
-        const filtered = filterByMonth(withOv, currentMonth);
-        if (filtered.length > 0) { setShopifyOrders(filtered); setShopifyDone(true); }
+        const withOv = applyTrackingOverrides(p);
+        const livrate = getLivrateInPeriod(withOv, currentMonth);
+        setAllShopifyOrders(withOv);
+        if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
       } catch {}
     }
 
@@ -279,8 +303,8 @@ export default function ProfitPage() {
     try {
       const p = JSON.parse(sord);
       const withOv = applyTrackingOverrides(p);
-      const filtered = filterByMonth(withOv, month);
-      if (filtered.length > 0) { setShopifyOrders(filtered); setShopifyDone(true); }
+      const livrate = getLivrateInPeriod(withOv, month);
+      if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
       else { setShopifyOrders([]); setShopifyDone(false); }
     } catch {}
   }, [month]);
@@ -315,10 +339,12 @@ export default function ProfitPage() {
           tags: o.tags||'',
         };
       });
-      setShopifyOrders(processed);
+      const withOv = applyTrackingOverrides(processed);
+      const livrate = getLivrateInPeriod(withOv, month);
+      setAllShopifyOrders(withOv);
+      setShopifyOrders(livrate.length > 0 ? livrate : processed);
       setShopifyDone(true);
       localStorage.setItem('gx_orders_profit', JSON.stringify(processed));
-      localStorage.setItem('gx_orders_all', JSON.stringify(processed)); // sync cu dashboard
 
       try {
         const costRes = await fetch(`/api/product-costs?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}`);
@@ -421,29 +447,13 @@ export default function ProfitPage() {
   // ── CALCULATIONS ──
 
   // Comenzi livrate si platite
-  // Exact ca dashboard: ts === 'livrat' (statusul calculat)
-  // Fallback pentru fetch direct din profit: financial=paid + fulfillment=fulfilled
-  const deliveredOrders = shopifyOrders.filter(o => {
-    if (o.ts) return o.ts === 'livrat'; // format dashboard — sursa de adevar
-    // format fetch direct din profit
-    const fin = o.financial || '';
-    const ful = o.fulfillment || '';
-    return fin === 'paid' && ful === 'fulfilled';
-  });
+  // shopifyOrders contine deja doar comenzile livrate in luna selectata
+  // (filtrate prin getLivrateInPeriod — identic cu dashboard-ul)
+  const deliveredOrders = shopifyOrders;
 
   // Colete refuzate/returnate — aceeasi logica ca dashboard-ul principal
-  // Exact ca dashboard: ts === 'retur'
-  const returnedOrders = shopifyOrders.filter(o => {
-    if (o.ts) return o.ts === 'retur'; // format dashboard
-    // fallback fetch direct
-    const ffs = o.fulfillments || [];
-    if (ffs.length > 0) {
-      const f = ffs[ffs.length - 1];
-      const ss = (f.shipment_status || '').toLowerCase();
-      if (RETURNED_SHIPMENT.has(ss)) return true;
-    }
-    return false;
-  });
+  // Retururi in luna selectata — din allShopifyOrders (nu doar cele livrate)
+  const returnedOrders = getReturInPeriod(allShopifyOrders, month);
 
   const totalRevenue = deliveredOrders.reduce((s, o) => s + (o.total || 0), 0);
   const totalOrders = deliveredOrders.length;
