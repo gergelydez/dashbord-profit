@@ -165,13 +165,29 @@ async function trackSameday(awb) {
   }
 }
 
-// GET: tracking single AWB
+// GET: tracking single AWB (cu debug=1 returnează răspunsul brut GLS)
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const awb = searchParams.get('awb');
   const courier = (searchParams.get('courier') || '').toLowerCase();
+  const debug = searchParams.get('debug') === '1';
 
   if (!awb) return NextResponse.json({ error: 'AWB lipsă' }, { status: 400 });
+
+  // Debug mode: returnează răspunsul brut GLS
+  if (debug) {
+    try {
+      const url = `https://gls-group.eu/app/service/open/rest/RO/ro/rstt001?match=${awb}`;
+      const res = await fetch(url, {
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(10000),
+      });
+      const raw = await res.json();
+      return NextResponse.json({ awb, raw, status: res.status });
+    } catch(e) {
+      return NextResponse.json({ awb, error: e.message });
+    }
+  }
 
   let result = null;
   if (courier.includes('gls')) result = await trackGLS(awb);
