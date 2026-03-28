@@ -2,34 +2,11 @@ import { NextResponse } from 'next/server';
 
 const trackingCache = new Map();
 const CACHE_TTL = 30 * 60 * 1000;
+let glsToken = null;
+let glsTokenExpiry = 0;
 
 const GLS_API_KEY = process.env.GLS_API_KEY || '';
 const GLS_APP_ID  = process.env.GLS_APP_ID  || '';
-
-// GLS event codes → status intern
-// Documentație: /tracking/events/codes
-const GLS_EVENT_STATUS = {
-  // Status livrat
-  'DELIVERED': 'delivered',
-  'DELIVERED_PS': 'delivered',
-  // În livrare
-  'INDELIVERY': 'out_for_delivery',
-  'OUT_FOR_DELIVERY': 'out_for_delivery',
-  // În tranzit
-  'INTRANSIT': 'in_transit',
-  'IN_TRANSIT': 'in_transit',
-  'INWAREHOUSE': 'in_transit',
-  'PICKED_UP': 'in_transit',
-  'PREADVICE': 'in_transit',
-  // Tentativă eșuată
-  'NOTDELIVERED': 'failed_attempt',
-  'NOT_DELIVERED': 'failed_attempt',
-  'MISROUTED': 'in_transit',
-  // Retur
-  'RETURNED': 'returned',
-  'RETURN': 'returned',
-  'RETURNEDTOSTATION': 'returned',
-};
 
 const SAMEDAY_STATUS_MAP = {
   '1':'in_transit','2':'in_transit','3':'in_transit',
@@ -38,9 +15,46 @@ const SAMEDAY_STATUS_MAP = {
   '11':'failure','24':'out_for_delivery','25':'in_transit',
 };
 
-function getAuthHeader() {
-  // Basic Auth cu AppID:APIKey
-  return `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`;
+const GLS_EVENT_STATUS = {
+  'DELIVERED':'delivered','DELIVERED_PS':'delivered',
+  'INDELIVERY':'out_for_delivery','OUT_FOR_DELIVERY':'out_for_delivery',
+  'INTRANSIT':'in_transit','IN_TRANSIT':'in_transit',
+  'INWAREHOUSE':'in_transit','PICKED_UP':'in_transit','PREADVICE':'in_transit',
+  'NOTDELIVERED':'failed_attempt','NOT_DELIVERED':'failed_attempt',
+  'RETURNED':'returned','RETURN':'returned',
+};
+
+// Obținem JWT token de la GLS OAuth
+async function getGLSToken() {
+  if (glsToken && Date.now() < glsTokenExpiry - 60000) return glsToken;
+
+  try {
+    // GLS OAuth2 endpoint
+    const res = await fetch('https://api-sandbox.gls-group.net/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
+      },
+      body: 'grant_type=client_credentials',
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.log('[GLS AUTH] Failed:', res.status, text.slice(0, 200));
+      return null;
+    }
+
+    const data = await res.json();
+    glsToken = data.access_token;
+    glsTokenExpiry = Date.now() + (data.expires_in || 3600) * 1000;
+    console.log('[GLS AUTH] Token obtained, expires in', data.expires_in, 's');
+    return glsToken;
+  } catch(e) {
+    console.log('[GLS AUTH] Exception:', e.message);
+    return null;
+  }
 }
 
 async function trackGLS(awb) {
@@ -48,54 +62,46 @@ async function trackGLS(awb) {
   const cached = trackingCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
 
-  if (!GLS_API_KEY) return null;
+  const token = await getGLSToken();
+  if (!token) return null;
 
   try {
-    // Endpoint corect din documentație
     const url = `https://api-sandbox.gls-group.net/track-and-trace-v1/tracking/simple/trackids/${awb}`;
     const res = await fetch(url, {
       headers: {
-        'Authorization': getAuthHeader(),
+        'Authorization': `Bearer ${token}`,
         'Accept': 'application/json',
       },
       signal: AbortSignal.timeout(10000),
     });
 
     if (!res.ok) {
-      console.log('[GLS] Error:', res.status, awb);
+      console.log('[GLS TRACK] Error:', res.status, awb);
       return null;
     }
 
     const data = await res.json();
-    console.log('[GLS] Response for', awb, ':', JSON.stringify(data).slice(0, 300));
-
-    // Response: { parcels: [{ parcelNumber, status, events: [...] }] }
     const parcel = data?.parcels?.[0] || data?.[0] || data;
-    if (!parcel) return null;
+    const events = parcel?.events || [];
+    const lastEvent = events[0] || {};
 
-    const events = parcel.events || [];
-    const lastEvent = events[0] || {}; // primul = cel mai recent
-    
-    // Status din câmpul parcel.status sau din ultimul eveniment
     const statusCode = String(
-      parcel.status?.code || parcel.deliveryStatus || 
-      parcel.statusCode || lastEvent.code || lastEvent.eventCode || ''
-    ).toUpperCase().replace(/\s/g, '_');
-
-    const mapped = GLS_EVENT_STATUS[statusCode] || 'in_transit';
+      parcel?.status?.code || parcel?.deliveryStatus ||
+      lastEvent?.code || lastEvent?.eventCode || ''
+    ).toUpperCase().replace(/\s/g,'_');
 
     const result = {
-      status: mapped,
+      status: GLS_EVENT_STATUS[statusCode] || 'in_transit',
       statusRaw: statusCode,
-      lastUpdate: lastEvent.timestamp || lastEvent.date || parcel.lastUpdate || '',
-      location: lastEvent.location?.city || lastEvent.city || lastEvent.depot || '',
-      description: lastEvent.description || lastEvent.eventDescription || '',
+      lastUpdate: lastEvent?.timestamp || lastEvent?.date || '',
+      location: lastEvent?.location?.city || lastEvent?.city || '',
+      description: lastEvent?.description || '',
     };
 
     trackingCache.set(cacheKey, { data: result, ts: Date.now() });
     return result;
   } catch(e) {
-    console.log('[GLS] Exception:', e.message, awb);
+    console.log('[GLS TRACK] Exception:', e.message);
     return null;
   }
 }
@@ -104,19 +110,15 @@ async function trackSameday(awb) {
   const cacheKey = `sd_${awb}`;
   const cached = trackingCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
-
   try {
-    const res = await fetch(
-      `https://api.sameday.ro/api/public/awb/${awb}/awb-history`,
-      { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(10000) }
-    );
+    const res = await fetch(`https://api.sameday.ro/api/public/awb/${awb}/awb-history`,
+      { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(10000) });
     if (!res.ok) return null;
     const data = await res.json();
-    const history = data.awbHistory || [];
-    if (!history.length) return null;
-    const last = history[0];
+    const last = (data.awbHistory||[])[0];
+    if (!last) return null;
     const result = {
-      status: SAMEDAY_STATUS_MAP[String(last.statusId || '')] || 'in_transit',
+      status: SAMEDAY_STATUS_MAP[String(last.statusId||'')] || 'in_transit',
       statusRaw: last.statusLabel || '',
       lastUpdate: last.statusDate || '',
       location: last.county || '',
@@ -135,54 +137,43 @@ export async function GET(request) {
   if (!awb) return NextResponse.json({ error: 'AWB lipsă' }, { status: 400 });
 
   if (debug) {
-    if (!GLS_API_KEY) return NextResponse.json({
-      error: 'GLS_API_KEY lipsă în Vercel Environment Variables'
-    });
+    const results = {};
 
-    const results = [];
-    const authHeader = getAuthHeader();
+    // Test 1: OAuth token
+    try {
+      const tokenRes = await fetch('https://api-sandbox.gls-group.net/oauth/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${GLS_API_KEY}`).toString('base64')}`,
+        },
+        body: 'grant_type=client_credentials',
+        signal: AbortSignal.timeout(10000),
+      });
+      const tokenText = await tokenRes.text();
+      let tokenData;
+      try { tokenData = JSON.parse(tokenText); } catch { tokenData = tokenText.slice(0,200); }
+      results.oauth = { status: tokenRes.status, data: tokenData };
 
-    // Testăm endpoint-urile corecte din documentație
-    const endpoints = [
-      // Production URLs (documentația zice sandbox = production)
-      `https://api-sandbox.gls-group.net/track-and-trace-v1/tracking/simple/trackids/${awb}`,
-      `https://api-sandbox.gls-group.net/track-and-trace-v1/tracking/simple/references/${awb}`,
-      // Alt format URL
-      `https://api.gls-group.eu/track-and-trace-v1/tracking/simple/trackids/${awb}`,
-      `https://api.gls-group.eu/track-and-trace-v1/tracking/simple/references/${awb}`,
-      // Fără versiune
-      `https://api-sandbox.gls-group.net/tracking/simple/trackids/${awb}`,
-    ];
-
-    for (const url of endpoints) {
-      try {
-        // Testăm 2 variante auth per URL
-        const authVariants = [
-          { 'Authorization': authHeader, 'Accept': 'application/json' },
-          { 'Authorization': `apikey ${GLS_API_KEY}`, 'Accept': 'application/json' },
-        ];
-        let r, text, parsed;
-        for (const headers of authVariants) {
-          r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
-          text = await r.text();
-          try { parsed = JSON.parse(text); } catch { parsed = text.slice(0, 200); }
-          results.push({ url, authType: Object.values(headers)[0].slice(0,20)+'...', status: r.status, response: parsed });
-          if (r.status !== 401 && r.status !== 403) break;
-        }
-        continue;
-        const text = await r.text();
-        let parsed;
-        try { parsed = JSON.parse(text); } catch { parsed = text.slice(0, 300); }
-      } catch(e) {
-        results.push({ url, error: e.message });
+      // Test 2: dacă avem token, testăm tracking
+      if (tokenRes.ok && tokenData.access_token) {
+        const trackRes = await fetch(
+          `https://api-sandbox.gls-group.net/track-and-trace-v1/tracking/simple/trackids/${awb}`,
+          {
+            headers: { 'Authorization': `Bearer ${tokenData.access_token}`, 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(10000),
+          }
+        );
+        const trackText = await trackRes.text();
+        let trackData;
+        try { trackData = JSON.parse(trackText); } catch { trackData = trackText.slice(0,300); }
+        results.tracking = { status: trackRes.status, data: trackData };
       }
+    } catch(e) {
+      results.error = e.message;
     }
 
-    return NextResponse.json({
-      awb,
-      auth: `Basic ${GLS_APP_ID.slice(0,6)}:${GLS_API_KEY.slice(0,6)}...`,
-      results
-    });
+    return NextResponse.json({ awb, credentials: { appId: GLS_APP_ID.slice(0,8)+'...', apiKey: GLS_API_KEY.slice(0,8)+'...' }, results });
   }
 
   const c = courier.toLowerCase();
@@ -194,11 +185,7 @@ export async function POST(request) {
   try {
     const { orders } = await request.json();
     if (!orders?.length) return NextResponse.json({ results: [] });
-
-    if (!GLS_API_KEY) return NextResponse.json({
-      results: [],
-      error: 'GLS_API_KEY lipsă. Adaugă în Vercel → Settings → Environment Variables.'
-    });
+    if (!GLS_API_KEY) return NextResponse.json({ results: [], error: 'GLS_API_KEY lipsă' });
 
     const results = [];
     for (let i = 0; i < orders.length; i += 5) {
@@ -206,8 +193,8 @@ export async function POST(request) {
       const batchRes = await Promise.allSettled(
         batch.map(async ({ id, awb, courier }) => {
           if (!awb) return { id, status: null };
-          const c = (courier||'').toLowerCase();
-          const t = c.includes('sameday') ? await trackSameday(awb) : await trackGLS(awb);
+          const t = (courier||'').toLowerCase().includes('sameday')
+            ? await trackSameday(awb) : await trackGLS(awb);
           return { id, awb, courier, ...t };
         })
       );
@@ -216,7 +203,6 @@ export async function POST(request) {
       ));
       if (i + 5 < orders.length) await new Promise(r => setTimeout(r, 400));
     }
-
     return NextResponse.json({ results, count: results.length });
   } catch(e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
