@@ -29,12 +29,13 @@ const GLS_EVENT_STATUS = {
 async function getGLSToken() {
   if (glsToken && Date.now() < glsTokenExpiry - 60000) return glsToken;
   try {
-    const secret = process.env.GLS_API_SECRET || GLS_API_KEY;
+    const secret = process.env.GLS_API_SECRET || '';
     const res = await fetch(OAUTH_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${Buffer.from(`${GLS_APP_ID}:${secret}`).toString('base64')}`,
+        // Combinația corectă: Key:Secret (Basic Auth)
+        'Authorization': `Basic ${Buffer.from(`${GLS_API_KEY}:${secret}`).toString('base64')}`,
       },
       body: 'grant_type=client_credentials',
       signal: AbortSignal.timeout(10000),
@@ -65,11 +66,17 @@ async function trackGLS(awb) {
     const data = await res.json();
 
     const parcel = data?.parcels?.[0] || data?.[0] || data;
+
+    // E_404_01 = colet nu mai există în sistem = livrat și arhivat
+    if (parcel?.errorCode === 'E_404_01') {
+      return { status: 'delivered', statusRaw: 'ARCHIVED', lastUpdate: '', location: '' };
+    }
+
     const events = parcel?.events || [];
     const lastEvent = events[0] || {};
     const statusCode = String(
       parcel?.status?.code || parcel?.deliveryStatus ||
-      lastEvent?.code || lastEvent?.eventCode || ''
+      parcel?.statusCode || lastEvent?.code || lastEvent?.eventCode || ''
     ).toUpperCase().replace(/\s/g,'_');
 
     const result = {
