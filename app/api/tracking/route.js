@@ -171,7 +171,7 @@ export async function GET(request) {
 
       // Step 2: tracking cu token - răspuns COMPLET
       if (r.ok && data?.access_token) {
-        // Testăm ambele endpoint-uri
+        // Testăm endpoint-urile GLS Group
         for (const endpoint of [
           `${TRACKING_BASE}/tracking/simple/trackids/${awb}`,
           `${TRACKING_BASE}/tracking/simple/references/${awb}`,
@@ -182,10 +182,30 @@ export async function GET(request) {
           });
           const ttext = await tr.text();
           let tdata; try { tdata = JSON.parse(ttext); } catch { tdata = ttext.slice(0,500); }
-          results['tracking_' + endpoint.split('/').pop()] = { 
-            status: tr.status, 
-            data: tdata  // Răspuns COMPLET netrunchiat
-          };
+          results['gls_group_' + endpoint.split('/').pop()] = { status: tr.status, data: tdata };
+        }
+
+        // Testăm API-ul GLS România cu token JWT
+        const roEndpoints = [
+          // API REST public RO - cu și fără token
+          { url: `https://gls-group.eu/app/service/open/rest/RO/ro/rstt001?match=${awb}`, auth: `Bearer ${data.access_token}` },
+          { url: `https://gls-group.eu/app/service/open/rest/RO/ro/rstt001?match=${awb}`, auth: null },
+          // Track and Trace V1 cu country=RO
+          { url: `${TRACKING_BASE}/tracking/simple/trackids/${awb}?countryCode=RO`, auth: `Bearer ${data.access_token}` },
+          { url: `${TRACKING_BASE}/tracking/simple/references/${awb}?countryCode=RO`, auth: `Bearer ${data.access_token}` },
+        ];
+        for (const { url, auth } of roEndpoints) {
+          try {
+            const headers = { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' };
+            if (auth) headers['Authorization'] = auth;
+            const tr = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+            const ttext = await tr.text();
+            let tdata; try { tdata = JSON.parse(ttext); } catch { tdata = ttext.slice(0,300); }
+            const key = url.includes('rstt001') ? (auth ? 'rstt001_with_token' : 'rstt001_no_token') : url.split('/').pop().split('?')[0] + (url.includes('countryCode') ? '_RO' : '');
+            results[key] = { status: tr.status, data: tdata };
+          } catch(e) {
+            results['error_' + url.split('/').pop()] = { error: e.message };
+          }
         }
       }
     } catch(e) { results.error = e.message; }
