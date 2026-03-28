@@ -209,7 +209,8 @@ export default function ProfitPage() {
     const ssku = g('glamx_shopify_sku_costs'); if (ssku) setShopifySkuCosts(JSON.parse(ssku));
 
     // Load orders (saved from previous session) — profit estimat imediat
-    const sord = g('gx_orders');
+    // Citeste din gx_orders_all (cheia salvata de dashboard) — contine si campul courier
+    const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
     if (sord) {
       try { const p = JSON.parse(sord); setShopifyOrders(p); setShopifyDone(true); } catch {}
     }
@@ -245,19 +246,28 @@ export default function ProfitPage() {
       const res = await fetch(`/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${year}-${m}-01T00:00:00&created_at_max=${year}-${m}-${daysInMonth}T23:59:59&fields=${fields}&force=1`);
       const data = await res.json();
       const orders = (data.orders || []).filter(o => !o.cancelled_at && o.financial_status !== 'voided');
-      const processed = orders.map(o => ({
-        id: o.id, name: o.name,
-        total: parseFloat(o.total_price) || 0,
-        financial: o.financial_status,
-        fulfillment: o.fulfillment_status,
-        fulfillments: o.fulfillments || [],
-        items: (o.line_items || []).map(i => ({ name: i.name, sku: i.sku||'', variantId: String(i.variant_id||''), qty: i.quantity||1, price: parseFloat(i.price)||0 })),
-        createdAt: o.created_at,
-        tags: o.tags||'',
-      }));
+      const processed = orders.map(o => {
+        const fulfillmentData = (o.fulfillments || []).find(f => f.tracking_company || f.tracking_number);
+        const trackingCompany = (fulfillmentData?.tracking_company || '').toLowerCase();
+        const courier = trackingCompany.includes('sameday') || trackingCompany.includes('same day') ? 'sameday'
+                      : trackingCompany.includes('gls') || trackingCompany.includes('mygls') ? 'gls'
+                      : trackingCompany ? 'other' : 'unknown';
+        return {
+          id: o.id, name: o.name,
+          total: parseFloat(o.total_price) || 0,
+          financial: o.financial_status,
+          fulfillment: o.fulfillment_status,
+          fulfillments: o.fulfillments || [],
+          courier,
+          items: (o.line_items || []).map(i => ({ name: i.name, sku: i.sku||'', variantId: String(i.variant_id||''), qty: i.quantity||1, price: parseFloat(i.price)||0 })),
+          createdAt: o.created_at,
+          tags: o.tags||'',
+        };
+      });
       setShopifyOrders(processed);
       setShopifyDone(true);
       localStorage.setItem('gx_orders_profit', JSON.stringify(processed));
+      localStorage.setItem('gx_orders_all', JSON.stringify(processed)); // sync cu dashboard
 
       try {
         const costRes = await fetch(`/api/product-costs?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}`);
@@ -360,13 +370,27 @@ export default function ProfitPage() {
   // ── CALCULATIONS ──
 
   // Comenzi livrate si platite
-  const deliveredOrders = shopifyOrders.filter(o =>
-    o.fulfillment === 'fulfilled' && o.financial === 'paid'
-  );
+  // Criteriu: plătite + nu anulate + nu retururi
+  // Dashboard format: fin=financial_status, ts=status calculat, fara fulfillment_status
+  // Profit fetch direct: financial=financial_status, fulfillment=fulfillment_status
+  const deliveredOrders = shopifyOrders.filter(o => {
+    const fin = o.fin || o.financial || '';
+    const ts  = o.ts || o.fulfillment || '';
+    if (fin !== 'paid') return false;
+    if (o.cancelled_at) return false;
+    if (ts === 'anulat' || ts === 'retur') return false;
+    // Daca are fulfillment_status direct din Shopify, verifica fulfilled
+    if (o.fulfillment_status && o.fulfillment_status !== 'fulfilled') return false;
+    return true;
+  });
 
   // Colete refuzate/returnate — aceeasi logica ca dashboard-ul principal
   const returnedOrders = shopifyOrders.filter(o => {
     if (o.cancelled_at) return false;
+    // Dashboard format: ts field
+    const ts = o.ts || '';
+    if (ts === 'retur') return true;
+    // Direct fetch format: fulfillments array
     const ffs = o.fulfillments || [];
     if (ffs.length > 0) {
       const deliveredF = ffs.find(f => (f.shipment_status||'').toLowerCase() === 'delivered');
@@ -374,11 +398,12 @@ export default function ProfitPage() {
       const ss = (f.shipment_status || '').toLowerCase();
       if (RETURNED_SHIPMENT.has(ss)) return true;
     }
-    if (o.financial === 'refunded' || o.financial === 'partially_refunded') return true;
+    const fin = o.financial || o.fin || '';
+    if (fin === 'refunded' || fin === 'partially_refunded') return true;
     return false;
   });
 
-  const totalRevenue = deliveredOrders.reduce((s, o) => s + o.total, 0);
+  const totalRevenue = deliveredOrders.reduce((s, o) => s + (o.total || 0), 0);
   const totalOrders = deliveredOrders.length;
   const totalItems = deliveredOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.qty, 0), 0);
   const returnedCount = returnedOrders.length;
@@ -411,10 +436,11 @@ export default function ProfitPage() {
 
   // Transport
   // Detect courier per order from Shopify data
-  const glsOrders = deliveredOrders.filter(o => !o.courier || o.courier === 'gls' || o.courier === '');
-  const sdOrders  = deliveredOrders.filter(o => o.courier === 'sameday');
-  const glsCount  = glsOrders.length;
-  const sdCount   = sdOrders.length;
+  const sdOrders   = deliveredOrders.filter(o => o.courier === 'sameday');
+  const glsOrders  = deliveredOrders.filter(o => o.courier === 'gls');
+  const restOrders = deliveredOrders.filter(o => !o.courier || o.courier === 'unknown' || o.courier === '' || o.courier === 'other');
+  const glsCount   = glsOrders.length + restOrders.length; // necunoscutii merg la GLS ca fallback
+  const sdCount    = sdOrders.length;
   const totalParcelCount = totalOrders;
 
   const costPerParcel    = glsDone && glsRows.length > 0 ? glsCost / glsRows.length : transportPerParcel;
