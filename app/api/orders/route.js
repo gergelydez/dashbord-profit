@@ -23,7 +23,13 @@ const buildQuery = (cursor, createdAtMin) => {
         shippingAddress { name city province phone }
         billingAddress { name city province phone }
         lineItems(first: 10) {
-          edges { node { name quantity } }
+          edges {
+            node {
+              name quantity
+              originalUnitPriceSet { shopMoney { amount } }
+              variant { sku }
+            }
+          }
         }
         fulfillments {
           updatedAt createdAt
@@ -98,8 +104,8 @@ function toRestOrder(node) {
   const lineItems = (node.lineItems?.edges || []).map(e => ({
     name: e.node.name || '',
     quantity: e.node.quantity || 1,
-    price: '0',
-    sku: '',
+    price: parseFloat(e.node.originalUnitPriceSet?.shopMoney?.amount || '0'),
+    sku: e.node.variant?.sku || '',
   }));
 
   const gateways = node.paymentGatewayNames || [];
@@ -210,4 +216,3 @@ export async function OPTIONS() {
     },
   });
 }
-
