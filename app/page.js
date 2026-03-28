@@ -723,25 +723,31 @@ export default function Dashboard() {
 
       <div className="wrap">
         <header>
-          <div className="logo"><img src="/icon-192.png" alt="GLAMX"/></div>
-          <div><div className="h1">Dashboard Comenzi</div><div className="hsub">Shopify Live</div></div>
-          <div className="hr">
-            <div className="live"><div className={`dot ${connected?'on':''}`}></div><span>{connected ? `${orders.length} comenzi` : 'Deconectat'}</span></div>
-            {connected && <>
-              <button className="bsm" onClick={() => fetchOrders('force')}>⟳ Sincronizează</button>
-              {bgLoading && <span style={{fontSize:10,color:'#f59e0b',display:'flex',alignItems:'center',gap:4}}>
-                <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Se încarcă istoric...
-              </span>}
-              {fetchedFrom && !bgLoading && <span style={{fontSize:9,color:'#334155'}}>
-                Date din: {fetchedFrom.slice(0,10)}
-              </span>}
-              <a href="/profit" className="nav-link" style={{background:'rgba(16,185,129,.12)',color:'#10b981',border:'1px solid rgba(16,185,129,.25)'}}>💹 Profit</a>
-              <a href="/stats" className="nav-link" style={{background:'rgba(59,130,246,.12)',color:'#3b82f6',border:'1px solid rgba(59,130,246,.25)'}}>📊 Stats</a>
-              <a href="/import" className="nav-link" style={{background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.25)'}}>📦 Import</a>
-              <a href="/whatsapp" className="nav-link" style={{background:'rgba(37,211,102,.12)',color:'#25d366',border:'1px solid rgba(37,211,102,.25)'}}>📱 WA</a>
-              <button className="bsm" style={{borderColor:'rgba(244,63,94,.3)',color:'#f43f5e'}} onClick={disconnect}>✕</button>
-            </>}
+          {/* ROW 1: Logo + titlu + status */}
+          <div className="header-row1">
+            <div className="logo"><img src="/icon-192.png" alt="GLAMX"/></div>
+            <div className="header-title">
+              <div className="h1">Dashboard Comenzi</div>
+              <div className="hsub">Shopify Live</div>
+            </div>
+            <div className="header-status">
+              <div className="live"><div className={`dot ${connected?'on':''}`}></div><span>{connected ? `${orders.length} comenzi` : 'Deconectat'}</span></div>
+              {connected && <>
+                <button className="bsm sync-btn" onClick={() => fetchOrders('force')}>⟳ Sincronizează</button>
+                {bgLoading && <span className="bg-loading">⟳</span>}
+                <button className="disc-btn" onClick={disconnect}>✕</button>
+              </>}
+            </div>
           </div>
+          {/* ROW 2: Nav links — mobile: sub logo, desktop: în hr */}
+          {connected && (
+            <div className="header-nav">
+              <a href="/profit" className="nav-link" style={{background:'rgba(16,185,129,.12)',color:'#10b981',border:'1px solid rgba(16,185,129,.25)'}}>💹 Profit</a>
+              <a href="/stats" className="nav-link" style={{background:'rgba(59,130,246,.12)',color:'#3b82f6',border:'1px solid rgba(59,130,246,.25)'}}>📊 Statistici</a>
+              <a href="/import" className="nav-link" style={{background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.25)'}}>📦 Import</a>
+              <a href="/whatsapp" className="nav-link" style={{background:'rgba(37,211,102,.12)',color:'#25d366',border:'1px solid rgba(37,211,102,.25)'}}>📱 WhatsApp</a>
+            </div>
+          )}
         </header>
 
         {!connected && !loading && (
