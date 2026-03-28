@@ -284,7 +284,30 @@ export default function Stats() {
       return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
     };
 
-    const previziuni = { azi: {gls:0,sameday:0,shopify:0,total:0}, maine: {gls:0,sameday:0,shopify:0,total:0} };
+    // Calculăm pentru azi + 4 zile lucrătoare viitoare
+    const nextWorkDayStr = (n) => {
+      const d = new Date(todayStr + 'T12:00:00');
+      let added = 0;
+      while (added < n) {
+        d.setDate(d.getDate() + 1);
+        if (d.getDay() !== 0 && d.getDay() !== 6) added++;
+      }
+      return d.toISOString().slice(0,10);
+    };
+    const workDays = [0,1,2,3,4].map(n => n === 0 ? todayStr : nextWorkDayStr(n));
+    const workDayLabels = workDays.map(str => {
+      const d = new Date(str + 'T12:00:00');
+      const days = ['Dum','Lun','Mar','Mie','Joi','Vin','Sâm'];
+      const months = ['ian','feb','mar','apr','mai','iun','iul','aug','sep','oct','nov','dec'];
+      return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
+    });
+    const previziuni = {};
+    workDays.forEach(str => {
+      previziuni[str] = {gls:0, sameday:0, shopify:0, total:0};
+    });
+    // Backward compat
+    previziuni['azi'] = previziuni[workDays[0]];
+    previziuni['maine'] = previziuni[workDays[1]];
 
     livrateInPeriod.forEach(o => {
       if (!o.fulfilledAt) return;
@@ -295,28 +318,22 @@ export default function Stats() {
       const isCOD = !isOnline;
       const net = isOnline ? o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed : o.total;
 
-      const add = (day, courier, val) => {
-        if (previziuni[day]) {
-          previziuni[day][courier] += val;
-          previziuni[day].total    += val;
+      const addByDate = (dateStr, courier, val) => {
+        if (previziuni[dateStr]) {
+          previziuni[dateStr][courier] += val;
+          previziuni[dateStr].total    += val;
         }
       };
 
       if (o.courier === 'gls' && isCOD) {
-        // GLS COD: ramburs după 2 zile lucrătoare
         const incasareGLS = nextBusinessDay(livStr, 2);
-        if (incasareGLS === todayStr)              add('azi','gls', o.total);
-        if (incasareGLS === addDays(todayStr, 1))  add('maine','gls', o.total);
+        addByDate(incasareGLS, 'gls', o.total);
       } else if (o.courier === 'sameday' && isCOD) {
-        // Sameday COD: ramburs după 1 zi lucrătoare
         const incasareSD = nextBusinessDay(livStr, 1);
-        if (incasareSD === todayStr)               add('azi','sameday', o.total);
-        if (incasareSD === addDays(todayStr, 1))   add('maine','sameday', o.total);
+        addByDate(incasareSD, 'sameday', o.total);
       } else if (isOnline) {
-        // Shopify Payments: payout după 2 zile lucrătoare
         const incasareSP = nextBusinessDay(livStr, 2);
-        if (incasareSP === todayStr)               add('azi','shopify', net);
-        if (incasareSP === addDays(todayStr, 1))   add('maine','shopify', net);
+        addByDate(incasareSP, 'shopify', net);
       }
     });
 
@@ -331,7 +348,7 @@ export default function Stats() {
     return {
       total, livrate: livrate.length, retururi: retururi.length,
       sourceList,
-      incasariList, previziuni,
+      incasariList, previziuni, workDays, workDayLabels,
       totalGLS, totalSameday, totalShopify, totalShopifyBrut,
       anulate: anulate.length, tranzit: tranzit.length, pending: pending.length,
       gls: glsAll.length, sameday: sdAll.length,
@@ -465,25 +482,49 @@ export default function Stats() {
           <span style={{fontSize:10,color:'#4a5568'}}>ex: 399 × (1-{shopifyFeePercent}%) = {fmt(399*(1-shopifyFeePercent/100)-shopifyFeeFixed)} RON net</span>
         </div>
 
-        {/* PREVIZIUNI ÎNCASĂRI AZI / MÂINE */}
+        {/* PREVIZIUNI ÎNCASĂRI — AZI + MÂINE + URMĂTOARELE ZILE */}
         <Section title="De încasat"/>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          {['azi','maine'].map(day => {
-            const p = stats.previziuni?.[day] || {gls:0,sameday:0,shopify:0,total:0};
-            const label = day==='azi'?'⏰ De încasat AZI':'📅 De încasat MÂINE';
-            const color = day==='azi'?'#a855f7':'#10b981';
+          {(stats.workDays||[]).slice(0,2).map((dateStr, idx) => {
+            const p = stats.previziuni?.[dateStr] || {gls:0,sameday:0,shopify:0,total:0};
+            const label = idx===0 ? '⏰ De încasat AZI' : '📅 De încasat MÂINE';
+            const color = idx===0 ? '#a855f7' : '#10b981';
             return (
-              <div key={day} style={{background:'#0d1520',border:`1px solid ${color}`,borderRadius:12,padding:'14px 16px'}}>
-                <div style={{fontSize:10,color,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{label}</div>
-                <div style={{fontSize:24,fontWeight:800,color,marginBottom:8}}>{fmt(p.total)} <span style={{fontSize:12}}>RON</span></div>
-                {p.gls>0     && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>📦 GLS: <strong style={{color:'#f97316'}}>{fmt(p.gls)} RON</strong></div>}
-                {p.sameday>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>🚀 SD: <strong style={{color:'#3b82f6'}}>{fmt(p.sameday)} RON</strong></div>}
-                {p.shopify>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>💳 Shopify: <strong style={{color:'#a855f7'}}>{fmt(p.shopify)} RON</strong> <span style={{fontSize:9,color:'#4a5568'}}>(după comision)</span></div>}
-                {p.total===0 && <div style={{fontSize:11,color:'#4a5568'}}>Nimic programat</div>}
+              <div key={dateStr} style={{background:'#0d1520',border:`1px solid ${color}33`,borderRadius:12,padding:'14px 16px',borderTop:`3px solid ${color}`}}>
+                <div style={{fontSize:9,color,textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>{label}</div>
+                <div style={{fontFamily:'Syne,sans-serif',fontSize:22,fontWeight:800,color,marginBottom:8}}>{fmt(p.total)} <span style={{fontSize:11,fontWeight:400}}>RON</span></div>
+                {p.gls>0     && <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>📦 GLS: <strong style={{color:'#f97316'}}>{fmt(p.gls)}</strong></div>}
+                {p.sameday>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>🚀 SD: <strong style={{color:'#3b82f6'}}>{fmt(p.sameday)}</strong></div>}
+                {p.shopify>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>💳 Card: <strong style={{color:'#a855f7'}}>{fmt(p.shopify)}</strong></div>}
+                {p.total===0 && <div style={{fontSize:11,color:'#334155'}}>Nimic programat</div>}
               </div>
             );
           })}
         </div>
+        {/* Card "Următoarele zile" */}
+        {(stats.workDays||[]).slice(2).some(d => (stats.previziuni?.[d]?.total||0) > 0) && (
+          <div style={{background:'#0d1520',border:'1px solid #1e2a35',borderRadius:12,padding:'14px 16px',marginBottom:10}}>
+            <div style={{fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:2,marginBottom:10}}>📆 Următoarele zile</div>
+            {(stats.workDays||[]).slice(2).map((dateStr, idx) => {
+              const p = stats.previziuni?.[dateStr] || {gls:0,sameday:0,shopify:0,total:0};
+              const label = (stats.workDayLabels||[])[idx+2] || dateStr;
+              if (p.total === 0) return null;
+              return (
+                <div key={dateStr} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid #1a2535'}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:700,color:'#e2e8f0'}}>{label}</div>
+                    <div style={{fontSize:10,color:'#475569',marginTop:2,display:'flex',gap:10}}>
+                      {p.gls>0     && <span>📦 {fmt(p.gls)} RON</span>}
+                      {p.sameday>0 && <span>🚀 {fmt(p.sameday)} RON</span>}
+                      {p.shopify>0 && <span>💳 {fmt(p.shopify)} RON</span>}
+                    </div>
+                  </div>
+                  <div style={{fontFamily:'Syne,sans-serif',fontSize:18,fontWeight:800,color:'#f97316'}}>{fmt(p.total)} <span style={{fontSize:10,fontWeight:400,color:'#64748b'}}>RON</span></div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* TOTAL ÎNCASAT PE COURIER */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:10}}>
