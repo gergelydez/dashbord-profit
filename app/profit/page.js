@@ -5,7 +5,7 @@ const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFrac
 const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
 const today = new Date();
 // preset default: last_month (luna trecuta)
-const monthLabel = (m) => { const [y, mo] = m.split('-'); const d = new Date(y, mo - 1, 1); return d.toLocaleString('ro-RO', { month: 'long', year: 'numeric' }); };
+
 
 function splitCSV(line) {
   const res = []; let cur = '', q = false;
@@ -1151,7 +1151,7 @@ export default function ProfitPage() {
 
             {uniqueProducts.length > 0 && (
               <>
-                <div className="pf-stitle">Cost rezolvat — {monthLabel(month)}</div>
+                <div className="pf-stitle">Cost rezolvat</div>
                 <div className="pf-card">
                   <table className="pf-prod-table">
                     <thead><tr><th>Produs</th><th style={{width:80,textAlign:'right'}}>Cost</th><th style={{width:44,textAlign:'center'}}>Sursă</th></tr></thead>
