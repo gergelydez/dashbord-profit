@@ -706,9 +706,15 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     return o.ts;
   };
 
+  const getFinalStatus = (o) => {
+    // Prioritate: GLS Excel → Sameday Excel → Tracking live → Shopify/xConnector
+    if (o.courier === 'gls') return getGlsStatusFinal(o);
+    if (o.courier === 'sameday') return getSdStatus(o) || o.ts;
+    return o.ts;
+  };
+
   const livrateOrders = allOrders.filter(o => {
-    // Statusul final: GLS Excel > Shopify
-    const finalTs = o.courier === 'gls' ? getGlsStatusFinal(o) : o.ts;
+    const finalTs = getFinalStatus(o);
     if (finalTs !== 'livrat') return false;
     const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
     return fd >= rangeFromD && fd <= rangeToD;
@@ -770,7 +776,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     const fd = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
     return fd >= rangeFromD && fd <= rangeToD;
   }).length;
-  const glsRetur = glsOrders.filter(o => getGlsStatusFinal(o) === 'retur').length;
+  const glsRetur  = glsOrders.filter(o => getGlsStatusFinal(o) === 'retur').length;
+  const glsIncurs = glsOrders.filter(o => getGlsStatusFinal(o) === 'incurs').length;
+  const glsOutfor = glsOrders.filter(o => getGlsStatusFinal(o) === 'outfor').length;
+  const glsPending= glsOrders.filter(o => getGlsStatusFinal(o) === 'pending').length;
 
   // Retururi suplimentare (din alte perioade, returnate în perioada curentă)
   const retururiExtra = allOrders.filter(o => {
@@ -805,7 +814,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
 
   const kpis = [
     {v:n,          lbl:'Total comenzi', e:'📦',color:'#f97316',p:100},
-    {v:livrate,    lbl:'Livrate',       e:'✅',color:'#10b981',p:pct(livrate,n)},
+    {v:livrate,    lbl:'Livrate',       e:'✅',color:'#10b981',p:pct(livrate,n)}, // livrate = orders cu ts=livrat în perioadă
     {v:incurs+outfor, lbl:'În tranzit', e:'🚚',color:'#3b82f6',p:pct(incurs+outfor,n)},
     {v:returTotal, lbl:'Retur',         e:'↩️',color:'#f43f5e',p:pct(returTotal,n)},
     {v:anulate,    lbl:'Anulate',       e:'❌',color:'#4a5568',p:pct(anulate,n)},
@@ -1072,10 +1081,17 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                       <strong>MyGLS → Parcels → Export Excel</strong>
                     </div>
                   )}
-                  {[['Total',glsOrders.length,'#e8edf2'],['✅ Livrate',glsLivrate,'#10b981'],['↩️ Returnate',glsRetur,glsRetur>0?'#f43f5e':'#94a3b8']].map(([lbl,val,col])=>(
+                  {[
+                    ['Total',glsOrders.length,'#e8edf2'],
+                    ['✅ Livrate',glsLivrate,'#10b981'],
+                    ['🚚 Tranzit',glsIncurs,'#3b82f6'],
+                    ['📬 La curier',glsOutfor,'#a855f7'],
+                    ['⏳ Pending',glsPending,'#f59e0b'],
+                    ['↩️ Returnate',glsRetur,glsRetur>0?'#f43f5e':'#94a3b8'],
+                  ].map(([lbl,val,col])=>(
                     <div key={lbl} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
                       <span style={{color:'#94a3b8'}}>{lbl}</span>
-                      <span style={{color:col,fontFamily:'monospace',fontWeight:val>0&&lbl.includes('Retur')?700:400}}>{val}</span>
+                      <span style={{color:col,fontFamily:'monospace',fontWeight:700}}>{val}</span>
                     </div>
                   ))}
                 </div>
