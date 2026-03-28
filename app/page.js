@@ -905,6 +905,14 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 </button>
                 {bgLoading && <span className="bg-loading">⟳</span>}
                 <button className="disc-btn" onClick={disconnect}>✕</button>
+                {process.env.NODE_ENV !== 'production' && (
+                  <button className="bsm" style={{fontSize:9,padding:'3px 6px'}} onClick={() => {
+                    const ov = trackingOverrides.get();
+                    const ovCount = Object.keys(ov).length;
+                    const sample = Object.entries(ov).slice(0,3).map(([id,v])=>`${id}→${v.ts}`).join(', ');
+                    alert(`Overrides: ${ovCount} comenzi\n${sample || 'gol'}\n\nOrders ts sample:\n${orders.slice(0,5).map(o=>o.name+':'+o.ts).join(', ')}`);
+                  }}>🔍</button>
+                )}
               </>}
             </div>
           </div>
