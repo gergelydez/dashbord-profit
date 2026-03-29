@@ -126,23 +126,21 @@ export default function Stats() {
   const orders = useMemo(() => {
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
-    const ordersWithOv = applyTrackingOverrides(allOrders, serverOverrides);
-    return ordersWithOv.filter(o => {
+    return allOrders.filter(o => {
       const c = new Date(o.createdAt);
       return c >= fromD && c <= toD;
     });
-  }, [allOrders, serverOverrides, from, to]);
+  }, [allOrders, from, to]);
 
   // getFinalStatus și getSdStatus — definite sus ca funcții pure (primesc map-urile ca parametri)
 
   const livrateInPeriod = useMemo(() => {
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
-    const ordersWithOv = applyTrackingOverrides(allOrders, serverOverrides);
-    return ordersWithOv.filter(o => {
-      // getFinalStatus: GLS Excel > overrides > Shopify — identic cu Dashboard
-      const isLivrat = getFinalStatus(o, glsAwbMap, sdAwbMap) === 'livrat';
-      if (!isLivrat) return false;
+    // allOrders are overrides aplicate deja
+    // getFinalStatus aplică glsAwbMap/sdAwbMap — prioritate corectă
+    return allOrders.filter(o => {
+      if (getFinalStatus(o, glsAwbMap, sdAwbMap) !== 'livrat') return false;
       const livDate = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
       return livDate >= fromD && livDate <= toD;
     });
@@ -163,9 +161,9 @@ export default function Stats() {
       return refDate >= fromD2 && refDate <= toD2;
     });
     const anulate  = orders.filter(o => getFinalStatus(o, glsAwbMap, sdAwbMap) === 'anulat');
-    const allWithOv = applyTrackingOverrides(allOrders, serverOverrides);
-    const tranzit  = allWithOv.filter(o => ['incurs','outfor'].includes(getFinalStatus(o, glsAwbMap, sdAwbMap)));
-    const pending  = allWithOv.filter(o => getFinalStatus(o, glsAwbMap, sdAwbMap) === 'pending');
+    // allOrders are deja overrides aplicate — getFinalStatus aplică și glsAwbMap/sdAwbMap
+    const tranzit  = allOrders.filter(o => ['incurs','outfor'].includes(getFinalStatus(o, glsAwbMap, sdAwbMap)));
+    const pending  = allOrders.filter(o => getFinalStatus(o, glsAwbMap, sdAwbMap) === 'pending');
 
     // Courier breakdown din livrateInPeriod
     const gls      = livrateInPeriod.filter(o => o.courier === 'gls');
@@ -834,5 +832,6 @@ export default function Stats() {
     </div>
   );
 }
+
 
 
