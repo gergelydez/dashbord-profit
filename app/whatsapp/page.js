@@ -107,8 +107,7 @@ export default function WhatsAppPage() {
       try { setWaOrders(JSON.parse(savedOrders)); } catch {}
     }
     const savedTpl = ls.get('wa_template');
-    setMsgTemplate(savedTpl || `👋 Bună ziua, {{client}}! Vă contactăm din partea glamx.ro în legătură cu comanda dumneavoastră #{{nr}} pentru {{produse}}.
-
+    setMsgTemplate(savedTpl || `👋 Bună ziua, {{client}}! Vă contactăm din partea glamx.ro în legătură cu comanda dumneavoastră {{nr}} pentru {{produse}}. 
 📦 Pentru a putea expedia comanda în valoare de {{total}} RON, vă rugăm să ne confirmați dacă aceasta rămâne valabilă.
 
 👉 Răspundeți cu:
