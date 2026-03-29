@@ -17,11 +17,13 @@ function applyOverrides(orders) {
   const ov = getLocalOverrides();
   const now = new Date();
   return orders.map(o => {
-    // Auto-livrat: în tranzit de mai mult de 30 zile = livrat (coletul nu mai e în tranzit)
+    // În tranzit >30 zile → anulat (fantasmă, probabil anulată fără AWB)
     if (['incurs','outfor'].includes(o.ts) && o.createdAt) {
       const daysSince = (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
-      if (daysSince > 30) return { ...o, ts: 'livrat' };
+      if (daysSince > 30) return { ...o, ts: 'anulat' };
     }
+    // Anulată financiar → anulat
+    if (o.fin === 'voided' || o.fin === 'refunded') return { ...o, ts: 'anulat' };
     const override = ov[o.id];
     if (!override) return o;
     return { ...o, ts: override.ts };
