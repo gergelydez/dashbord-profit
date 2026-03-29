@@ -201,6 +201,7 @@ export default function Dashboard() {
   const [lastTrackingCheck, setLastTrackingCheck] = useState(null);
   const [glsFiles, setGlsFiles]   = useState(() => { try { return JSON.parse(ls.get('gls_files') || '[]'); } catch { return []; } });
   const [courierFilter, setCourierFilter] = useState('toate');
+  const [showTranzitPanel, setShowTranzitPanel] = useState(false);
 
   const [sbInvLoading, setSbInvLoading] = useState({});
   const [sbInvResults, setSbInvResults] = useState({});
@@ -786,8 +787,11 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   // allOrders are deja overrides aplicate — getFinalStatus aplică și glsAwbMap
   // Nu re-aplicăm applyTrackingOverrides (ar fi dublu)
   const cntAll = s => allOrders.filter(o=>getFinalStatus(o)===s).length;
-  const incurs = cntAll('incurs');
-  const outfor = cntAll('outfor');
+  // Lista exactă de comenzi în tranzit — pentru KPI și click-to-filter
+  // Excludem comenzile cu ts='incurs' dar care au tracking override 'livrat'
+  const tranzitOrders = allOrders.filter(o => ['incurs','outfor'].includes(getFinalStatus(o)));
+  const incurs = tranzitOrders.filter(o => getFinalStatus(o) === 'incurs').length;
+  const outfor = tranzitOrders.filter(o => getFinalStatus(o) === 'outfor').length;
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
@@ -1008,15 +1012,40 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             <div className="stitle">Sumar {rangeLabel}</div>
             <div className="kgrid">
               {kpis.map((k,i) => (
-                <div key={i} className="kpi" style={{'--kc':k.color}}>
+                <div key={i} className="kpi" style={{'--kc':k.color}}
+                  onClick={i===2?()=>setShowTranzitPanel(v=>!v):undefined}
+                  title={i===2?'Click pentru detalii tranzit':undefined}
+                  css={i===2?{cursor:'pointer'}:{}}>
                   <span className="ke">{k.e}</span>
                   <div className="kv">{k.v}</div>
-                  <div className="kl">{k.lbl}</div>
+                  <div className="kl">{k.lbl}{i===2&&<span style={{fontSize:9,marginLeft:4,opacity:.6}}>▼</span>}</div>
                   <div className="kbar"><div className="kfill" style={{width:k.p+'%'}}></div></div>
                   <div className="kp">{k.p}%</div>
                 </div>
-              ))}
-            </div>
+              ))}\n            </div>
+
+            {/* Panel tranzit expandabil */}
+            {showTranzitPanel && tranzitOrders.length > 0 && (
+              <div style={{background:'rgba(59,130,246,.06)',border:'1px solid rgba(59,130,246,.2)',borderRadius:10,padding:'10px 14px',marginBottom:10}}>
+                <div style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,marginBottom:8,fontWeight:700}}>
+                  🚚 Colete în tranzit acum — {tranzitOrders.length} total
+                </div>
+                {tranzitOrders.map(o => (
+                  <div key={o.id} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)',fontSize:11}}>
+                    <span style={{color:'#f97316',fontWeight:700,minWidth:70}}>{o.name}</span>
+                    <span style={{color:'#94a3b8',flex:1}}>{o.client}</span>
+                    <span style={{color:'#64748b',fontFamily:'monospace',fontSize:10}}>{o.trackingNo||'—'}</span>
+                    <span style={{fontSize:10,fontWeight:700,
+                      color:getFinalStatus(o)==='outfor'?'#a855f7':'#3b82f6',
+                      background:getFinalStatus(o)==='outfor'?'rgba(168,85,247,.1)':'rgba(59,130,246,.1)',
+                      padding:'2px 6px',borderRadius:8}}>
+                      {getFinalStatus(o)==='outfor'?'La curier':'Tranzit'}
+                    </span>
+                    <span style={{fontSize:10,color:'#475569'}}>{o.createdAt?.slice(0,10)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="srow">
               {sI>0 && (
@@ -1516,4 +1545,5 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
+
 
