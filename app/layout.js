@@ -1,4 +1,5 @@
 import './globals.css';
+import SwipeNavigator from './SwipeNavigator';
 
 export const metadata = {
   title: 'GLAMX Dashboard',
@@ -27,7 +28,10 @@ export default function RootLayout({ children }) {
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body>
-        {children}
+        <div id="page-content" style={{willChange:'transform,opacity'}}>
+          {children}
+        </div>
+        <SwipeNavigator />
         {/* Bottom Navigation — vizibil doar pe mobile prin CSS */}
         <nav className="bottom-nav">
           <div className="bottom-nav-items">
