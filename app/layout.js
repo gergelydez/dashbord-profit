@@ -28,7 +28,18 @@ export default function RootLayout({ children }) {
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body>
-        <div id="page-content" style={{willChange:'transform,opacity'}}>
+        <div
+          id="page-wrap"
+          style={{
+            willChange: 'transform, opacity',
+            backfaceVisibility: 'hidden',
+            WebkitBackfaceVisibility: 'hidden',
+            transform: 'translateX(0)',
+            opacity: 1,
+            minHeight: '100dvh',
+            overflowX: 'hidden',
+          }}
+        >
           {children}
         </div>
         <SwipeNavigator />
