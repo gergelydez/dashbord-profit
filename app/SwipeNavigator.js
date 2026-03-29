@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
 const PAGES = ['/', '/whatsapp', '/stats', '/import', '/profit'];
-const EASE  = 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-const SNAP  = 'transform 280ms cubic-bezier(0.34, 1.2, 0.64, 1)';
+const EASE  = 'transform 260ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+const SNAP  = 'transform 220ms cubic-bezier(0.34, 1.2, 0.64, 1)';
 
 export default function SwipeNavigator() {
   const router   = useRouter();
@@ -96,8 +96,8 @@ export default function SwipeNavigator() {
       const dy = e.touches[0].clientY - s.current.startY;
 
       if (!s.current.axis) {
-        if (Math.hypot(dx, dy) < 8) return;
-        s.current.axis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+        if (Math.hypot(dx, dy) < 4) return;
+        s.current.axis = Math.abs(dx) > Math.abs(dy) * 0.6 ? 'h' : 'v';
         if (s.current.axis === 'h') {
           const idx = PAGES.indexOf(pathname);
           if (dx < 0 && idx >= PAGES.length - 1) { s.current.axis = 'v'; return; }
@@ -120,8 +120,8 @@ export default function SwipeNavigator() {
       const w   = window.innerWidth;
       const idx = PAGES.indexOf(pathname);
 
-      if      (dx < -w * 0.28 && idx < PAGES.length - 1) commit('left',  idx + 1);
-      else if (dx >  w * 0.28 && idx > 0)                commit('right', idx - 1);
+      if      (dx < -w * 0.15 && idx < PAGES.length - 1) commit('left',  idx + 1);
+      else if (dx >  w * 0.15 && idx > 0)                commit('right', idx - 1);
       else                                                snapBack();
 
       s.current.dragging = false;
