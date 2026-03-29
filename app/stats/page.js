@@ -108,11 +108,12 @@ export default function Stats() {
   const orders = useMemo(() => {
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
-    return allOrders.filter(o => {
+    const ordersWithOv = applyTrackingOverrides(allOrders, serverOverrides);
+    return ordersWithOv.filter(o => {
       const c = new Date(o.createdAt);
       return c >= fromD && c <= toD;
     });
-  }, [allOrders, from, to]);
+  }, [allOrders, serverOverrides, from, to]);
 
   // livrateInPeriod = TOATE comenzile livrate în intervalul selectat (după fulfilledAt)
   // Include orice metodă de plată (COD, Shopify Payments, etc.)
@@ -126,8 +127,9 @@ export default function Stats() {
   const livrateInPeriod = useMemo(() => {
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
-    return allOrders.filter(o => {
-      // ts deja include tracking overrides (GLS API)
+    // Re-aplicăm overrides (inclusiv server) pentru a fi siguri că ts-ul e corect
+    const ordersWithOv = applyTrackingOverrides(allOrders, serverOverrides);
+    return ordersWithOv.filter(o => {
       const isLivrat = o.ts === 'livrat' ||
         (o.courier === 'sameday' && getSdStatus(o) === 'livrat');
       if (!isLivrat) return false;
@@ -135,7 +137,7 @@ export default function Stats() {
       if (!livDate) return false;
       return livDate >= fromD && livDate <= toD;
     });
-  }, [allOrders, from, to, getSdStatus]);
+  }, [allOrders, serverOverrides, from, to, getSdStatus]);
 
   const stats = useMemo(() => {
     const total    = orders.length;
@@ -159,7 +161,8 @@ export default function Stats() {
     });
     const anulate  = orders.filter(o => o.ts === 'anulat');
     // Tranzit: din TOATE comenzile — un colet în tranzit e vizibil indiferent de filtrul de dată
-    const allWithOv = applyTrackingOverrides(allOrders);
+    // allOrders are deja overrides aplicate din useEffect, dar re-aplicăm pentru siguranță cu serverOverrides
+    const allWithOv = applyTrackingOverrides(allOrders, serverOverrides);
     const tranzit  = allWithOv.filter(o => ['incurs','outfor'].includes(o.ts));
     const pending  = allWithOv.filter(o => o.ts === 'pending');
 
@@ -290,41 +293,36 @@ export default function Stats() {
     };
 
     const incasariPerZi = {};
+    const addToZi = (str, field, val, net) => {
+      if (!str) return;
+      if (!incasariPerZi[str]) incasariPerZi[str] = { gls:0, sameday:0, shopify:0, total:0, count:0 };
+      incasariPerZi[str][field] += val;
+      incasariPerZi[str].total  += net !== undefined ? net : val;
+      incasariPerZi[str].count++;
+    };
+
+    // COD curierat — bazat pe data livrării
     livrateInPeriod.forEach(o => {
-      if (o.courier === 'sameday' && getSdStatus(o) !== 'livrat') return;
       const isOnline = isOnlinePayment(o, onlineIds);
-      const net = isOnline ? o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed : o.total;
-
-      let incasareStr = '';
-      if (isOnline) {
-        // Shopify Payments: 2 zile lucrătoare de la DATA PLASĂRII comenzii (nu livrare)
-        const baseStr = (o.createdAt || o.fulfilledAt || '').slice(0,10);
-        if (!baseStr) return;
-        incasareStr = addWorkDays(baseStr, 2);
-      } else if (o.courier === 'gls') {
-        // GLS COD: 2 zile lucrătoare de la livrare
-        // Joi livrat → Luni bani | Vineri livrat → Marți bani
-        const livStr = (o.fulfilledAt || o.createdAt || '').slice(0,10);
-        if (!livStr) return;
-        incasareStr = addWorkDays(livStr, 2);
+      if (isOnline) return; // Shopify Payments separat
+      if (o.courier === 'sameday' && getSdStatus(o) !== 'livrat') return;
+      const livStr = (o.fulfilledAt || o.createdAt || '').slice(0,10);
+      if (!livStr) return;
+      if (o.courier === 'gls') {
+        addToZi(addWorkDays(livStr, 2), 'gls', o.total);
       } else if (o.courier === 'sameday') {
-        // Sameday COD: 1 zi lucrătoare de la livrare
-        const livStr = (o.fulfilledAt || o.createdAt || '').slice(0,10);
-        if (!livStr) return;
-        incasareStr = addWorkDays(livStr, 1);
+        addToZi(addWorkDays(livStr, 1), 'sameday', o.total);
       } else {
-        const livStr = (o.fulfilledAt || o.createdAt || '').slice(0,10);
-        if (!livStr) return;
-        incasareStr = addWorkDays(livStr, 2);
+        addToZi(addWorkDays(livStr, 2), 'gls', o.total);
       }
+    });
 
-      if (!incasareStr) return;
-      if (!incasariPerZi[incasareStr]) incasariPerZi[incasareStr] = { gls:0, sameday:0, shopify:0, total:0, count:0 };
-      if (o.courier === 'gls' && !isOnline)          incasariPerZi[incasareStr].gls     += o.total;
-      else if (o.courier === 'sameday' && !isOnline) incasariPerZi[incasareStr].sameday += o.total;
-      else if (isOnline)                             incasariPerZi[incasareStr].shopify += net;
-      incasariPerZi[incasareStr].total += isOnline ? net : o.total;
-      incasariPerZi[incasareStr].count++;
+    // Shopify Payments — bazat pe data PLASĂRII (createdAt) — toate comenzile card din perioadă
+    onlineOrders.forEach(o => {
+      const baseStr = (o.createdAt || '').slice(0,10);
+      if (!baseStr) return;
+      const net = o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed;
+      addToZi(addWorkDays(baseStr, 2), 'shopify', o.total, net);
     });
     const incasariList = Object.entries(incasariPerZi)
       .sort((a,b) => b[0].localeCompare(a[0]))
@@ -377,32 +375,35 @@ export default function Stats() {
     previziuni['azi'] = previziuni[workDays[0]];
     previziuni['maine'] = previziuni[workDays[1]];
 
-    livrateInPeriod.forEach(o => {
-      if (!o.fulfilledAt) return;
-      if (o.courier === 'sameday' && getSdStatus(o) !== 'livrat') return;
-      const livStr = o.fulfilledAt.slice(0,10);
-      const isOnline = isOnlinePayment(o, onlineIds);
-      // Excludem Shopify Payments din COD curier
-      const isCOD = !isOnline;
-      const net = isOnline ? o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed : o.total;
-
-      const addByDate = (dateStr, courier, val) => {
-        if (previziuni[dateStr]) {
-          previziuni[dateStr][courier] += val;
-          previziuni[dateStr].total    += val;
-        }
-      };
-
-      if (o.courier === 'gls' && isCOD) {
-        const incasareGLS = nextBusinessDay(livStr, 2);
-        addByDate(incasareGLS, 'gls', o.total);
-      } else if (o.courier === 'sameday' && isCOD) {
-        const incasareSD = nextBusinessDay(livStr, 1);
-        addByDate(incasareSD, 'sameday', o.total);
-      } else if (isOnline) {
-        const incasareSP = nextBusinessDay(livStr, 2);
-        addByDate(incasareSP, 'shopify', net);
+    const addByDate = (dateStr, courier, val) => {
+      if (previziuni[dateStr]) {
+        previziuni[dateStr][courier] += val;
+        previziuni[dateStr].total    += val;
       }
+    };
+
+    // COD (GLS + Sameday) — bazat pe data livrării
+    livrateInPeriod.forEach(o => {
+      const isOnline = isOnlinePayment(o, onlineIds);
+      if (isOnline) return; // Shopify Payments se tratează separat mai jos
+      if (o.courier === 'sameday' && getSdStatus(o) !== 'livrat') return;
+      if (!o.fulfilledAt) return;
+      const livStr = o.fulfilledAt.slice(0,10);
+
+      if (o.courier === 'gls') {
+        addByDate(nextBusinessDay(livStr, 2), 'gls', o.total);
+      } else if (o.courier === 'sameday') {
+        addByDate(nextBusinessDay(livStr, 1), 'sameday', o.total);
+      }
+    });
+
+    // Shopify Payments — bazat pe data PLASĂRII comenzii (createdAt), nu livrare
+    // Banii intră în cont după 2 zile lucrătoare de la plasare
+    onlineOrders.forEach(o => {
+      const baseStr = (o.createdAt || '').slice(0, 10);
+      if (!baseStr) return;
+      const net = o.total * (1 - shopifyFeePercent / 100) - shopifyFeeFixed;
+      addByDate(nextBusinessDay(baseStr, 2), 'shopify', net);
     });
 
     // Total încasat GLS, Sameday, Shopify din livrate
@@ -428,7 +429,7 @@ export default function Stats() {
       topProd, avgPrice, prodList: prodList.slice(0, 10),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, livrateInPeriod, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed]);
+  }, [orders, livrateInPeriod, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed, serverOverrides]);
 
   const Bar = ({ pct, color }) => (
     <div style={{height:4,background:'#1e2a35',borderRadius:2,overflow:'hidden',marginTop:4}}>
