@@ -63,18 +63,22 @@ function applyTrackingOverrides(orders) {
   const now = new Date();
 
   return orders.map(o => {
-    // Auto-livrat: dacă comanda e în tranzit de mai mult de 30 zile → considerăm livrat
-    // Niciun colet nu stă fizic în tranzit mai mult de 30 zile
-    if (['incurs','outfor'].includes(o.ts) && o.createdAt) {
-      const daysSinceCreated = (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
-      if (daysSinceCreated > 30) {
-        return { ...o, ts: 'livrat' };
+    // Dacă e anulată în Shopify → anulat (indiferent de orice override)
+    if (o.ts === 'incurs' || o.ts === 'outfor') {
+      // Anulată sau în tranzit >30 zile → scoatem din tranzit
+      const daysSince = o.createdAt
+        ? (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24)
+        : 999;
+      if (daysSince > 30) {
+        return { ...o, ts: 'anulat' };
       }
     }
 
     // Prioritate: tracking overrides (din GLS API live)
     const override = ov[o.id];
     if (!override) return o;
+    // Nu aplicăm override dacă e anulată
+    if (o.fin === 'voided' || o.fin === 'refunded') return { ...o, ts: 'anulat' };
     return { ...o,
       ts: override.ts,
       trackingStatus: override.statusRaw || o.trackingStatus,
