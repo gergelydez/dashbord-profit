@@ -60,12 +60,23 @@ const trackingOverrides = {
 
 function applyTrackingOverrides(orders) {
   const ov = trackingOverrides.get();
-  if (!Object.keys(ov).length) return orders;
+  // Citim și Excel maps — au prioritate maximă
+  let glsMap = {}, sdMap = {};
+  try { glsMap = JSON.parse(typeof window!=='undefined'?localStorage.getItem('gls_awb_map')||'{}':'{}'); } catch {}
+  try { sdMap  = JSON.parse(typeof window!=='undefined'?localStorage.getItem('sd_awb_map') ||'{}':'{}'); } catch {}
+
   return orders.map(o => {
+    const awb = (o.trackingNo || '').trim();
+
+    // Prioritate 1: GLS Excel map (cel mai fiabil)
+    if (awb && glsMap[awb]) return { ...o, ts: glsMap[awb] };
+
+    // Prioritate 2: Sameday Excel map
+    if (awb && sdMap[awb])  return { ...o, ts: sdMap[awb] };
+
+    // Prioritate 3: tracking overrides (din GLS API live)
     const override = ov[o.id];
     if (!override) return o;
-    // Suprascrie ÎNTOTDEAUNA cu statusul confirmat de GLS
-    // (excepție: dacă Shopify zice deja livrat și override e tot livrat — nu schimbăm nimic)
     return { ...o,
       ts: override.ts,
       trackingStatus: override.statusRaw || o.trackingStatus,
@@ -665,10 +676,12 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
       results.forEach(r => { if (r.id && r.status) trackMap[r.id] = r; });
 
       let changed = 0;
+      const newOverrides = {};
       setAllOrders(prev => {
         const updated = prev.map(o => {
           const t = trackMap[o.id];
           if (!t || !t.status) return o;
+
           const liveTs =
             t.status === 'delivered'         ? 'livrat' :
             t.status === 'out_for_delivery'  ? 'outfor' :
@@ -677,15 +690,14 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
           if (liveTs !== o.ts) {
             changed++;
-            // Salvăm override persistent — nu va fi suprascris de Shopify sync
-            trackingOverrides.update(o.id, { ts: liveTs, statusRaw: t.statusRaw,
-              lastUpdate: t.lastUpdate, location: t.location });
+            const ovData = { ts: liveTs, statusRaw: t.statusRaw, lastUpdate: t.lastUpdate, location: t.location };
+            trackingOverrides.update(o.id, ovData);
+            newOverrides[o.id] = { ...ovData, at: new Date().toISOString() };
           }
           return { ...o, ts: liveTs,
             trackingStatus: t.statusRaw || '',
             trackingLastUpdate: t.lastUpdate || '',
             trackingLocation: t.location || '',
-            // Dacă livrat, setăm fulfilledAt dacă nu există
             fulfilledAt: (liveTs === 'livrat' && !o.fulfilledAt)
               ? new Date().toISOString() : o.fulfilledAt,
           };
@@ -699,6 +711,16 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
       });
 
       setLastTrackingCheck(new Date());
+
+      // Salvăm overrides noi în Redis — stats page le va citi de acolo
+      if (Object.keys(newOverrides).length > 0) {
+        fetch('/api/tracking-overrides', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ overrides: newOverrides }),
+        }).catch(e => console.warn('[REDIS] Nu am putut salva overrides:', e.message));
+      }
+
       if (!silent) {
         alert(changed > 0
           ? `✅ ${changed} comenzi actualizate din ${results.length} verificate!`
@@ -755,8 +777,9 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const cnt = s => orders.filter(o=>getFinalStatus(o)===s).length;
   const sum = ss => orders.filter(o=>ss.includes(getFinalStatus(o))).reduce((a,o)=>a+o.total,0);
   // Tranzit/outfor: din TOATE comenzile (nu doar perioada selectată)
-  // Un colet în tranzit rămâne vizibil indiferent de filtrul de dată
-  const cntAll = s => applyTrackingOverrides(allOrders).filter(o=>getFinalStatus(o)===s).length;
+  // allOrders are deja overrides aplicate — getFinalStatus aplică și glsAwbMap
+  // Nu re-aplicăm applyTrackingOverrides (ar fi dublu)
+  const cntAll = s => allOrders.filter(o=>getFinalStatus(o)===s).length;
   const incurs = cntAll('incurs');
   const outfor = cntAll('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
