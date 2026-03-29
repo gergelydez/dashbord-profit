@@ -209,7 +209,8 @@ export default function Stats() {
     });
     const sourceList = Object.entries(sourceMap).sort((a,b)=>b[1]-a[1]);
 
-    // Încasări pe zile
+    // ── Încasări pe zile și previziuni — din TOATE comenzile livrate, indiferent de filtru ──
+    // Exact ca tranzitul — banii care vin nu depind de ce perioadă ai selectat
     const addWorkDays = (str, n) => {
       if (!str) return '';
       const d = new Date(str + 'T12:00:00');
@@ -218,6 +219,9 @@ export default function Stats() {
       const p = x=>String(x).padStart(2,'0');
       return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
     };
+
+    const allLivrate = allOrders.filter(o => getFinalStatus(o, sdAwbMap) === 'livrat');
+    const allOnlineOrders = allOrders.filter(o => isOnlinePayment(o, onlineIds));
 
     const incasariPerZi = {};
     const addToZi = (str, field, brut, net) => {
@@ -228,7 +232,7 @@ export default function Stats() {
       incasariPerZi[str].count++;
     };
 
-    livrate.forEach(o => {
+    allLivrate.forEach(o => {
       const isOnline = isOnlinePayment(o, onlineIds);
       if (isOnline) return;
       if (o.courier==='sameday'&&getFinalStatus(o,sdAwbMap)!=='livrat') return;
@@ -238,7 +242,7 @@ export default function Stats() {
       else if (o.courier==='sameday') addToZi(addWorkDays(livStr,1),'sameday',o.total);
       else addToZi(addWorkDays(livStr,2),'gls',o.total);
     });
-    onlineOrders.forEach(o => {
+    allOnlineOrders.forEach(o => {
       const base = (o.createdAt||'').slice(0,10);
       if (!base) return;
       const net = o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed;
@@ -247,7 +251,7 @@ export default function Stats() {
 
     const incasariList = Object.entries(incasariPerZi).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,60);
 
-    // Previziuni
+    // Previziuni — tot din allOrders, nu din livrate filtrate
     const todayStr = new Date().toISOString().slice(0,10);
     const pad2 = n=>String(n).padStart(2,'0');
     const nextBD = (str,n) => {
@@ -274,7 +278,7 @@ export default function Stats() {
       if(previziuni[dateStr]){previziuni[dateStr][courier]+=val;previziuni[dateStr].total+=val;}
     };
 
-    livrate.forEach(o=>{
+    allLivrate.forEach(o=>{
       if(isOnlinePayment(o,onlineIds)) return;
       if(o.courier==='sameday'&&getFinalStatus(o,sdAwbMap)!=='livrat') return;
       if(!o.fulfilledAt) return;
@@ -282,7 +286,7 @@ export default function Stats() {
       if(o.courier==='gls') addByDate(nextBD(livStr,2),'gls',o.total);
       else if(o.courier==='sameday') addByDate(nextBD(livStr,1),'sameday',o.total);
     });
-    onlineOrders.forEach(o=>{
+    allOnlineOrders.forEach(o=>{
       const base=(o.createdAt||'').slice(0,10);
       if(!base) return;
       const net=o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed;
