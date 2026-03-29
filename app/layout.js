@@ -31,13 +31,9 @@ export default function RootLayout({ children }) {
         <div
           id="page-wrap"
           style={{
-            willChange: 'transform, opacity',
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
-            transform: 'translateX(0)',
-            opacity: 1,
             minHeight: '100dvh',
-            overflowX: 'hidden',
           }}
         >
           {children}
