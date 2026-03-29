@@ -344,18 +344,25 @@ export default function Dashboard() {
     }
 
     // FAZA 2 + 3: Background silențios — erorile nu se afișează
+    // IMPORTANT: mergem comenzile noi cu ts-urile DIN STATE (nu din Shopify raw)
+    // ca să nu pierdem rezultatele de tracking GLS
     setBgLoading(true);
     try {
       const d60 = toISO(new Date(Date.now() - 60*24*60*60*1000));
       const mid = await fetchOrdersRange(d60, false);
       const fastIds = new Set(fast.map(o => o.id));
-      const merged60raw = [...fast, ...mid.filter(o => !fastIds.has(o.id))];
-      const merged60 = applyTrackingOverrides(merged60raw);
-      setAllOrders(merged60);
+      const midNew = mid.filter(o => !fastIds.has(o.id));
+      // Adăugăm doar comenzile NOI (nu suprascrim cele existente din state)
+      setAllOrders(prev => {
+        const prevIds = new Set(prev.map(o => o.id));
+        const toAdd = applyTrackingOverrides(midNew.filter(o => !prevIds.has(o.id)));
+        if (!toAdd.length) return prev;
+        const merged60 = [...prev, ...toAdd];
+        ls.set('gx_orders_all', JSON.stringify(merged60));
+        ls.set('gx_fetched_from', d60);
+        return merged60;
+      });
       setFetchedFrom(d60);
-      ls.set('gx_orders_all', JSON.stringify(merged60));
-      ls.set('gx_fetched_from', d60);
-      applyDateFilter(merged60, preset, customFrom, customTo);
       // Rulăm tracking după faza 2
       setTimeout(() => refreshTracking(true), 2000);
 
@@ -363,14 +370,17 @@ export default function Dashboard() {
       try {
         const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
         const oldOrders = await fetchOrdersRange(d365, false);
-        const ids60 = new Set(merged60.map(o => o.id));
-        const mergedRaw = [...merged60, ...oldOrders.filter(o => !ids60.has(o.id))];
-        const merged = applyTrackingOverrides(mergedRaw);
-        setAllOrders(merged);
+        // Adăugăm doar comenzile NOI — nu atingem cele existente cu ts corect
+        setAllOrders(prev => {
+          const prevIds = new Set(prev.map(o => o.id));
+          const toAdd = applyTrackingOverrides(oldOrders.filter(o => !prevIds.has(o.id)));
+          if (!toAdd.length) return prev;
+          const merged = [...prev, ...toAdd];
+          ls.set('gx_orders_all', JSON.stringify(merged));
+          ls.set('gx_fetched_from', d365);
+          return merged;
+        });
         setFetchedFrom(d365);
-        ls.set('gx_orders_all', JSON.stringify(merged));
-        ls.set('gx_fetched_from', d365);
-        applyDateFilter(merged, preset, customFrom, customTo);
         // Tracking după faza 3 completă
         setTimeout(() => refreshTracking(true), 2000);
       } catch { /* ignorăm erorile din faza 3 */ }
@@ -1510,4 +1520,5 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
+
 
