@@ -89,16 +89,27 @@ export default function SwipeNavigator() {
       s.current.axis     = null;
       s.current.dragging = false;
 
-      // Verificăm dacă touch-ul a început într-un container scrollabil orizontal
-      // Dacă da, lăsăm scroll-ul nativ să funcționeze
+      // Dacă touch-ul a început într-un container scrollabil (H sau V) — lăsăm nativul
       let el = e.target;
       while (el && el !== document.body) {
-        const style    = window.getComputedStyle(el);
-        const overflow = style.overflowX;
-        const canScrollH = el.scrollWidth > el.clientWidth + 2;
-        if (canScrollH && (overflow === 'auto' || overflow === 'scroll')) {
-          s.current.axis = 'v'; // blochează swipe navigation
+        const style = window.getComputedStyle(el);
+        const ox = style.overflowX;
+        const oy = style.overflowY;
+        // Scrollabil orizontal → blochează swipe navigation
+        if (el.scrollWidth > el.clientWidth + 2 && (ox === 'auto' || ox === 'scroll')) {
+          s.current.axis = 'v';
           return;
+        }
+        // Scrollabil vertical cu conținut (pagina în sine) → permitem swipe doar de la margini
+        if (el.scrollHeight > el.clientHeight + 2 && (oy === 'auto' || oy === 'scroll')) {
+          // Swipe din marginea ecranului (primii/ultimii 20px) → navigare
+          // Altfel → lăsăm scroll vertical
+          const edgeSize = 20;
+          const x = e.touches[0].clientX;
+          if (x > edgeSize && x < window.innerWidth - edgeSize) {
+            s.current.axis = 'v';
+            return;
+          }
         }
         el = el.parentElement;
       }
@@ -110,17 +121,22 @@ export default function SwipeNavigator() {
       const dy = e.touches[0].clientY - s.current.startY;
 
       if (!s.current.axis) {
-        if (Math.hypot(dx, dy) < 4) return;
-        s.current.axis = Math.abs(dx) > Math.abs(dy) * 0.6 ? 'h' : 'v';
-        if (s.current.axis === 'h') {
+        if (Math.hypot(dx, dy) < 6) return;
+        // Strict: trebuie să fie clar mai mult orizontal decât vertical
+        if (Math.abs(dx) > Math.abs(dy) * 1.5) {
           const idx = PAGES.indexOf(pathname);
           if (dx < 0 && idx >= PAGES.length - 1) { s.current.axis = 'v'; return; }
           if (dx > 0 && idx <= 0)                { s.current.axis = 'v'; return; }
+          s.current.axis = 'h';
+        } else {
+          s.current.axis = 'v';
+          return;
         }
       }
       if (s.current.axis === 'v') return;
-      e.preventDefault();
 
+      // Abia acum blocăm scroll-ul — suntem siguri că e swipe orizontal
+      e.preventDefault();
       s.current.dragging = true;
       s.current.dx       = dx;
 
