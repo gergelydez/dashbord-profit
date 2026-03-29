@@ -60,21 +60,19 @@ const trackingOverrides = {
 
 function applyTrackingOverrides(orders) {
   const ov = trackingOverrides.get();
-  // Citim și Excel maps — au prioritate maximă
-  let glsMap = {}, sdMap = {};
-  try { glsMap = JSON.parse(typeof window!=='undefined'?localStorage.getItem('gls_awb_map')||'{}':'{}'); } catch {}
-  try { sdMap  = JSON.parse(typeof window!=='undefined'?localStorage.getItem('sd_awb_map') ||'{}':'{}'); } catch {}
+  const now = new Date();
 
   return orders.map(o => {
-    const awb = (o.trackingNo || '').trim();
+    // Auto-livrat: dacă comanda e în tranzit de mai mult de 30 zile → considerăm livrat
+    // Niciun colet nu stă fizic în tranzit mai mult de 30 zile
+    if (['incurs','outfor'].includes(o.ts) && o.createdAt) {
+      const daysSinceCreated = (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
+      if (daysSinceCreated > 30) {
+        return { ...o, ts: 'livrat' };
+      }
+    }
 
-    // Prioritate 1: GLS Excel map (cel mai fiabil)
-    if (awb && glsMap[awb]) return { ...o, ts: glsMap[awb] };
-
-    // Prioritate 2: Sameday Excel map
-    if (awb && sdMap[awb])  return { ...o, ts: sdMap[awb] };
-
-    // Prioritate 3: tracking overrides (din GLS API live)
+    // Prioritate: tracking overrides (din GLS API live)
     const override = ov[o.id];
     if (!override) return o;
     return { ...o,
@@ -1545,5 +1543,4 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
-
 
