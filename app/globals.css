@@ -753,3 +753,40 @@ td { padding:9px 10px; vertical-align:middle; max-width:150px; overflow:hidden; 
   .roas-big { font-size:28px; }
 }
 
+
+/* ── Import page buttons ── */
+.nbtn {
+  display:block; width:100%; padding:14px; margin-top:12px;
+  background:linear-gradient(135deg,#f97316,#ea580c);
+  color:white; border:none; border-radius:12px;
+  font-size:14px; font-weight:700; cursor:pointer;
+  transition:opacity .2s;
+}
+.nbtn:disabled { opacity:.4; cursor:not-allowed; }
+.nbtn:not(:disabled):hover { opacity:.9; }
+
+.bbtn {
+  flex:1; padding:12px; margin-top:12px;
+  background:#161d24; color:#94a3b8;
+  border:1px solid #243040; border-radius:12px;
+  font-size:13px; font-weight:600; cursor:pointer;
+  transition:background .2s;
+}
+.bbtn:hover { background:#1e2a35; }
+
+.ubtn {
+  display:flex; align-items:center; gap:8px;
+  padding:10px 16px; border-radius:10px;
+  font-size:12px; font-weight:600; cursor:pointer;
+  transition:opacity .2s;
+}
+.ubtn:hover { opacity:.85; }
+
+.aibtn {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  padding:12px 20px; border-radius:12px; border:none;
+  font-size:13px; font-weight:700; cursor:pointer;
+  transition:opacity .2s;
+}
+.aibtn:hover { opacity:.9; }
+
