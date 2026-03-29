@@ -59,7 +59,8 @@ export default function Stats() {
   const [preset, setPreset] = useState('month');
   const [serverOverrides, setServerOverrides] = useState(null); // Redis overrides
   const [onlineIds] = useState(() => { try { return JSON.parse(ls.get('online_payment_ids')||'[]'); } catch { return []; }});
-  const [sdAwbMap] = useState(() => { try { return JSON.parse(ls.get('sd_awb_map')||'{}'); } catch { return {}; }});
+  const [sdAwbMap]  = useState(() => { try { return JSON.parse(ls.get('sd_awb_map')||'{}'); } catch { return {}; }});
+  const [glsAwbMap] = useState(() => { try { return JSON.parse(ls.get('gls_awb_map')||'{}'); } catch { return {}; }});
   // Comision Shopify Payments: procent + sumă fixă per tranzacție
   const [shopifyFeePercent, setShopifyFeePercent] = useState(() => parseFloat(ls.get('sp_fee_pct') || '1.9'));
   const [shopifyFeeFixed, setShopifyFeeFixed]     = useState(() => parseFloat(ls.get('sp_fee_fix') || '1.25'));
@@ -115,56 +116,57 @@ export default function Stats() {
     });
   }, [allOrders, serverOverrides, from, to]);
 
-  // livrateInPeriod = TOATE comenzile livrate în intervalul selectat (după fulfilledAt)
-  // Include orice metodă de plată (COD, Shopify Payments, etc.)
-  // getSdStatus: prioritizează Excel > Shopify pentru Sameday
+  // getFinalStatus — identic cu Dashboard:
+  // prioritate GLS Excel map > tracking overrides (în o.ts) > Shopify
+  const getGlsStatusFinal = (o) => {
+    const awb = (o.trackingNo || '').trim();
+    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
+    return o.ts;
+  };
+
   const getSdStatus = (o) => {
     const awb = (o.trackingNo || '').trim();
     if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
     return o.ts !== 'pending' ? o.ts : null;
   };
 
+  const getFinalStatus = (o) => {
+    if (o.courier === 'gls')     return getGlsStatusFinal(o);
+    if (o.courier === 'sameday') return getSdStatus(o) || o.ts;
+    return o.ts;
+  };
+
   const livrateInPeriod = useMemo(() => {
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
-    // Re-aplicăm overrides (inclusiv server) pentru a fi siguri că ts-ul e corect
     const ordersWithOv = applyTrackingOverrides(allOrders, serverOverrides);
     return ordersWithOv.filter(o => {
-      const isLivrat = o.ts === 'livrat' ||
-        (o.courier === 'sameday' && getSdStatus(o) === 'livrat');
+      // getFinalStatus: GLS Excel > overrides > Shopify — identic cu Dashboard
+      const isLivrat = getFinalStatus(o) === 'livrat';
       if (!isLivrat) return false;
       const livDate = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
-      if (!livDate) return false;
       return livDate >= fromD && livDate <= toD;
     });
-  }, [allOrders, serverOverrides, from, to, getSdStatus]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allOrders, serverOverrides, from, to, glsAwbMap, sdAwbMap]);
 
   const stats = useMemo(() => {
     const total    = orders.length;
-    // livrate = TOATE comenzile livrate (COD + Shopify Payments + orice metodă)
-    const livrate = livrateInPeriod.filter(o => {
-      if (o.courier === 'sameday') return getSdStatus(o) === 'livrat';
-      return o.ts === 'livrat'; // ts deja include tracking overrides
-    });
-    // retururi = comenzi cu status retur în perioada selectată
-    // Folosim fulfilledAt (data ultimei actualizări) sau createdAt
+    // livrate = folosim getFinalStatus — identic cu Dashboard (GLS Excel > overrides > Shopify)
+    const livrate = livrateInPeriod.filter(o => getFinalStatus(o) === 'livrat');
+
     const fromD2 = new Date(from + 'T00:00:00');
     const toD2   = new Date(to   + 'T23:59:59');
     const retururi = allOrders.filter(o => {
-      const isRetur = o.courier === 'sameday'
-        ? getSdStatus(o) === 'retur'
-        : o.ts === 'retur';
+      const isRetur = getFinalStatus(o) === 'retur';
       if (!isRetur) return false;
-      // Include dacă a fost creată SAU actualizată (retur sosit) în perioadă
       const refDate = new Date(o.fulfilledAt || o.createdAt);
       return refDate >= fromD2 && refDate <= toD2;
     });
-    const anulate  = orders.filter(o => o.ts === 'anulat');
-    // Tranzit: din TOATE comenzile — un colet în tranzit e vizibil indiferent de filtrul de dată
-    // allOrders are deja overrides aplicate din useEffect, dar re-aplicăm pentru siguranță cu serverOverrides
+    const anulate  = orders.filter(o => getFinalStatus(o) === 'anulat');
     const allWithOv = applyTrackingOverrides(allOrders, serverOverrides);
-    const tranzit  = allWithOv.filter(o => ['incurs','outfor'].includes(o.ts));
-    const pending  = allWithOv.filter(o => o.ts === 'pending');
+    const tranzit  = allWithOv.filter(o => ['incurs','outfor'].includes(getFinalStatus(o)));
+    const pending  = allWithOv.filter(o => getFinalStatus(o) === 'pending');
 
     // Courier breakdown din livrateInPeriod
     const gls      = livrateInPeriod.filter(o => o.courier === 'gls');
@@ -172,8 +174,8 @@ export default function Stats() {
     const glsAll   = orders.filter(o => o.courier === 'gls');
     const sdAll    = orders.filter(o => o.courier === 'sameday');
 
-    const glsLiv   = gls.length;
-    const sdLiv    = sameday.filter(o => getSdStatus(o) === 'livrat').length;
+    const glsLiv   = gls.filter(o => getFinalStatus(o) === 'livrat').length;
+    const sdLiv    = sameday.filter(o => getFinalStatus(o) === 'livrat').length;
     const glsRet   = retururi.filter(o => o.courier === 'gls').length;
     const sdRet    = retururi.filter(o => o.courier === 'sameday').length;
 
@@ -429,7 +431,7 @@ export default function Stats() {
       topProd, avgPrice, prodList: prodList.slice(0, 10),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, livrateInPeriod, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed, serverOverrides]);
+  }, [orders, livrateInPeriod, onlineIds, sdAwbMap, glsAwbMap, shopifyFeePercent, shopifyFeeFixed, serverOverrides]);
 
   const Bar = ({ pct, color }) => (
     <div style={{height:4,background:'#1e2a35',borderRadius:2,overflow:'hidden',marginTop:4}}>
