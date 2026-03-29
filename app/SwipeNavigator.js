@@ -88,6 +88,20 @@ export default function SwipeNavigator() {
       s.current.dx       = 0;
       s.current.axis     = null;
       s.current.dragging = false;
+
+      // Verificăm dacă touch-ul a început într-un container scrollabil orizontal
+      // Dacă da, lăsăm scroll-ul nativ să funcționeze
+      let el = e.target;
+      while (el && el !== document.body) {
+        const style    = window.getComputedStyle(el);
+        const overflow = style.overflowX;
+        const canScrollH = el.scrollWidth > el.clientWidth + 2;
+        if (canScrollH && (overflow === 'auto' || overflow === 'scroll')) {
+          s.current.axis = 'v'; // blochează swipe navigation
+          return;
+        }
+        el = el.parentElement;
+      }
     };
 
     const onMove = (e) => {
