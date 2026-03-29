@@ -5,13 +5,15 @@ const ls = {
   get: (k) => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
 };
 
-// Tracking overrides — statusuri confirmate de GLS API
-const trackingOverrides = {
+// Tracking overrides — statusuri confirmate de GLS API (localStorage fallback)
+const trackingOverridesLocal = {
   get: () => { try { const s = typeof window!=='undefined'?localStorage.getItem('gx_track_ov'):null; return s?JSON.parse(s):{}; } catch { return {}; } },
 };
 
-function applyTrackingOverrides(orders) {
-  const ov = trackingOverrides.get();
+function applyTrackingOverrides(orders, serverOverrides = null) {
+  // Prioritate: server (Redis) > localStorage
+  const localOv = trackingOverridesLocal.get();
+  const ov = serverOverrides ? { ...localOv, ...serverOverrides } : localOv;
   if (!Object.keys(ov).length) return orders;
   return orders.map(o => {
     const override = ov[o.id];
@@ -55,6 +57,7 @@ export default function Stats() {
   const [allOrders, setAllOrders] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
   const [preset, setPreset] = useState('month');
+  const [serverOverrides, setServerOverrides] = useState(null); // Redis overrides
   const [onlineIds] = useState(() => { try { return JSON.parse(ls.get('online_payment_ids')||'[]'); } catch { return []; }});
   const [sdAwbMap] = useState(() => { try { return JSON.parse(ls.get('sd_awb_map')||'{}'); } catch { return {}; }});
   // Comision Shopify Payments: procent + sumă fixă per tranzacție
@@ -64,16 +67,37 @@ export default function Stats() {
     try { return JSON.parse(ls.get('shopify_analytics')||'null'); } catch { return null; }
   });
 
+  // Fetch overrides din Redis la load, apoi aplică pe comenzi
   useEffect(() => {
-    const saved = ls.get('gx_orders_all');
-    if (saved) {
+    const loadData = async () => {
+      const saved = ls.get('gx_orders_all');
+      if (!saved) return;
       try {
         const parsed = JSON.parse(saved);
-        setAllOrders(applyTrackingOverrides(parsed));
         const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
+
+        // Fetch overrides din server (Redis) — mai fiabile decât localStorage
+        let srvOv = null;
+        try {
+          const r = await fetch('/api/tracking-overrides');
+          if (r.ok) {
+            const d = await r.json();
+            srvOv = d.overrides || null;
+            if (srvOv) {
+              setServerOverrides(srvOv);
+              // Sincronizăm și în localStorage pentru offline
+              try { localStorage.setItem('gx_track_ov', JSON.stringify({
+                ...trackingOverridesLocal.get(), ...srvOv
+              })); } catch {}
+            }
+          }
+        } catch (e) { console.warn('[Stats] Nu pot fetcha overrides din server:', e.message); }
+
+        setAllOrders(applyTrackingOverrides(parsed, srvOv));
       } catch {}
-    }
+    };
+    loadData();
   }, []);
 
   const [from, to] = useMemo(() => {
@@ -156,10 +180,13 @@ export default function Stats() {
     // Financiar — calculat DOAR pe comenzile livrate
     const sumLivrate  = livrate.reduce((a,o)=>a+o.total,0);
     const sumCOD      = livrate.filter(o=>!isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
-    const sumOnline   = livrate.filter(o=>isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
+    // sumOnline = total brut din TOATE comenzile online din perioadă (livrate + nelivrate)
+    // Card se încasează imediat la plasare, nu la livrare
+    const sumOnlineAll = onlineOrders.reduce((a,o)=>a+o.total,0);
+    const sumOnline   = sumOnlineAll; // afișăm toate comenzile card din perioadă
     const sumRetur    = retururi.reduce((a,o)=>a+o.total,0);
     const sumTranzit  = tranzit.reduce((a,o)=>a+o.total,0);
-    const totalRevenue= sumLivrate; // Total = doar ce s-a livrat efectiv
+    const totalRevenue= sumCOD + sumOnline; // COD livrate + toate card-urile
 
     // Produse — doar din comenzile LIVRATE
     // Dacă prețul per item e 0 (nu e în cache), folosim totalul comenzii împărțit la nr. produse
@@ -383,8 +410,9 @@ export default function Stats() {
     // Total COD GLS = doar comenzi GLS plătite ramburs (excludem Shopify Payments/Card)
     const totalGLS     = livrate.filter(o=>o.courier==='gls' && !isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
     const totalSameday = livrate.filter(o=>o.courier==='sameday' && !isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
-    const totalShopify = livrate.filter(o=>isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed,0);
-    const totalShopifyBrut = livrate.filter(o=>isOnlinePayment(o,onlineIds)).reduce((a,o)=>a+o.total,0);
+    // Card se încasează la plasare — includem TOATE comenzile card din perioadă (nu doar livrate)
+    const totalShopify = onlineOrders.reduce((a,o)=>a+o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed,0);
+    const totalShopifyBrut = onlineOrders.reduce((a,o)=>a+o.total,0);
 
     return {
       total, livrate: livrate.length, retururi: retururi.length,
@@ -804,4 +832,5 @@ export default function Stats() {
     </div>
   );
 }
+
 
