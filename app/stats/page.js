@@ -107,15 +107,16 @@ export default function Stats() {
     });
   }, [allOrders, from, to]);
 
-  // Livrate în perioadă — după data livrării (fulfilledAt)
+  // Livrate în perioadă — IDENTIC cu profit/page.js:
+  // createdAt în perioadă + getFinalStatus === 'livrat'
+  // (nu fulfilledAt — asta e diferența față de ce era înainte)
   const livrateInPeriod = useMemo(() => {
     const fromD = new Date(from + 'T00:00:00');
     const toD   = new Date(to   + 'T23:59:59');
     return allOrders.filter(o => {
-      if (getFinalStatus(o, sdAwbMap) !== 'livrat') return false;
-      const livDate = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
-      if (!livDate) return false;
-      return livDate >= fromD && livDate <= toD;
+      const created = new Date(o.createdAt);
+      if (created < fromD || created > toD) return false;
+      return getFinalStatus(o, sdAwbMap) === 'livrat';
     });
   }, [allOrders, from, to, sdAwbMap]);
 
@@ -128,8 +129,8 @@ export default function Stats() {
 
     const retururi = allOrders.filter(o => {
       if (getFinalStatus(o, sdAwbMap) !== 'retur') return false;
-      const refDate = new Date(o.fulfilledAt || o.createdAt);
-      return refDate >= fromD && refDate <= toD;
+      const created = new Date(o.createdAt);
+      return created >= fromD && created <= toD;
     });
 
     const anulate = orders.filter(o => getFinalStatus(o, sdAwbMap) === 'anulat');
