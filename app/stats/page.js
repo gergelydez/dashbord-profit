@@ -39,6 +39,23 @@ const isOnlinePayment = (o, onlineIds=[]) => {
   return false;
 };
 
+// getFinalStatus — identic cu Dashboard: GLS Excel > tracking overrides (în o.ts) > Shopify
+function getGlsStatusFinal(o, glsAwbMap) {
+  const awb = (o.trackingNo || '').trim();
+  if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
+  return o.ts;
+}
+function getSdStatusFn(o, sdAwbMap) {
+  const awb = (o.trackingNo || '').trim();
+  if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
+  return o.ts !== 'pending' ? o.ts : null;
+}
+function getFinalStatus(o, glsAwbMap, sdAwbMap) {
+  if (o.courier === 'gls')     return getGlsStatusFinal(o, glsAwbMap);
+  if (o.courier === 'sameday') return getSdStatusFn(o, sdAwbMap) || o.ts;
+  return o.ts;
+}
+
 const now = new Date();
 const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
 
@@ -116,25 +133,7 @@ export default function Stats() {
     });
   }, [allOrders, serverOverrides, from, to]);
 
-  // getFinalStatus — identic cu Dashboard:
-  // prioritate GLS Excel map > tracking overrides (în o.ts) > Shopify
-  const getGlsStatusFinal = (o) => {
-    const awb = (o.trackingNo || '').trim();
-    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
-    return o.ts;
-  };
-
-  const getSdStatus = (o) => {
-    const awb = (o.trackingNo || '').trim();
-    if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
-    return o.ts !== 'pending' ? o.ts : null;
-  };
-
-  const getFinalStatus = (o) => {
-    if (o.courier === 'gls')     return getGlsStatusFinal(o);
-    if (o.courier === 'sameday') return getSdStatus(o) || o.ts;
-    return o.ts;
-  };
+  // getFinalStatus și getSdStatus — definite sus ca funcții pure (primesc map-urile ca parametri)
 
   const livrateInPeriod = useMemo(() => {
     const fromD = new Date(from + 'T00:00:00');
@@ -142,7 +141,7 @@ export default function Stats() {
     const ordersWithOv = applyTrackingOverrides(allOrders, serverOverrides);
     return ordersWithOv.filter(o => {
       // getFinalStatus: GLS Excel > overrides > Shopify — identic cu Dashboard
-      const isLivrat = getFinalStatus(o) === 'livrat';
+      const isLivrat = getFinalStatus(o, glsAwbMap, sdAwbMap) === 'livrat';
       if (!isLivrat) return false;
       const livDate = o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt);
       return livDate >= fromD && livDate <= toD;
@@ -153,20 +152,20 @@ export default function Stats() {
   const stats = useMemo(() => {
     const total    = orders.length;
     // livrate = folosim getFinalStatus — identic cu Dashboard (GLS Excel > overrides > Shopify)
-    const livrate = livrateInPeriod.filter(o => getFinalStatus(o) === 'livrat');
+    const livrate = livrateInPeriod.filter(o => getFinalStatus(o, glsAwbMap, sdAwbMap) === 'livrat');
 
     const fromD2 = new Date(from + 'T00:00:00');
     const toD2   = new Date(to   + 'T23:59:59');
     const retururi = allOrders.filter(o => {
-      const isRetur = getFinalStatus(o) === 'retur';
+      const isRetur = getFinalStatus(o, glsAwbMap, sdAwbMap) === 'retur';
       if (!isRetur) return false;
       const refDate = new Date(o.fulfilledAt || o.createdAt);
       return refDate >= fromD2 && refDate <= toD2;
     });
-    const anulate  = orders.filter(o => getFinalStatus(o) === 'anulat');
+    const anulate  = orders.filter(o => getFinalStatus(o, glsAwbMap, sdAwbMap) === 'anulat');
     const allWithOv = applyTrackingOverrides(allOrders, serverOverrides);
-    const tranzit  = allWithOv.filter(o => ['incurs','outfor'].includes(getFinalStatus(o)));
-    const pending  = allWithOv.filter(o => getFinalStatus(o) === 'pending');
+    const tranzit  = allWithOv.filter(o => ['incurs','outfor'].includes(getFinalStatus(o, glsAwbMap, sdAwbMap)));
+    const pending  = allWithOv.filter(o => getFinalStatus(o, glsAwbMap, sdAwbMap) === 'pending');
 
     // Courier breakdown din livrateInPeriod
     const gls      = livrateInPeriod.filter(o => o.courier === 'gls');
@@ -174,8 +173,8 @@ export default function Stats() {
     const glsAll   = orders.filter(o => o.courier === 'gls');
     const sdAll    = orders.filter(o => o.courier === 'sameday');
 
-    const glsLiv   = gls.filter(o => getFinalStatus(o) === 'livrat').length;
-    const sdLiv    = sameday.filter(o => getFinalStatus(o) === 'livrat').length;
+    const glsLiv   = gls.filter(o => getFinalStatus(o, glsAwbMap, sdAwbMap) === 'livrat').length;
+    const sdLiv    = sameday.filter(o => getFinalStatus(o, glsAwbMap, sdAwbMap) === 'livrat').length;
     const glsRet   = retururi.filter(o => o.courier === 'gls').length;
     const sdRet    = retururi.filter(o => o.courier === 'sameday').length;
 
@@ -307,7 +306,7 @@ export default function Stats() {
     livrateInPeriod.forEach(o => {
       const isOnline = isOnlinePayment(o, onlineIds);
       if (isOnline) return; // Shopify Payments separat
-      if (o.courier === 'sameday' && getSdStatus(o) !== 'livrat') return;
+      if (o.courier === 'sameday' && getSdStatusFn(o, sdAwbMap) !== 'livrat') return;
       const livStr = (o.fulfilledAt || o.createdAt || '').slice(0,10);
       if (!livStr) return;
       if (o.courier === 'gls') {
@@ -388,7 +387,7 @@ export default function Stats() {
     livrateInPeriod.forEach(o => {
       const isOnline = isOnlinePayment(o, onlineIds);
       if (isOnline) return; // Shopify Payments se tratează separat mai jos
-      if (o.courier === 'sameday' && getSdStatus(o) !== 'livrat') return;
+      if (o.courier === 'sameday' && getSdStatusFn(o, sdAwbMap) !== 'livrat') return;
       if (!o.fulfilledAt) return;
       const livStr = o.fulfilledAt.slice(0,10);
 
