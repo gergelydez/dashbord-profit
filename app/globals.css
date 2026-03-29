@@ -41,7 +41,7 @@ body {
   font-size:14px; line-height:1.5;
   min-height:100dvh;
   -webkit-font-smoothing:antialiased;
-  overflow-x:hidden;
+  overflow-x:clip; /* clip permite animații translateX fără scroll bar */
 }
 img { display:block; max-width:100%; }
 button, input, textarea, select { font:inherit; color:inherit; }
