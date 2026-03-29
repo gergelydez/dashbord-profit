@@ -71,15 +71,25 @@ export default function Stats() {
   const [shopifyFeeFixed, setShopifyFeeFixed]     = useState(() => parseFloat(ls.get('sp_fee_fix') || '1.25'));
 
   useEffect(() => {
-    const saved = ls.get('gx_orders_all');
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved);
-      const ts = ls.get('gx_fetch_time');
-      if (ts) setLastFetch(new Date(ts));
-      // Aplicăm overrides din localStorage — Dashboard le actualizează după GLS API
-      setAllOrders(applyOverrides(parsed));
-    } catch {}
+    const load = () => {
+      const saved = ls.get('gx_orders_all');
+      if (!saved) return;
+      try {
+        const parsed = JSON.parse(saved);
+        const ts = ls.get('gx_fetch_time');
+        if (ts) setLastFetch(new Date(ts));
+        setAllOrders(applyOverrides(parsed));
+      } catch {}
+    };
+
+    load();
+
+    // Re-încarcă când Dashboard actualizează localStorage după tracking
+    const onStorage = (e) => {
+      if (e.key === 'gx_orders_all' || e.key === 'gx_track_ov') load();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   const [from, to] = useMemo(() => {
