@@ -363,8 +363,6 @@ export default function Dashboard() {
         return merged60;
       });
       setFetchedFrom(d60);
-      // Rulăm tracking după faza 2
-      setTimeout(() => refreshTracking(true), 2000);
 
       // Faza 3 — 1 an
       try {
@@ -381,8 +379,6 @@ export default function Dashboard() {
           return merged;
         });
         setFetchedFrom(d365);
-        // Tracking după faza 3 completă
-        setTimeout(() => refreshTracking(true), 2000);
       } catch { /* ignorăm erorile din faza 3 */ }
 
     } catch { /* ignorăm erorile din background */ }
@@ -1520,5 +1516,4 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
-
 
