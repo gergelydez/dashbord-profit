@@ -15,8 +15,13 @@ function getLocalOverrides() {
 // dar overrides ne dă și statusRaw, lastUpdate etc.
 function applyOverrides(orders) {
   const ov = getLocalOverrides();
-  if (!Object.keys(ov).length) return orders;
+  const now = new Date();
   return orders.map(o => {
+    // Auto-livrat: în tranzit de mai mult de 30 zile = livrat (coletul nu mai e în tranzit)
+    if (['incurs','outfor'].includes(o.ts) && o.createdAt) {
+      const daysSince = (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
+      if (daysSince > 30) return { ...o, ts: 'livrat' };
+    }
     const override = ov[o.id];
     if (!override) return o;
     return { ...o, ts: override.ts };
