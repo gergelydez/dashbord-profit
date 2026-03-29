@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
 const PAGES = ['/', '/whatsapp', '/stats', '/import', '/profit'];
+const EASE  = 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+const SNAP  = 'transform 280ms cubic-bezier(0.34, 1.2, 0.64, 1)';
 
 export default function SwipeNavigator() {
   const router   = useRouter();
@@ -13,48 +15,70 @@ export default function SwipeNavigator() {
   const s = useRef({
     startX: 0, startY: 0, dx: 0,
     axis: null, dragging: false, locked: false,
-    prevSnap: null, // snapshot-ul paginii anterioare/următoare
   });
 
-  // ── Când se schimbă pagina, actualizăm dots și resetăm ──
+  // ── Prefetch toate paginile la mount ──────────────────────
+  useEffect(() => {
+    PAGES.forEach(p => router.prefetch(p));
+  }, [router]);
+
+  // ── Reset după navigare ───────────────────────────────────
   useEffect(() => {
     setDots(PAGES.indexOf(pathname));
-    s.current.locked = false;
-    // Cleanup orice snapshot rămas
-    const snap = document.getElementById('page-snap');
-    if (snap) snap.remove();
   }, [pathname]);
 
+  // ── Touch logic ───────────────────────────────────────────
   useEffect(() => {
-    const getWrap = () => document.getElementById('page-wrap');
+    const wrap = () => document.getElementById('page-wrap');
 
-    // Creăm un snapshot vizual al paginii curente (clonă simplă cu pointer-events none)
-    const createSnapshot = () => {
-      const existing = document.getElementById('page-snap');
-      if (existing) existing.remove();
+    const set = (dx, tr = 'none') => {
+      const el = wrap();
+      if (!el) return;
+      el.style.transition = tr;
+      el.style.transform  = dx === 0 ? '' : `translateX(${dx}px)`;
+    };
 
-      const wrap = getWrap();
-      if (!wrap) return null;
+    const commit = (dir, targetIdx) => {
+      if (s.current.locked) return;
+      s.current.locked = true;
+      const w    = window.innerWidth;
+      const outX = dir === 'left' ? -w : w;
+      const inX  = dir === 'left' ?  w : -w;
 
-      const snap = document.createElement('div');
-      snap.id = 'page-snap';
-      // Clonăm conținutul vizual
-      snap.innerHTML = wrap.innerHTML;
-      Object.assign(snap.style, {
-        position:      'fixed',
-        inset:         '0',
-        bottom:        '62px',
-        zIndex:        '50',
-        pointerEvents: 'none',
-        overflow:      'hidden',
-        background:    '#07090e',
-        willChange:    'transform',
-      });
-      // Copiem stilurile relevante
-      const wrapRect = wrap.getBoundingClientRect();
-      snap.style.top = wrapRect.top + 'px';
-      document.body.appendChild(snap);
-      return snap;
+      // 1. Slide out pagina curentă
+      set(outX, EASE);
+
+      // 2. Navighează imediat (Next.js are pagina în cache din prefetch)
+      //    Facem push fără să așteptăm animația — pagina se pregătește în paralel
+      router.push(PAGES[targetIdx]);
+
+      // 3. Slide in pagina nouă — după ce DOM-ul s-a actualizat
+      //    Folosim o referință persistentă la wrap, nu o captură veche
+      const tid = setTimeout(() => {
+        const el = wrap();
+        if (!el) { s.current.locked = false; return; }
+        // Poziționăm pagina nouă din direcția opusă, fără tranziție
+        el.style.transition = 'none';
+        el.style.transform  = `translateX(${inX}px)`;
+        // Un rAF dublu ca să garantăm că browser-ul a pictat noul conținut
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const el2 = wrap();
+          if (!el2) { s.current.locked = false; return; }
+          el2.style.transition = EASE;
+          el2.style.transform  = '';
+          el2.addEventListener('transitionend', () => {
+            s.current.locked = false;
+          }, { once: true });
+        }));
+      }, 50); // 50ms — suficient ca router.push să înceapă render-ul
+    };
+
+    const snapBack = () => {
+      set(0, SNAP);
+      const el = wrap();
+      if (el) el.addEventListener('transitionend', () => {
+        el.style.transition = '';
+      }, { once: true });
     };
 
     const onStart = (e) => {
@@ -72,123 +96,33 @@ export default function SwipeNavigator() {
       const dy = e.touches[0].clientY - s.current.startY;
 
       if (!s.current.axis) {
-        if (Math.hypot(dx, dy) < 10) return;
+        if (Math.hypot(dx, dy) < 8) return;
         s.current.axis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
         if (s.current.axis === 'h') {
-          // Verificăm dacă avem unde să mergem
           const idx = PAGES.indexOf(pathname);
           if (dx < 0 && idx >= PAGES.length - 1) { s.current.axis = 'v'; return; }
-          if (dx > 0 && idx <= 0) { s.current.axis = 'v'; return; }
+          if (dx > 0 && idx <= 0)                { s.current.axis = 'v'; return; }
         }
       }
       if (s.current.axis === 'v') return;
       e.preventDefault();
 
-      if (!s.current.dragging) {
-        s.current.dragging = true;
-        // La primul move horizontal — pregătim wrap-ul
-        const wrap = getWrap();
-        if (wrap) {
-          wrap.style.transition  = 'none';
-          wrap.style.willChange  = 'transform';
-        }
-      }
+      s.current.dragging = true;
+      s.current.dx       = dx;
 
-      s.current.dx = dx;
-      const w = window.innerWidth;
-      const travel = Math.max(-w, Math.min(w, dx));
-
-      requestAnimationFrame(() => {
-        const wrap = getWrap();
-        if (wrap) wrap.style.transform = `translateX(${travel}px)`;
-      });
+      const travel = Math.max(-window.innerWidth, Math.min(window.innerWidth, dx));
+      requestAnimationFrame(() => set(travel));
     };
 
     const onEnd = () => {
-      if (!s.current.dragging || s.current.axis !== 'h') return;
-      if (s.current.locked) return;
-
+      if (!s.current.dragging || s.current.axis !== 'h' || s.current.locked) return;
       const dx  = s.current.dx;
       const w   = window.innerWidth;
       const idx = PAGES.indexOf(pathname);
-      const threshold = w * 0.30; // 30% pentru a naviga
-      const wrap = getWrap();
-      const ease = 'transform 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
 
-      if (dx < -threshold && idx < PAGES.length - 1) {
-        // Navighează STÂNGA (pagina următoare)
-        s.current.locked = true;
-        if (wrap) {
-          wrap.style.transition = ease;
-          wrap.style.transform  = `translateX(${-w}px)`;
-        }
-        setTimeout(() => {
-          if (wrap) { wrap.style.transition = 'none'; wrap.style.transform = ''; }
-          router.push(PAGES[idx + 1]);
-          // Pagina nouă intră din dreapta
-          requestAnimationFrame(() => {
-            const w2 = getWrap();
-            if (w2) {
-              w2.style.transition = 'none';
-              w2.style.transform  = `translateX(${w}px)`;
-              requestAnimationFrame(() => {
-                w2.style.transition = ease;
-                w2.style.transform  = 'translateX(0)';
-                w2.addEventListener('transitionend', () => {
-                  w2.style.transition = '';
-                  w2.style.transform  = '';
-                  w2.style.willChange = '';
-                  s.current.locked = false;
-                }, { once: true });
-              });
-            } else {
-              s.current.locked = false;
-            }
-          });
-        }, 285);
-
-      } else if (dx > threshold && idx > 0) {
-        // Navighează DREAPTA (pagina anterioară)
-        s.current.locked = true;
-        if (wrap) {
-          wrap.style.transition = ease;
-          wrap.style.transform  = `translateX(${w}px)`;
-        }
-        setTimeout(() => {
-          if (wrap) { wrap.style.transition = 'none'; wrap.style.transform = ''; }
-          router.push(PAGES[idx - 1]);
-          requestAnimationFrame(() => {
-            const w2 = getWrap();
-            if (w2) {
-              w2.style.transition = 'none';
-              w2.style.transform  = `translateX(${-w}px)`;
-              requestAnimationFrame(() => {
-                w2.style.transition = ease;
-                w2.style.transform  = 'translateX(0)';
-                w2.addEventListener('transitionend', () => {
-                  w2.style.transition = '';
-                  w2.style.transform  = '';
-                  w2.style.willChange = '';
-                  s.current.locked = false;
-                }, { once: true });
-              });
-            } else {
-              s.current.locked = false;
-            }
-          });
-        }, 285);
-
-      } else {
-        // Snap back
-        if (wrap) {
-          wrap.style.transition = 'transform 300ms cubic-bezier(0.34, 1.2, 0.64, 1)';
-          wrap.style.transform  = 'translateX(0)';
-          wrap.addEventListener('transitionend', () => {
-            wrap.style.transition = '';
-            wrap.style.willChange = '';
-          }, { once: true });
-        }
-      }
+      if      (dx < -w * 0.28 && idx < PAGES.length - 1) commit('left',  idx + 1);
+      else if (dx >  w * 0.28 && idx > 0)                commit('right', idx - 1);
+      else                                                snapBack();
 
       s.current.dragging = false;
     };
@@ -203,22 +137,17 @@ export default function SwipeNavigator() {
     };
   }, [pathname, router]);
 
+  // ── Dots ─────────────────────────────────────────────────
   return (
     <div style={{
-      position:      'fixed',
-      bottom:        'calc(62px + env(safe-area-inset-bottom,0px) + 8px)',
-      left: 0, right: 0,
-      display:       'flex',
-      justifyContent:'center',
-      gap:           5,
-      zIndex:        600,
-      pointerEvents: 'none',
+      position:'fixed', bottom:'calc(62px + env(safe-area-inset-bottom,0px) + 8px)',
+      left:0, right:0, display:'flex', justifyContent:'center',
+      gap:5, zIndex:600, pointerEvents:'none',
     }}>
       {PAGES.map((_, i) => (
         <div key={i} style={{
           width:      i === dots ? 20 : 5,
-          height:     5,
-          borderRadius: 3,
+          height:     5, borderRadius:3,
           background: i === dots ? '#f97316' : 'rgba(255,255,255,0.18)',
           transition: 'width 350ms cubic-bezier(0.34,1.56,0.64,1), background 300ms',
           boxShadow:  i === dots ? '0 0 8px rgba(249,115,22,0.6)' : 'none',
