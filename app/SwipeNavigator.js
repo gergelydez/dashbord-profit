@@ -17,17 +17,9 @@ export default function SwipeNavigator() {
     axis: null, dragging: false, locked: false,
   });
 
-  // ── Prefetch toate paginile la mount ──────────────────────
-  useEffect(() => {
-    PAGES.forEach(p => router.prefetch(p));
-  }, [router]);
+  useEffect(() => { PAGES.forEach(p => router.prefetch(p)); }, [router]);
+  useEffect(() => { setDots(PAGES.indexOf(pathname)); }, [pathname]);
 
-  // ── Reset după navigare ───────────────────────────────────
-  useEffect(() => {
-    setDots(PAGES.indexOf(pathname));
-  }, [pathname]);
-
-  // ── Touch logic ───────────────────────────────────────────
   useEffect(() => {
     const wrap = () => document.getElementById('page-wrap');
 
@@ -41,26 +33,18 @@ export default function SwipeNavigator() {
     const commit = (dir, targetIdx) => {
       if (s.current.locked) return;
       s.current.locked = true;
-      const w    = window.innerWidth;
+      const w   = window.innerWidth;
       const outX = dir === 'left' ? -w : w;
       const inX  = dir === 'left' ?  w : -w;
 
-      // 1. Slide out pagina curentă
       set(outX, EASE);
-
-      // 2. Navighează imediat (Next.js are pagina în cache din prefetch)
-      //    Facem push fără să așteptăm animația — pagina se pregătește în paralel
       router.push(PAGES[targetIdx]);
 
-      // 3. Slide in pagina nouă — după ce DOM-ul s-a actualizat
-      //    Folosim o referință persistentă la wrap, nu o captură veche
-      const tid = setTimeout(() => {
+      setTimeout(() => {
         const el = wrap();
         if (!el) { s.current.locked = false; return; }
-        // Poziționăm pagina nouă din direcția opusă, fără tranziție
         el.style.transition = 'none';
         el.style.transform  = `translateX(${inX}px)`;
-        // Un rAF dublu ca să garantăm că browser-ul a pictat noul conținut
         requestAnimationFrame(() => requestAnimationFrame(() => {
           const el2 = wrap();
           if (!el2) { s.current.locked = false; return; }
@@ -70,7 +54,7 @@ export default function SwipeNavigator() {
             s.current.locked = false;
           }, { once: true });
         }));
-      }, 50); // 50ms — suficient ca router.push să înceapă render-ul
+      }, 50);
     };
 
     const snapBack = () => {
@@ -81,6 +65,17 @@ export default function SwipeNavigator() {
       }, { once: true });
     };
 
+    // Verifică dacă elementul sau un părinte e scrollabil orizontal
+    const isInsideHScroll = (target) => {
+      let el = target;
+      while (el && el !== document.body) {
+        const ox = window.getComputedStyle(el).overflowX;
+        if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 2) return true;
+        el = el.parentElement;
+      }
+      return false;
+    };
+
     const onStart = (e) => {
       if (s.current.locked) return;
       s.current.startX   = e.touches[0].clientX;
@@ -89,57 +84,48 @@ export default function SwipeNavigator() {
       s.current.axis     = null;
       s.current.dragging = false;
 
-      // Dacă touch-ul a început într-un container scrollabil (H sau V) — lăsăm nativul
-      let el = e.target;
-      while (el && el !== document.body) {
-        const style = window.getComputedStyle(el);
-        const ox = style.overflowX;
-        const oy = style.overflowY;
-        // Scrollabil orizontal → blochează swipe navigation
-        if (el.scrollWidth > el.clientWidth + 2 && (ox === 'auto' || ox === 'scroll')) {
-          s.current.axis = 'v';
-          return;
-        }
-        // Scrollabil vertical cu conținut (pagina în sine) → permitem swipe doar de la margini
-        if (el.scrollHeight > el.clientHeight + 2 && (oy === 'auto' || oy === 'scroll')) {
-          // Swipe din marginea ecranului (primii/ultimii 20px) → navigare
-          // Altfel → lăsăm scroll vertical
-          const edgeSize = 20;
-          const x = e.touches[0].clientX;
-          if (x > edgeSize && x < window.innerWidth - edgeSize) {
-            s.current.axis = 'v';
-            return;
-          }
-        }
-        el = el.parentElement;
+      // Dacă touch-ul e într-un scroll orizontal → nu navigăm
+      if (isInsideHScroll(e.target)) {
+        s.current.axis = 'v';
       }
     };
 
     const onMove = (e) => {
       if (s.current.locked) return;
+
+      // Dacă axa e deja determinată
+      if (s.current.axis === 'v') return;
+      if (s.current.axis === 'h') {
+        e.preventDefault();
+        s.current.dx = e.touches[0].clientX - s.current.startX;
+        const travel = Math.max(-window.innerWidth, Math.min(window.innerWidth, s.current.dx));
+        requestAnimationFrame(() => set(travel));
+        s.current.dragging = true;
+        return;
+      }
+
       const dx = e.touches[0].clientX - s.current.startX;
       const dy = e.touches[0].clientY - s.current.startY;
+      const dist = Math.hypot(dx, dy);
 
-      if (!s.current.axis) {
-        if (Math.hypot(dx, dy) < 6) return;
-        // Strict: trebuie să fie clar mai mult orizontal decât vertical
-        if (Math.abs(dx) > Math.abs(dy) * 1.5) {
-          const idx = PAGES.indexOf(pathname);
-          if (dx < 0 && idx >= PAGES.length - 1) { s.current.axis = 'v'; return; }
-          if (dx > 0 && idx <= 0)                { s.current.axis = 'v'; return; }
-          s.current.axis = 'h';
-        } else {
-          s.current.axis = 'v';
-          return;
-        }
+      // Așteptăm minim 10px înainte să decidem
+      if (dist < 10) return;
+
+      const isHorizontal = Math.abs(dx) > Math.abs(dy) * 2; // 2:1 ratio — foarte strict
+      if (!isHorizontal) {
+        s.current.axis = 'v';
+        return;
       }
-      if (s.current.axis === 'v') return;
 
-      // Abia acum blocăm scroll-ul — suntem siguri că e swipe orizontal
+      // E orizontal — verificăm dacă avem unde să mergem
+      const idx = PAGES.indexOf(pathname);
+      if (dx < 0 && idx >= PAGES.length - 1) { s.current.axis = 'v'; return; }
+      if (dx > 0 && idx <= 0)                { s.current.axis = 'v'; return; }
+
+      s.current.axis = 'h';
       e.preventDefault();
+      s.current.dx = dx;
       s.current.dragging = true;
-      s.current.dx       = dx;
-
       const travel = Math.max(-window.innerWidth, Math.min(window.innerWidth, dx));
       requestAnimationFrame(() => set(travel));
     };
@@ -150,8 +136,8 @@ export default function SwipeNavigator() {
       const w   = window.innerWidth;
       const idx = PAGES.indexOf(pathname);
 
-      if      (dx < -w * 0.15 && idx < PAGES.length - 1) commit('left',  idx + 1);
-      else if (dx >  w * 0.15 && idx > 0)                commit('right', idx - 1);
+      if      (dx < -w * 0.20 && idx < PAGES.length - 1) commit('left',  idx + 1);
+      else if (dx >  w * 0.20 && idx > 0)                commit('right', idx - 1);
       else                                                snapBack();
 
       s.current.dragging = false;
@@ -167,7 +153,6 @@ export default function SwipeNavigator() {
     };
   }, [pathname, router]);
 
-  // ── Dots ─────────────────────────────────────────────────
   return (
     <div style={{
       position:'fixed', bottom:'calc(62px + env(safe-area-inset-bottom,0px) + 8px)',
