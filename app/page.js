@@ -754,7 +754,11 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
 
   const cnt = s => orders.filter(o=>getFinalStatus(o)===s).length;
   const sum = ss => orders.filter(o=>ss.includes(getFinalStatus(o))).reduce((a,o)=>a+o.total,0);
-  const incurs=cnt('incurs'), outfor=cnt('outfor');
+  // Tranzit/outfor: din TOATE comenzile (nu doar perioada selectată)
+  // Un colet în tranzit rămâne vizibil indiferent de filtrul de dată
+  const cntAll = s => applyTrackingOverrides(allOrders).filter(o=>getFinalStatus(o)===s).length;
+  const incurs = cntAll('incurs');
+  const outfor = cntAll('outfor');
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
