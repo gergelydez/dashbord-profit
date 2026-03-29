@@ -1,110 +1,173 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
-// Ordinea paginilor — stânga ↔ dreapta
 const PAGES = ['/', '/whatsapp', '/stats', '/import', '/profit'];
+const LABELS = ['Comenzi', 'WhatsApp', 'Statistici', 'Import', 'Profit'];
 
 export default function SwipeNavigator() {
   const router   = useRouter();
   const pathname = usePathname();
-  const touchStart = useRef(null);
-  const touchStartY = useRef(null);
-  const swiping = useRef(false);
+  const state    = useRef({
+    startX: 0, startY: 0,
+    currentX: 0,
+    dragging: false,
+    locked: false,       // navigare în curs
+    axis: null,          // 'h' | 'v' — detectat după primii 10px
+    raf: null,
+  });
+  const pageIdx = PAGES.indexOf(pathname);
 
+  // ─── helpers ───────────────────────────────────────────────
+  const getEl   = () => document.getElementById('page-wrap');
+  const setStyle = (el, dx, opacity, transition) => {
+    if (!el) return;
+    el.style.transition = transition || 'none';
+    el.style.transform  = `translateX(${dx}px)`;
+    el.style.opacity    = String(opacity);
+  };
+
+  const spring = (el, targetDx, targetOp, duration = 320) => {
+    return new Promise(res => {
+      if (!el) return res();
+      const ease = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+      el.style.transition = `transform ${duration}ms ${ease}, opacity ${duration}ms ${ease}`;
+      el.style.transform  = `translateX(${targetDx}px)`;
+      el.style.opacity    = String(targetOp);
+      const tid = setTimeout(res, duration);
+      el.addEventListener('transitionend', () => { clearTimeout(tid); res(); }, { once: true });
+    });
+  };
+
+  const snapBack = async () => {
+    const el = getEl();
+    await spring(el, 0, 1, 280);
+    setStyle(el, 0, 1);
+    state.current.locked = false;
+  };
+
+  const navigate = async (dir, targetPath) => {
+    if (state.current.locked) return;
+    state.current.locked = true;
+    const el = getEl();
+    const w  = window.innerWidth;
+
+    // 1. Slide out — continuă în direcția gestului
+    await spring(el, dir === 'left' ? -w : w, 0, 260);
+
+    // 2. Navighează (instant, pagina nouă apare din cealaltă parte)
+    router.push(targetPath);
+
+    // 3. Slide in — după un tick ca să prindă noul conținut
+    await new Promise(r => setTimeout(r, 30));
+    setStyle(el, dir === 'left' ? w * 0.4 : -w * 0.4, 0);
+    await new Promise(r => requestAnimationFrame(r));
+    await spring(el, 0, 1, 300);
+    setStyle(el, 0, 1);
+    state.current.locked = false;
+  };
+
+  // ─── touch handlers ─────────────────────────────────────────
   useEffect(() => {
-    const onTouchStart = (e) => {
-      touchStart.current  = e.touches[0].clientX;
-      touchStartY.current = e.touches[0].clientY;
-      swiping.current     = false;
+    const s = state.current;
+
+    const onStart = (e) => {
+      if (s.locked) return;
+      s.startX   = e.touches[0].clientX;
+      s.startY   = e.touches[0].clientY;
+      s.currentX = 0;
+      s.dragging = false;
+      s.axis     = null;
     };
 
-    const onTouchEnd = (e) => {
-      if (touchStart.current === null) return;
-      const dx = e.changedTouches[0].clientX - touchStart.current;
-      const dy = e.changedTouches[0].clientY - touchStartY.current;
+    const onMove = (e) => {
+      if (s.locked) return;
+      const dx = e.touches[0].clientX - s.startX;
+      const dy = e.touches[0].clientY - s.startY;
 
-      // Ignorăm swipe-urile mai mult verticale (scroll)
-      if (Math.abs(dy) > Math.abs(dx)) return;
-      // Minim 60px pentru a declanșa navigarea
-      if (Math.abs(dx) < 60) return;
+      // Detectăm axa după primii 8px
+      if (!s.axis) {
+        if (Math.hypot(dx, dy) < 8) return;
+        s.axis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      }
+      if (s.axis === 'v') return; // scroll normal
+
+      e.preventDefault(); // blochează scroll când glisăm horizontal
 
       const idx = PAGES.indexOf(pathname);
-      if (idx === -1) return;
+      // Nu permite drag dacă suntem la capete
+      if (dx > 0 && idx === 0) return;
+      if (dx < 0 && idx === PAGES.length - 1) return;
 
-      if (dx < 0 && idx < PAGES.length - 1) {
-        // Swipe stânga → pagina următoare
-        triggerSwipe('left', PAGES[idx + 1]);
-      } else if (dx > 0 && idx > 0) {
-        // Swipe dreapta → pagina anterioară
-        triggerSwipe('right', PAGES[idx - 1]);
-      }
+      s.dragging = true;
+      s.currentX = dx;
 
-      touchStart.current = null;
+      // Rubber-band: rezistență la capete (nu avem — dar aplic factor 0.4 dacă e prea mult)
+      const resistance = Math.abs(dx) > window.innerWidth * 0.5 ? 0.5 : 1;
+      const visualDx   = dx * resistance;
+      const opacity    = Math.max(0.4, 1 - Math.abs(visualDx) / (window.innerWidth * 1.2));
+
+      if (s.raf) cancelAnimationFrame(s.raf);
+      s.raf = requestAnimationFrame(() => {
+        setStyle(getEl(), visualDx, opacity);
+      });
     };
 
-    const triggerSwipe = (dir, targetPage) => {
-      if (swiping.current) return;
-      swiping.current = true;
+    const onEnd = async (e) => {
+      if (s.locked) return;
+      if (s.axis !== 'h' || !s.dragging) return;
 
-      // Animație: slide out
-      const main = document.getElementById('page-content');
-      if (main) {
-        main.style.transition = 'transform 220ms cubic-bezier(.4,0,.2,1), opacity 220ms';
-        main.style.transform  = dir === 'left' ? 'translateX(-40px)' : 'translateX(40px)';
-        main.style.opacity    = '0';
+      const dx    = s.currentX;
+      const vx    = Math.abs(dx);
+      const w     = window.innerWidth;
+      const idx   = PAGES.indexOf(pathname);
+      const quick = vx > w * 0.22; // peste 22% din lățime → navighează
+
+      if (dx < -30 && idx < PAGES.length - 1 && quick) {
+        await navigate('left', PAGES[idx + 1]);
+      } else if (dx > 30 && idx > 0 && quick) {
+        await navigate('right', PAGES[idx - 1]);
+      } else {
+        await snapBack();
       }
-
-      setTimeout(() => {
-        router.push(targetPage);
-        // Animație: slide in după navigare
-        setTimeout(() => {
-          if (main) {
-            main.style.transition = 'none';
-            main.style.transform  = dir === 'left' ? 'translateX(40px)' : 'translateX(-40px)';
-            main.style.opacity    = '0';
-          }
-          requestAnimationFrame(() => {
-            if (main) {
-              main.style.transition = 'transform 220ms cubic-bezier(.4,0,.2,1), opacity 220ms';
-              main.style.transform  = 'translateX(0)';
-              main.style.opacity    = '1';
-            }
-            swiping.current = false;
-          });
-        }, 80);
-      }, 180);
+      s.dragging = false;
     };
 
-    document.addEventListener('touchstart', onTouchStart, { passive: true });
-    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    const opts = { passive: false };
+    const optsP = { passive: true };
+    document.addEventListener('touchstart', onStart, optsP);
+    document.addEventListener('touchmove',  onMove,  opts);
+    document.addEventListener('touchend',   onEnd,   optsP);
     return () => {
-      document.removeEventListener('touchstart', onTouchStart);
-      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('touchstart', onStart);
+      document.removeEventListener('touchmove',  onMove);
+      document.removeEventListener('touchend',   onEnd);
     };
   }, [pathname, router]);
 
-  // Indicator vizual de pagină (dots)
-  const idx = PAGES.indexOf(pathname);
-
+  // ─── dots indicator ─────────────────────────────────────────
   return (
     <div style={{
       position: 'fixed',
-      bottom: 'calc(62px + env(safe-area-inset-bottom, 0px) + 6px)',
-      left: '50%',
-      transform: 'translateX(-50%)',
+      bottom: 'calc(62px + env(safe-area-inset-bottom, 0px) + 8px)',
+      left: 0, right: 0,
       display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
       gap: 5,
-      zIndex: 100,
+      zIndex: 200,
       pointerEvents: 'none',
     }}>
       {PAGES.map((_, i) => (
         <div key={i} style={{
-          width:  i === idx ? 18 : 5,
-          height: 5,
+          width:      i === pageIdx ? 20 : 5,
+          height:     5,
           borderRadius: 3,
-          background: i === idx ? '#f97316' : 'rgba(255,255,255,0.2)',
-          transition: 'width 300ms cubic-bezier(.4,0,.2,1), background 300ms',
+          background: i === pageIdx
+            ? '#f97316'
+            : 'rgba(255,255,255,0.18)',
+          transition: 'width 350ms cubic-bezier(0.34,1.56,0.64,1), background 300ms',
+          boxShadow:  i === pageIdx ? '0 0 8px rgba(249,115,22,0.6)' : 'none',
         }}/>
       ))}
     </div>
