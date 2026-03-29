@@ -204,6 +204,28 @@ export default function Dashboard() {
   const [glsFiles, setGlsFiles]   = useState(() => { try { return JSON.parse(ls.get('gls_files') || '[]'); } catch { return []; } });
   const [courierFilter, setCourierFilter] = useState('toate');
   const [showTranzitPanel, setShowTranzitPanel] = useState(false);
+  const [liveTrackingData, setLiveTrackingData] = useState({}); // { orderId: {statusCode, desc, location, lastUpdate, loading} }
+
+  const fetchLiveTracking = async (orders) => {
+    for (const o of orders) {
+      if (!o.trackingNo) continue;
+      setLiveTrackingData(prev => ({...prev, [o.id]: {...prev[o.id], loading: true}}));
+      try {
+        const r = await fetch(`/api/tracking?awb=${o.trackingNo}&courier=${o.courier||'gls'}`);
+        const d = await r.json();
+        setLiveTrackingData(prev => ({...prev, [o.id]: {
+          loading: false,
+          statusCode: d.statusRaw,
+          desc: d.statusDescription || d.statusRaw || '—',
+          location: d.location || '',
+          lastUpdate: d.lastUpdate ? new Date(d.lastUpdate).toLocaleString('ro-RO',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '',
+          glsStatus: d.status,
+        }}));
+      } catch {
+        setLiveTrackingData(prev => ({...prev, [o.id]: {loading: false, desc: 'Eroare', statusCode: '?'}}));
+      }
+    }
+  };
 
   const [sbInvLoading, setSbInvLoading] = useState({});
   const [sbInvResults, setSbInvResults] = useState({});
@@ -1015,7 +1037,12 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             <div className="kgrid">
               {kpis.map((k,i) => (
                 <div key={i} className="kpi" style={{'--kc':k.color}}
-                  onClick={i===2?()=>setShowTranzitPanel(v=>!v):undefined}
+                  onClick={i===2?()=>{
+                    setShowTranzitPanel(v=>{
+                      if(!v) setTimeout(()=>fetchLiveTracking(tranzitOrders),100);
+                      return !v;
+                    });
+                  }:undefined}
                   title={i===2?'Click pentru detalii tranzit':undefined}
                   css={i===2?{cursor:'pointer'}:{}}>
                   <span className="ke">{k.e}</span>
@@ -1026,28 +1053,80 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 </div>
               ))}\n            </div>
 
-            {/* Panel tranzit expandabil */}
-            {showTranzitPanel && tranzitOrders.length > 0 && (
-              <div style={{background:'rgba(59,130,246,.06)',border:'1px solid rgba(59,130,246,.2)',borderRadius:10,padding:'10px 14px',marginBottom:10}}>
-                <div style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,marginBottom:8,fontWeight:700}}>
-                  🚚 Colete în tranzit acum — {tranzitOrders.length} total
-                </div>
-                {tranzitOrders.map(o => (
-                  <div key={o.id} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)',fontSize:11}}>
-                    <span style={{color:'#f97316',fontWeight:700,minWidth:70}}>{o.name}</span>
-                    <span style={{color:'#94a3b8',flex:1}}>{o.client}</span>
-                    <span style={{color:'#64748b',fontFamily:'monospace',fontSize:10}}>{o.trackingNo||'—'}</span>
-                    <span style={{fontSize:10,fontWeight:700,
-                      color:getFinalStatus(o)==='outfor'?'#a855f7':'#3b82f6',
-                      background:getFinalStatus(o)==='outfor'?'rgba(168,85,247,.1)':'rgba(59,130,246,.1)',
-                      padding:'2px 6px',borderRadius:8}}>
-                      {getFinalStatus(o)==='outfor'?'La curier':'Tranzit'}
-                    </span>
-                    <span style={{fontSize:10,color:'#475569'}}>{o.createdAt?.slice(0,10)}</span>
+            {/* Panel tranzit live — fetch GLS API în timp real */}
+            {showTranzitPanel && tranzitOrders.length > 0 && (() => {
+              const GLS_CODES = {
+                1:'Preluat de curier', 2:'Plecat din depozit', 3:'Ajuns în depozit',
+                4:'În livrare azi', 5:'Livrat', 6:'Stocat temporar', 7:'Stocat',
+                8:'Ridicare proprie', 9:'Reprogramat', 10:'Scanat în depozit',
+                11:'Adresă incorectă', 12:'Destinatar absent', 13:'În tranzit hub',
+                14:'Refuzat', 15:'Deteriorat', 16:'Pierdut', 17:'Retur inițiat',
+                18:'Adresă incompletă', 19:'Cod poștal incorect', 20:'Zonă neacoperită',
+                21:'Eroare sortare', 22:'Trimis la sortare', 23:'Retur la expeditor',
+                24:'Redirecționat', 25:'Transferat alt depot', 26:'Ajuns depot destinație',
+                27:'Confirmat în centru', 29:'Plecat spre livrare', 32:'Ieșit pentru livrare',
+                40:'Retur primit', 41:'Redirecționat hub', 46:'Plecat hub',
+                47:'Plecat depozit', 51:'Date înregistrate', 52:'Ramburs înregistrat',
+                53:'Tranzit depozit', 54:'Livrat (confirmat)', 55:'Livrat la vecin',
+                56:'Scanat ieșire', 58:'Livrat la recepție', 80:'Pickup înregistrat',
+                83:'Pickup preluat', 84:'Pickup confirmat', 85:'Expediat', 86:'Preluat curier',
+                87:'Tentativă eșuată 1', 88:'Tentativă eșuată 2', 89:'Tentativă eșuată 3',
+                90:'Returnare inițiată', 92:'Livrat (semnătură)', 93:'Livrat (foto)',
+                97:'Procesare', 99:'În tranzit',
+              };
+              const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
+
+              return (
+                <div style={{background:'rgba(59,130,246,.06)',border:'1px solid rgba(59,130,246,.25)',borderRadius:12,padding:'12px 14px',marginBottom:10}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                    <div style={{fontSize:11,color:'#3b82f6',fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>
+                      🚚 Colete în tranzit — {tranzitOrders.length}
+                    </div>
+                    <button onClick={()=>fetchLiveTracking(tranzitOrders)}
+                      style={{background:'rgba(59,130,246,.15)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:8,padding:'4px 12px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                      🔄 Refresh
+                    </button>
                   </div>
-                ))}
-              </div>
-            )}
+                  {tranzitOrders.map(o => {
+                    const live = liveTrackingData[o.id];
+                    const code = live?.statusCode ? parseInt(live.statusCode) : null;
+                    const codeDesc = code ? (GLS_CODES[code] || live?.desc || `Cod ${code}`) : null;
+                    const color = statusColor(live?.glsStatus);
+                    return (
+                      <div key={o.id} style={{padding:'9px 0',borderBottom:'1px solid rgba(255,255,255,.05)'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                          <span style={{color:'#f97316',fontWeight:700,fontSize:12,minWidth:65}}>{o.name}</span>
+                          <span style={{color:'#94a3b8',fontSize:11,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.client}</span>
+                          <span style={{color:'#475569',fontSize:10}}>{o.createdAt?.slice(0,10)}</span>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                          <span style={{fontFamily:'monospace',fontSize:10,color:'#64748b',background:'rgba(255,255,255,.04)',padding:'2px 6px',borderRadius:4}}>
+                            {o.trackingNo||'fără AWB'}
+                          </span>
+                          {!o.trackingNo ? (
+                            <span style={{fontSize:10,color:'#f59e0b'}}>⚠ Fără AWB</span>
+                          ) : live?.loading ? (
+                            <span style={{fontSize:10,color:'#3b82f6'}}>⟳ Se verifică...</span>
+                          ) : live ? (
+                            <>
+                              {code && <span style={{fontSize:10,fontWeight:800,background:'rgba(59,130,246,.15)',color:'#93c5fd',padding:'2px 6px',borderRadius:4,fontFamily:'monospace'}}>#{code}</span>}
+                              <span style={{fontSize:11,fontWeight:600,color}}>{codeDesc||live.desc||'—'}</span>
+                              {live.location && <span style={{fontSize:10,color:'#64748b'}}>📍{live.location}</span>}
+                              {live.lastUpdate && <span style={{fontSize:10,color:'#475569'}}>{live.lastUpdate}</span>}
+                            </>
+                          ) : (
+                            <span style={{fontSize:10,color:'#334155'}}>— se încarcă...</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{fontSize:9,color:'#334155',marginTop:8,textAlign:'center'}}>
+                    4=Livrare azi · 5=Livrat · 10=Scanat depot · 23/40=Retur · 32=Ieșit livrare
+                  </div>
+                </div>
+              );
+            })()}
 
             <div className="srow">
               {sI>0 && (
@@ -1547,4 +1626,5 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
+
 
