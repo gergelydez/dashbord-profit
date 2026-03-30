@@ -37,7 +37,7 @@ export async function GET() {
     const data = await response.json();
     const items = Array.isArray(data) ? data : data.items || [];
 
-    // Construim o hartă: nume produs → cel mai mare cost unitar (abordare conservatoare)
+    // Hartă: nume produs → cost unitar (cel mai mare, abordare conservatoare)
     const productCostMap = {};
     for (const item of items) {
       const productName = item.productName?.trim();
