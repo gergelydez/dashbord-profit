@@ -838,28 +838,23 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   // getGlsStatusFinal și getFinalStatus mutate sus
 
   // orders = comenzile din perioadă cu overrides aplicate (sursa corectă pentru KPI)
-  // KPI Livrate — din TOATE comenzile, filtrate după fulfilledAt (data livrării)
-  // O comandă plasată săptămâna trecută și livrată azi apare la "Azi"
+  // KPI Livrate — comenzi cu createdAt în perioadă + status livrat
+  // IDENTIC cu profit/page.js care arată 66/67 corect
+  // "Azi" = comenzi plasate azi care sunt livrate
+  // EXCEPȚIE "Azi": includem și comenzile livrate azi indiferent când au fost plasate
   const { from: kpiFrom, to: kpiTo } = getRange(preset, customFrom, customTo);
   const kpiFromD = new Date(kpiFrom + 'T00:00:00');
   const kpiToD   = new Date(kpiTo   + 'T23:59:59');
+  const isToday  = preset === 'today' || preset === 'yesterday';
   const livrateOrders = allOrders.filter(o => {
     if (getFinalStatus(o) !== 'livrat') return false;
-    // Data de referință: fulfilledAt dacă există și e plauzibilă
-    // "Plauzibilă" = nu mai mult de 60 zile după createdAt (evităm fulfilledAt=now setat greșit)
-    let refDate = null;
-    if (o.fulfilledAt) {
-      const fd = new Date(o.fulfilledAt);
-      const cd = new Date(o.createdAt);
-      const diffDays = (fd - cd) / (1000 * 60 * 60 * 24);
-      // Dacă fulfilledAt e cu mai mult de 60 zile după createdAt → probabil setat greșit
-      // Folosim createdAt ca referință
-      refDate = diffDays > 60 ? cd : fd;
-    } else {
-      refDate = new Date(o.createdAt);
+    if (isToday && o.fulfilledAt) {
+      // Pentru Azi/Ieri: filtrăm după data livrării (fulfilledAt)
+      return new Date(o.fulfilledAt) >= kpiFromD && new Date(o.fulfilledAt) <= kpiToD;
     }
-    if (!refDate) return false;
-    return refDate >= kpiFromD && refDate <= kpiToD;
+    // Pentru toate celelalte: filtrăm după data plasării (createdAt) — consistent cu tabelul
+    const created = new Date(o.createdAt);
+    return created >= kpiFromD && created <= kpiToD;
   });
   const livrate = livrateOrders.length;
   const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
