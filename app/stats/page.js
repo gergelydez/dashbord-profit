@@ -114,18 +114,21 @@ export default function Stats() {
     });
   }, [allOrders, from, to]);
 
-  // Livrate în perioadă — IDENTIC cu profit/page.js:
-  // createdAt în perioadă + getFinalStatus === 'livrat'
-  // (nu fulfilledAt — asta e diferența față de ce era înainte)
+  // Livrate în perioadă:
+  // - Azi / Ieri → după fulfilledAt (data livrării fizice)
+  // - Restul → după createdAt (data plasării), consistent cu tabelul
   const livrateInPeriod = useMemo(() => {
-    const fromD = new Date(from + 'T00:00:00');
-    const toD   = new Date(to   + 'T23:59:59');
+    const fromD   = new Date(from + 'T00:00:00');
+    const toD     = new Date(to   + 'T23:59:59');
+    const byDate  = preset === 'today' || preset === 'yesterday';
     return allOrders.filter(o => {
-      const created = new Date(o.createdAt);
-      if (created < fromD || created > toD) return false;
-      return getFinalStatus(o, sdAwbMap) === 'livrat';
+      if (getFinalStatus(o, sdAwbMap) !== 'livrat') return false;
+      const refDate = byDate
+        ? (o.fulfilledAt ? new Date(o.fulfilledAt) : new Date(o.createdAt))
+        : new Date(o.createdAt);
+      return refDate >= fromD && refDate <= toD;
     });
-  }, [allOrders, from, to, sdAwbMap]);
+  }, [allOrders, from, to, sdAwbMap, preset]);
 
   const stats = useMemo(() => {
     const total   = orders.length;
