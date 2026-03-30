@@ -274,6 +274,7 @@ export default function ProfitPage() {
   const [activeTab, setActiveTab] = useState('summary');
   const [sortProd, setSortProd]   = useState('profit');
   const [showNoCost, setShowNoCost] = useState(false);
+  const [perUnit, setPerUnit]     = useState(false);
 
   // Shopify
   const [shopifyOrders, setShopifyOrders] = useState([]); // comenzi livrate in luna selectata
@@ -1513,7 +1514,17 @@ export default function ProfitPage() {
                           {lbl}
                         </button>
                       ))}
-                      <label style={{fontSize:11,color:'var(--c-text3)',display:'flex',alignItems:'center',gap:4,marginLeft:'auto',cursor:'pointer'}}>
+                      {/* Toggle Total / Per bucată */}
+                      <button onClick={()=>setPerUnit(v=>!v)}
+                        style={{marginLeft:'auto',padding:'5px 14px',borderRadius:20,fontSize:11,fontWeight:700,cursor:'pointer',
+                          background: perUnit ? 'linear-gradient(135deg,#3b82f6,#1d4ed8)' : '#1e2a35',
+                          border:`1px solid ${perUnit?'#3b82f6':'#243040'}`,
+                          color: perUnit ? 'white' : '#94a3b8',
+                          transition:'all .2s',
+                        }}>
+                        {perUnit ? '📦 /buc' : '📊 Total'}
+                      </button>
+                      <label style={{fontSize:11,color:'var(--c-text3)',display:'flex',alignItems:'center',gap:4,cursor:'pointer'}}>
                         <input type="checkbox" checked={showNoCost} onChange={e=>setShowNoCost(e.target.checked)}/>
                         Și fără cost
                       </label>
@@ -1554,24 +1565,19 @@ export default function ProfitPage() {
                         <div style={{height:3,background:'#1e2a35',borderRadius:2,marginBottom:8,overflow:'hidden'}}>
                           <div style={{height:'100%',width:`${barW}%`,background: p.profit > 0 ? '#10b981' : '#f43f5e',borderRadius:2,transition:'width .5s'}}/>
                         </div>
-                        {/* Rând 2: 4 coloane de cifre */}
+                        {/* Rând 2: 4 coloane de cifre — total sau per bucată */}
                         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:4}}>
-                          <div style={{textAlign:'center'}}>
-                            <div style={{fontSize:11,fontWeight:700,color:'#f97316'}}>{fmt(p.revenue)} RON</div>
-                            <div style={{fontSize:9,color:'var(--c-text4)'}}>Vânzări</div>
-                          </div>
-                          <div style={{textAlign:'center'}}>
-                            <div style={{fontSize:11,fontWeight:700,color:'#f43f5e'}}>{p.hasCost ? fmt(p.cogs)+' RON' : '—'}</div>
-                            <div style={{fontSize:9,color:'var(--c-text4)'}}>Cost achiziție</div>
-                          </div>
-                          <div style={{textAlign:'center'}}>
-                            <div style={{fontSize:11,fontWeight:700,color:'#f59e0b'}}>{fmt(p.chelt)} RON</div>
-                            <div style={{fontSize:9,color:'var(--c-text4)'}}>Cheltuieli</div>
-                          </div>
-                          <div style={{textAlign:'center'}}>
-                            <div style={{fontSize:12,fontWeight:800,color:profitColor}}>{fmt(p.profit)} RON</div>
-                            <div style={{fontSize:9,color:'var(--c-text4)'}}>{margin.toFixed(1)}% marjă</div>
-                          </div>
+                          {[
+                            { label:'Vânzări',        val: perUnit ? p.revenue/p.qty : p.revenue, color:'#f97316' },
+                            { label:'Cost achiziție', val: perUnit ? p.cogs/p.qty   : p.cogs,    color:'#f43f5e', hide: !p.hasCost },
+                            { label:'Cheltuieli',     val: perUnit ? p.chelt/p.qty  : p.chelt,   color:'#f59e0b' },
+                            { label: perUnit ? `Profit/buc` : `Profit ${margin.toFixed(1)}%`, val: perUnit ? p.profit/p.qty : p.profit, color: p.profit>0?'#10b981':'#f43f5e', bold:true },
+                          ].map(({label,val,color,hide,bold}) => (
+                            <div key={label} style={{textAlign:'center'}}>
+                              <div style={{fontSize:bold?12:11,fontWeight:bold?800:700,color}}>{hide ? '—' : fmt(val)+' RON'}</div>
+                              <div style={{fontSize:9,color:'var(--c-text4)'}}>{label}</div>
+                            </div>
+                          ))}
                         </div>
                         {!p.hasCost && (
                           <div style={{marginTop:6,fontSize:10,color:'#f59e0b',background:'rgba(245,158,11,.08)',borderRadius:6,padding:'3px 8px'}}>
@@ -1672,5 +1678,4 @@ export default function ProfitPage() {
     </>
   );
 }
-
 
