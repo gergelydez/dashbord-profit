@@ -1315,7 +1315,7 @@ export default function ProfitPage() {
                   style={{borderColor:'rgba(16,185,129,.4)',color:'#10b981'}}>
                   📊 Import Excel SmartBill (Stoc la zi → Exporta Excel)
                 </button>
-                <input ref={sbExcelRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
+                <input ref={sbExcelRef} type="file" accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{display:'none'}}
                   onChange={e=>{if(e.target.files[0]) importSmartBillExcel(e.target.files[0]); e.target.value='';}}/>
                 {sbCostsMsg && (
                   <div style={{fontSize:11,padding:'6px 10px',borderRadius:8,
