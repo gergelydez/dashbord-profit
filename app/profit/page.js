@@ -1612,16 +1612,6 @@ export default function ProfitPage() {
         })()}
 
         {/* ══ SETĂRI ══ */}
-                  <div style={{fontSize:10,color:'var(--c-text4)',textAlign:'center',padding:'8px 0'}}>
-                    Cheltuieli distribuite proporțional per item · {fmt(cheltuieliPerOrder)} RON/comandă
-                  </div>
-                </>
-              )}
-            </>
-          );
-        })()}
-
-        {/* ══ SETĂRI ══ */}
         {activeTab === 'settings' && (
           <>
             <div className="pf-stitle">SmartBill — Credențiale API</div>
@@ -1703,3 +1693,5 @@ export default function ProfitPage() {
     </>
   );
 }
+
+
