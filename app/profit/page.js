@@ -1703,5 +1703,3 @@ export default function ProfitPage() {
     </>
   );
 }
-
-
