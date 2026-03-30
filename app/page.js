@@ -835,7 +835,17 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   // getGlsStatusFinal și getFinalStatus mutate sus
 
   // orders = comenzile din perioadă cu overrides aplicate (sursa corectă pentru KPI)
-  const livrateOrders = orders.filter(o => getFinalStatus(o) === 'livrat');
+  // KPI Livrate — din TOATE comenzile, filtrate după fulfilledAt (data livrării)
+  // O comandă plasată săptămâna trecută și livrată azi apare la "Azi"
+  const { from: kpiFrom, to: kpiTo } = getRange(preset, customFrom, customTo);
+  const kpiFromD = new Date(kpiFrom + 'T00:00:00');
+  const kpiToD   = new Date(kpiTo   + 'T23:59:59');
+  const livrateOrders = allOrders.filter(o => {
+    if (getFinalStatus(o) !== 'livrat') return false;
+    const livDate = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
+    if (!livDate) return false;
+    return livDate >= kpiFromD && livDate <= kpiToD;
+  });
   const livrate = livrateOrders.length;
   const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
   const sICOD  = livrateOrders.filter(o => !isOnlinePayment(o)).reduce((a,o)=>a+o.total,0);
@@ -1051,7 +1061,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   <div className="kbar"><div className="kfill" style={{width:k.p+'%'}}></div></div>
                   <div className="kp">{k.p}%</div>
                 </div>
-              ))}\n            </div>
+              ))}
+            </div>
 
             {/* Panel tranzit live — fetch GLS API în timp real */}
             {showTranzitPanel && tranzitOrders.length > 0 && (() => {
