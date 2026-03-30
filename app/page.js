@@ -729,8 +729,11 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             trackingStatus: t.statusRaw || '',
             trackingLastUpdate: t.lastUpdate || '',
             trackingLocation: t.location || '',
+            // Folosim data reală de la GLS (lastUpdate), nu new Date()
+            // Altfel comenzi din luni trecute apar în luna curentă
             fulfilledAt: (liveTs === 'livrat' && !o.fulfilledAt)
-              ? new Date().toISOString() : o.fulfilledAt,
+              ? (t.lastUpdate || o.createdAt || new Date().toISOString())
+              : o.fulfilledAt,
           };
         });
         // Salvăm în AMBELE cache-uri ca să persiste după refresh
@@ -842,9 +845,21 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const kpiToD   = new Date(kpiTo   + 'T23:59:59');
   const livrateOrders = allOrders.filter(o => {
     if (getFinalStatus(o) !== 'livrat') return false;
-    const livDate = o.fulfilledAt ? new Date(o.fulfilledAt) : null;
-    if (!livDate) return false;
-    return livDate >= kpiFromD && livDate <= kpiToD;
+    // Data de referință: fulfilledAt dacă există și e plauzibilă
+    // "Plauzibilă" = nu mai mult de 60 zile după createdAt (evităm fulfilledAt=now setat greșit)
+    let refDate = null;
+    if (o.fulfilledAt) {
+      const fd = new Date(o.fulfilledAt);
+      const cd = new Date(o.createdAt);
+      const diffDays = (fd - cd) / (1000 * 60 * 60 * 24);
+      // Dacă fulfilledAt e cu mai mult de 60 zile după createdAt → probabil setat greșit
+      // Folosim createdAt ca referință
+      refDate = diffDays > 60 ? cd : fd;
+    } else {
+      refDate = new Date(o.createdAt);
+    }
+    if (!refDate) return false;
+    return refDate >= kpiFromD && refDate <= kpiToD;
   });
   const livrate = livrateOrders.length;
   const sI     = livrateOrders.reduce((a,o) => a+o.total, 0);
