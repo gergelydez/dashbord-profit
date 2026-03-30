@@ -272,6 +272,8 @@ export default function ProfitPage() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [activeTab, setActiveTab] = useState('summary');
+  const [sortProd, setSortProd]   = useState('profit');
+  const [showNoCost, setShowNoCost] = useState(false);
 
   // Shopify
   const [shopifyOrders, setShopifyOrders] = useState([]); // comenzi livrate in luna selectata
@@ -1472,8 +1474,7 @@ export default function ProfitPage() {
             .filter(p => p.qty > 0)
             .sort((a, b) => b.profit - a.profit);
 
-          const [sortProd, setSortProd] = useState('profit');
-          const [showNoCost, setShowNoCost] = useState(false);
+          // sortProd, setSortProd, showNoCost, setShowNoCost sunt din state-ul componentei
 
           const sorted = [...prodList]
             .filter(p => showNoCost || p.hasCost)
