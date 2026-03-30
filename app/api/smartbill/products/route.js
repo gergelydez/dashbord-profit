@@ -1,6 +1,3 @@
-// app/api/smartbill/products/route.js
-// Pune acest fișier la: app/api/smartbill/products/route.js
-
 import { NextResponse } from 'next/server';
 
 const BASE = 'https://ws.smartbill.ro/SBORO/api';
@@ -9,6 +6,7 @@ function makeAuth(email, token) {
   return Buffer.from(`${email.trim()}:${token.trim()}`).toString('base64');
 }
 
+// Încearcă mai multe endpoint-uri SmartBill pentru a găsi produsele cu prețuri
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const email     = searchParams.get('email');
@@ -21,74 +19,119 @@ export async function GET(request) {
   }
 
   const auth    = makeAuth(email, token);
-  const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
+  const headers = {
+    'Authorization': `Basic ${auth}`,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  };
 
-  try {
-    const prodRes = await fetch(`${BASE}/product?cif=${encodeURIComponent(cif)}`, {
-      headers, cache: 'no-store', signal: AbortSignal.timeout(15000),
-    });
+  const products = [];
+  let source = '';
 
-    if (!prodRes.ok) {
-      const err = await prodRes.text();
-      return NextResponse.json({ error: `SmartBill ${prodRes.status}`, details: err.slice(0, 300) }, { status: prodRes.status });
+  // Endpoint 1: Stoc pe gestiune (cel mai precis — are prețul de achiziție)
+  if (warehouse) {
+    try {
+      const url = `${BASE}/stock?cif=${encodeURIComponent(cif)}&warehouseName=${encodeURIComponent(warehouse)}`;
+      const res = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      if (res.ok) {
+        const data = await res.json();
+        const items = data.list || data.stocks || data.data || [];
+        items.forEach(p => {
+          const name = p.name || p.productName || p.denumire || '';
+          const sku  = p.code || p.productCode || p.cod || p.sku || '';
+          // Prețul de achiziție fără TVA
+          const cost = parseFloat(
+            p.purchasePrice ?? p.achizitie ?? p.pretAchizitie ??
+            p.buyingPrice ?? p.costPrice ?? p.price ?? 0
+          ) || 0;
+          if (name && cost > 0) {
+            products.push({ sku, name, cost, stock: parseFloat(p.quantity ?? p.cantitate ?? 0) || 0 });
+          }
+        });
+        if (products.length > 0) source = `stoc gestiune "${warehouse}"`;
+      }
+    } catch (e) {
+      console.warn('[SB] Stoc endpoint failed:', e.message);
     }
-
-    const prodData = await prodRes.json();
-    const rawList  = prodData.list || prodData.products || prodData.data || [];
-
-    const products = rawList
-      .filter(p => p && (p.name || p.productName))
-      .map(p => ({
-        sku:     p.code || p.productCode || p.sku || '',
-        name:    p.name || p.productName || '',
-        cost:    parseFloat(p.purchasePrice ?? p.buyingPrice ?? p.costPrice ?? p.price ?? 0) || 0,
-        stock:   parseFloat(p.quantity ?? p.stock ?? 0) || 0,
-        unit:    p.measuringUnit || 'buc',
-        updated: new Date().toISOString().slice(0, 7),
-      }))
-      .filter(p => p.name);
-
-    if (warehouse) {
-      try {
-        const sRes = await fetch(
-          `${BASE}/stock?cif=${encodeURIComponent(cif)}&warehouseName=${encodeURIComponent(warehouse)}`,
-          { headers, cache: 'no-store', signal: AbortSignal.timeout(10000) }
-        );
-        if (sRes.ok) {
-          const sData  = await sRes.json();
-          const sItems = sData.list || sData.stocks || sData.data || [];
-          const sMap   = {};
-          sItems.forEach(s => {
-            const code = s.code || s.productCode || s.sku || '';
-            if (code) sMap[code] = {
-              stock: parseFloat(s.quantity ?? s.stock ?? 0) || 0,
-              cost:  parseFloat(s.purchasePrice ?? s.costPrice ?? s.price ?? 0) || 0,
-            };
-          });
-          products.forEach(p => {
-            const s = sMap[p.sku];
-            if (s) { if (s.cost > 0) p.cost = s.cost; p.stock = s.stock; }
-          });
-        }
-      } catch { /* gestiune opțională */ }
-    }
-
-    const stdCosts = products
-      .filter(p => p.cost > 0)
-      .map(p => ({
-        id:       p.sku || p.name,
-        sku:      p.sku,
-        name:     p.name,
-        pattern:  p.name.toLowerCase(),
-        excludes: [],
-        cost:     p.cost,
-        updated:  p.updated,
-      }));
-
-    return NextResponse.json({ ok: true, count: products.length, products, stdCosts });
-
-  } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
   }
-}
 
+  // Endpoint 2: Toate gestiunile (dacă nu am gestiune specificată sau n-am găsit nimic)
+  if (products.length === 0) {
+    const warehouseEndpoints = [
+      `${BASE}/stock?cif=${encodeURIComponent(cif)}`,
+      `${BASE}/stocks?cif=${encodeURIComponent(cif)}`,
+    ];
+    for (const url of warehouseEndpoints) {
+      try {
+        const res = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        if (res.ok) {
+          const data = await res.json();
+          const items = data.list || data.stocks || data.data || [];
+          items.forEach(p => {
+            const name = p.name || p.productName || p.denumire || '';
+            const sku  = p.code || p.productCode || p.cod || p.sku || '';
+            const cost = parseFloat(
+              p.purchasePrice ?? p.achizitie ?? p.pretAchizitie ??
+              p.buyingPrice ?? p.costPrice ?? p.price ?? 0
+            ) || 0;
+            if (name && cost > 0 && !products.find(x => x.sku === sku && x.name === name)) {
+              products.push({ sku, name, cost, stock: parseFloat(p.quantity ?? p.cantitate ?? 0) || 0 });
+            }
+          });
+          if (products.length > 0) { source = 'stoc toate gestiunile'; break; }
+        }
+      } catch { continue; }
+    }
+  }
+
+  // Endpoint 3: Nomenclator produse
+  if (products.length === 0) {
+    const nomenclatorEndpoints = [
+      `${BASE}/product?cif=${encodeURIComponent(cif)}`,
+      `${BASE}/products?cif=${encodeURIComponent(cif)}`,
+      `${BASE}/nomenclator/product?cif=${encodeURIComponent(cif)}`,
+    ];
+    for (const url of nomenclatorEndpoints) {
+      try {
+        const res = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        if (res.ok) {
+          const data = await res.json();
+          const items = data.list || data.products || data.data || [];
+          items.forEach(p => {
+            const name = p.name || p.productName || p.denumire || '';
+            const sku  = p.code || p.productCode || p.cod || p.sku || '';
+            const cost = parseFloat(
+              p.purchasePrice ?? p.pretAchizitie ?? p.buyingPrice ??
+              p.costPrice ?? p.price ?? 0
+            ) || 0;
+            if (name && cost > 0) {
+              products.push({ sku, name, cost, stock: 0 });
+            }
+          });
+          if (products.length > 0) { source = 'nomenclator'; break; }
+        }
+      } catch { continue; }
+    }
+  }
+
+  if (products.length === 0) {
+    return NextResponse.json({
+      ok: false,
+      error: 'Nu s-au găsit produse cu preț de achiziție în SmartBill.',
+      hint: 'Asigură-te că: 1) Ai modulul Gestiune activ în SmartBill 2) Produsele au preț de achiziție setat 3) Gestiunea este corectă (dacă ai specificat una)',
+    }, { status: 404 });
+  }
+
+  const updated = new Date().toISOString().slice(0, 7);
+  const stdCosts = products.map(p => ({
+    id:       p.sku || p.name,
+    sku:      p.sku,
+    name:     p.name,
+    pattern:  p.name.toLowerCase(),
+    excludes: [],
+    cost:     p.cost,
+    updated,
+  }));
+
+  return NextResponse.json({ ok: true, count: products.length, source, products, stdCosts });
+}
