@@ -1,107 +1,416 @@
 [
   {
-    "id": "DM56_SIL",
-    "sku": "DM56",
-    "pattern": "silicon",
-    "excludes": [
-      "metal",
-      "protectie",
-      "protecție"
-    ],
-    "name": "Delta Max Silicon (fără protecție)",
-    "cost": 154.8,
-    "updated": "2025-01"
-  },
-  {
-    "id": "DM56_SIL_PROT",
-    "sku": "DM56",
-    "pattern": "silicon",
-    "excludes": [
-      "metal"
-    ],
-    "name": "Delta Max Silicon + Protecție ecran",
-    "cost": 154.8,
-    "updated": "2025-01"
-  },
-  {
-    "id": "DM56_MET",
-    "sku": "DM56",
-    "pattern": "silicon+ metal",
+    "id": "BW-2NEGRU",
+    "sku": "BW-2NEGRU",
+    "pattern": "balkan watch 2",
     "excludes": [],
-    "name": "Delta Max Silicon + Metal + Protecție",
-    "cost": 154.8,
-    "updated": "2025-01"
+    "name": "BALKAN WATCH 2",
+    "cost": 203.15,
+    "updated": "30.03.2026"
   },
   {
-    "id": "DM56_MET2",
-    "sku": "DM56",
-    "pattern": "silicon+metal",
+    "id": "G69",
+    "sku": "G69",
+    "pattern": "bratara inteligenta g69",
     "excludes": [],
-    "name": "Delta Max Silicon+Metal",
-    "cost": 154.8,
-    "updated": "2025-01"
+    "name": "Bratara inteligenta G69",
+    "cost": 93.77,
+    "updated": "30.03.2026"
   },
   {
-    "id": "HD300",
-    "sku": "HD300",
-    "pattern": "delta max pro",
+    "id": "TG19",
+    "sku": "TG19",
+    "pattern": "bratara inteligenta tg19",
     "excludes": [],
-    "name": "Delta Max PRO HD300",
-    "cost": 181,
-    "updated": "—"
+    "name": "Bratara inteligenta TG19",
+    "cost": 88.83,
+    "updated": "30.03.2026"
   },
   {
-    "id": "Z85",
-    "sku": "Z85",
-    "pattern": "z85",
+    "id": "VITRO",
+    "sku": "VITRO",
+    "pattern": "bratara inteligenta vitro",
     "excludes": [],
-    "name": "Z85 (toate modelele)",
-    "cost": 65,
-    "updated": "—"
+    "name": "Bratara inteligenta VITRO",
+    "cost": 104.68,
+    "updated": "30.03.2026"
   },
   {
-    "id": "U8",
-    "sku": "U8",
-    "pattern": "u8",
+    "id": "CHARGER-C",
+    "sku": "CHARGER-C",
+    "pattern": "cablu incarcare",
     "excludes": [],
-    "name": "U8 Ultra",
-    "cost": 208,
-    "updated": "—"
+    "name": "Cablu incarcare",
+    "cost": 11.77,
+    "updated": "30.03.2026"
   },
   {
-    "id": "M99",
-    "sku": "M99",
-    "pattern": "delta max ultra",
+    "id": "CLAMPS",
+    "sku": "CLAMPS",
+    "pattern": "carlige din aluminiu",
     "excludes": [],
-    "name": "Delta Max Ultra M99",
-    "cost": 244.77,
-    "updated": "2025-01"
+    "name": "Carlige din aluminiu",
+    "cost": 18.63,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "LX10-B",
+    "sku": "LX10-B",
+    "pattern": "casti tidalux lx10",
+    "excludes": [],
+    "name": "Casti TIDALUX LX10",
+    "cost": 60.06,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "EARBUDS2",
+    "sku": "EARBUDS2",
+    "pattern": "earbuds2",
+    "excludes": [],
+    "name": "Casti audio cu bluetooth",
+    "cost": 20.79,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "EARBUDS1",
+    "sku": "EARBUDS1",
+    "pattern": "earbuds1",
+    "excludes": [],
+    "name": "Casti wireless",
+    "cost": 20.83,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "C20PRO",
+    "sku": "C20PRO",
+    "pattern": "c20 pro",
+    "excludes": [],
+    "name": "Ceas inteligent C20 PRO",
+    "cost": 31.7,
+    "updated": "30.03.2026"
   },
   {
     "id": "DM58",
     "sku": "DM58",
     "pattern": "delta max plus",
     "excludes": [],
-    "name": "Delta Max Plus DM58",
+    "name": "Ceas inteligent DELTA MAX PLUS",
     "cost": 158.85,
-    "updated": "2025-01"
+    "updated": "30.03.2026"
   },
   {
-    "id": "DM58B",
-    "sku": "DM58",
-    "pattern": "dm58",
+    "id": "M99",
+    "sku": "M99",
+    "pattern": "delta max ultra",
     "excludes": [],
-    "name": "Delta Max Plus DM58 (SKU)",
-    "cost": 158.85,
-    "updated": "2025-01"
+    "name": "Ceas inteligent DELTA MAX ULTRA",
+    "cost": 244.77,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "WATCHX",
+    "sku": "WATCHX",
+    "pattern": "watch x",
+    "excludes": [],
+    "name": "Ceas inteligent WATCH X",
+    "cost": 115.27,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "Z85BLACK",
+    "sku": "Z85BLACK",
+    "pattern": "z85",
+    "excludes": [],
+    "name": "CEAS INTELIGENT Z85 MAX",
+    "cost": 72.3,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "CP1",
+    "sku": "CP1",
+    "pattern": "corector postura",
+    "excludes": [],
+    "name": "Corector postura",
+    "cost": 32.84,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "WBAND",
+    "sku": "WBAND",
+    "pattern": "curea ceas inteligent",
+    "excludes": [],
+    "name": "Curea ceas inteligent",
+    "cost": 16.91,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "WBAND-M",
+    "sku": "WBAND-M",
+    "pattern": "curea smartwatch",
+    "excludes": [],
+    "name": "Curea smartwatch WBAND-M",
+    "cost": 10.55,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "HD300PRO",
+    "sku": "HD300PRO",
+    "pattern": "delta max pro",
+    "excludes": [],
+    "name": "DELTA MAX PRO",
+    "cost": 181.0,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "BW-2GRI",
+    "sku": "BW-2GRI",
+    "pattern": "bw-2gri",
+    "excludes": [],
+    "name": "Delta Max Ultra Smartwatch 4G (BW-2GRI)",
+    "cost": 203.15,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "PRST",
+    "sku": "PRST",
+    "pattern": "etichete autoadezive",
+    "excludes": [],
+    "name": "Etichete autoadezive",
+    "cost": 34.12,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "WARMER",
+    "sku": "WARMER",
+    "pattern": "fierbator",
+    "excludes": [],
+    "name": "Fierbator apa-lapte",
+    "cost": 232.77,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "DM56",
+    "sku": "DM56",
+    "pattern": "glamx delta max",
+    "excludes": [],
+    "name": "GLAMX DELTA MAX DM56",
+    "cost": 154.8,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "HUSA1",
+    "sku": "HUSA1",
+    "pattern": "husa protectie",
+    "excludes": [],
+    "name": "Husa protectie scaune auto",
+    "cost": 42.54,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "SMSWCSV1",
+    "sku": "SMSWCSV1",
+    "pattern": "intrerupator cap scara",
+    "excludes": [],
+    "name": "INTRERUPATOR CAP SCARA V1",
+    "cost": 70.21,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "SMSWV4",
+    "sku": "SMSWV4",
+    "pattern": "intrerupator smart v4",
+    "excludes": [],
+    "name": "INTRERUPATOR SMART V4",
+    "cost": 62.26,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "PR-1",
+    "sku": "PR-1",
+    "pattern": "imprimanta etichete",
+    "excludes": [],
+    "name": "Imprimanta etichete",
+    "cost": 224.05,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "XPERTCHEMY",
+    "sku": "XPERTCHEMY",
+    "pattern": "kit restaurare faruri",
+    "excludes": [],
+    "name": "KIT RESTAURARE FARURI",
+    "cost": 23.45,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "LED3IN1",
+    "sku": "LED3IN1",
+    "pattern": "lampa led 3 in 1",
+    "excludes": [],
+    "name": "Lampa LED 3 IN 1",
+    "cost": 47.13,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "MPAD",
+    "sku": "MPAD",
+    "pattern": "mouse pad",
+    "excludes": [],
+    "name": "Mouse Pad",
+    "cost": 143.37,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "PORT-ZIGBEE-V1",
+    "sku": "PORT-ZIGBEE-V1",
+    "pattern": "port zigbee",
+    "excludes": [],
+    "name": "PORT ZIGBEE",
+    "cost": 73.34,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "SMC2",
+    "sku": "SMC2",
+    "pattern": "priza dubla",
+    "excludes": [],
+    "name": "PRIZA DUBLA",
+    "cost": 42.84,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "PRINTSERVER",
+    "sku": "PRINTSERVER",
+    "pattern": "printer server",
+    "excludes": [],
+    "name": "Printer Server",
+    "cost": 151.64,
+    "updated": "30.03.2026"
   },
   {
     "id": "DM76",
     "sku": "DM76",
     "pattern": "dm76",
     "excludes": [],
-    "name": "Smart watch DM76",
-    "cost": 163.16,
-    "updated": "2025-01"
+    "name": "SMARTWATCH DELTA MAX GOLD",
+    "cost": 162.42,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "WS-1-B",
+    "sku": "WS-1-B",
+    "pattern": "ws-1",
+    "excludes": [],
+    "name": "SMARTWATCH WS-1",
+    "cost": 63.76,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "SET2",
+    "sku": "SET2",
+    "pattern": "set bijuterii femei",
+    "excludes": [],
+    "name": "Set bijuterii femei",
+    "cost": 23.77,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "SET1",
+    "sku": "SET1",
+    "pattern": "set cadou barbati",
+    "excludes": [],
+    "name": "Set cadou barbati",
+    "cost": 72.96,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "SET2IN1",
+    "sku": "SET2IN1",
+    "pattern": "set smartwatch+casti",
+    "excludes": [],
+    "name": "Set smartwatch+casti",
+    "cost": 22.99,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "SK41",
+    "sku": "SK41",
+    "pattern": "kalobee sk41",
+    "excludes": [],
+    "name": "Smartwatch Kalobee SK41",
+    "cost": 112.73,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "X122",
+    "sku": "X122",
+    "pattern": "sterilizator uv tidalux",
+    "excludes": [],
+    "name": "Sterilizator UV Tidalux X122",
+    "cost": 87.67,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "H9IN1-VERDE",
+    "sku": "H9IN1-VERDE",
+    "pattern": "suport inteligent 9in1 verde",
+    "excludes": [],
+    "name": "Suport inteligent 9in1 Verde",
+    "cost": 6.76,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "H9IN1-alb",
+    "sku": "H9IN1-alb",
+    "pattern": "suport inteligent 9in1 alb",
+    "excludes": [],
+    "name": "Suport inteligent 9in1 Alb",
+    "cost": 6.76,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "9IN1-COLOR",
+    "sku": "9IN1-COLOR",
+    "pattern": "suport inteligent 9in1 color",
+    "excludes": [],
+    "name": "Suport inteligent 9in1 Color",
+    "cost": 6.76,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "H9IN1-GRI",
+    "sku": "H9IN1-GRI",
+    "pattern": "suport inteligent 9in1 gri",
+    "excludes": [],
+    "name": "Suport inteligent 9in1 Gri",
+    "cost": 6.76,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "H9IN1-ROZ",
+    "sku": "H9IN1-ROZ",
+    "pattern": "suport inteligent 9in1 roz",
+    "excludes": [],
+    "name": "Suport inteligent 9in1 Roz",
+    "cost": 6.76,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "FAN1",
+    "sku": "FAN1",
+    "pattern": "ventilator turbo fan",
+    "excludes": [],
+    "name": "VENTILATOR TURBO FAN",
+    "cost": 31.17,
+    "updated": "30.03.2026"
+  },
+  {
+    "id": "U8",
+    "sku": "U8",
+    "pattern": "u8",
+    "excludes": [],
+    "name": "WATCH ULTRA U8",
+    "cost": 207.89,
+    "updated": "30.03.2026"
   }
 ]
