@@ -14,17 +14,52 @@ function splitCSV(line) {
 }
 
 const DEFAULT_PRODUCT_COSTS = [
-  { id: 'DM56_SIL',      sku: 'DM56', pattern: 'silicon',        excludes: ['metal','protectie','protecție'], name: 'Delta Max Silicon (fără protecție)',    cost: 154.80, updated: '2025-01' },
-  { id: 'DM56_SIL_PROT', sku: 'DM56', pattern: 'silicon',        excludes: ['metal'],                         name: 'Delta Max Silicon + Protecție ecran',   cost: 154.80, updated: '2025-01' },
-  { id: 'DM56_MET',      sku: 'DM56', pattern: 'silicon+ metal', excludes: [],                                name: 'Delta Max Silicon + Metal + Protecție', cost: 154.80, updated: '2025-01' },
-  { id: 'DM56_MET2',     sku: 'DM56', pattern: 'silicon+metal',  excludes: [],                                name: 'Delta Max Silicon+Metal',               cost: 154.80, updated: '2025-01' },
-  { id: 'HD300',         sku: 'HD300',pattern: 'delta max pro',  excludes: [],                                name: 'Delta Max PRO HD300',                   cost: 181,    updated: '—' },
-  { id: 'Z85',           sku: 'Z85',  pattern: 'z85',            excludes: [],                                name: 'Z85 (toate modelele)',                  cost: 65,     updated: '—' },
-  { id: 'U8',            sku: 'U8',   pattern: 'u8',             excludes: [],                                name: 'U8 Ultra',                              cost: 208,    updated: '—' },
-  { id: 'M99',           sku: 'M99',  pattern: 'delta max ultra',excludes: [],                                name: 'Delta Max Ultra M99',                   cost: 244.77, updated: '2025-01' },
-  { id: 'DM58',          sku: 'DM58', pattern: 'delta max plus', excludes: [],                                name: 'Delta Max Plus DM58',                   cost: 158.85, updated: '2025-01' },
-  { id: 'DM58B',         sku: 'DM58', pattern: 'dm58',           excludes: [],                                name: 'Delta Max Plus DM58 (SKU)',              cost: 158.85, updated: '2025-01' },
-  { id: 'DM76',          sku: 'DM76', pattern: 'dm76',           excludes: [],                                name: 'Smart watch DM76',                      cost: 163.16, updated: '2025-01' },
+  { id: 'BW-2NEGRU',     sku: 'BW-2NEGRU',     pattern: 'balkan watch 2',             excludes: [], name: 'BALKAN WATCH 2',                      cost: 203.15, updated: '30.03.2026' },
+  { id: 'G69',           sku: 'G69',            pattern: 'bratara inteligenta g69',    excludes: [], name: 'Bratara inteligenta G69',              cost: 93.77,  updated: '30.03.2026' },
+  { id: 'TG19',          sku: 'TG19',           pattern: 'bratara inteligenta tg19',   excludes: [], name: 'Bratara inteligenta TG19',             cost: 88.83,  updated: '30.03.2026' },
+  { id: 'VITRO',         sku: 'VITRO',          pattern: 'bratara inteligenta vitro',  excludes: [], name: 'Bratara inteligenta VITRO',            cost: 104.68, updated: '30.03.2026' },
+  { id: 'CHARGER-C',     sku: 'CHARGER-C',      pattern: 'cablu incarcare',            excludes: [], name: 'Cablu incarcare',                      cost: 11.77,  updated: '30.03.2026' },
+  { id: 'CLAMPS',        sku: 'CLAMPS',         pattern: 'carlige din aluminiu',       excludes: [], name: 'Carlige din aluminiu',                 cost: 18.63,  updated: '30.03.2026' },
+  { id: 'LX10-B',        sku: 'LX10-B',         pattern: 'casti tidalux lx10',         excludes: [], name: 'Casti TIDALUX LX10',                   cost: 60.06,  updated: '30.03.2026' },
+  { id: 'EARBUDS2',      sku: 'EARBUDS2',       pattern: 'earbuds2',                   excludes: [], name: 'Casti audio cu bluetooth',             cost: 20.79,  updated: '30.03.2026' },
+  { id: 'EARBUDS1',      sku: 'EARBUDS1',       pattern: 'earbuds1',                   excludes: [], name: 'Casti wireless',                       cost: 20.83,  updated: '30.03.2026' },
+  { id: 'C20PRO',        sku: 'C20PRO',         pattern: 'c20 pro',                    excludes: [], name: 'Ceas inteligent C20 PRO',              cost: 31.70,  updated: '30.03.2026' },
+  { id: 'DM58',          sku: 'DM58',           pattern: 'delta max plus',             excludes: [], name: 'Ceas inteligent DELTA MAX PLUS',       cost: 158.85, updated: '30.03.2026' },
+  { id: 'M99',           sku: 'M99',            pattern: 'delta max ultra',            excludes: [], name: 'Ceas inteligent DELTA MAX ULTRA',      cost: 244.77, updated: '30.03.2026' },
+  { id: 'WATCHX',        sku: 'WATCHX',         pattern: 'watch x',                    excludes: [], name: 'Ceas inteligent WATCH X',              cost: 115.27, updated: '30.03.2026' },
+  { id: 'Z85BLACK',      sku: 'Z85BLACK',       pattern: 'z85',                        excludes: [], name: 'CEAS INTELIGENT Z85 MAX',              cost: 72.30,  updated: '30.03.2026' },
+  { id: 'CP1',           sku: 'CP1',            pattern: 'corector postura',           excludes: [], name: 'Corector postura',                     cost: 32.84,  updated: '30.03.2026' },
+  { id: 'WBAND',         sku: 'WBAND',          pattern: 'curea ceas inteligent',      excludes: [], name: 'Curea ceas inteligent',                cost: 16.91,  updated: '30.03.2026' },
+  { id: 'WBAND-M',       sku: 'WBAND-M',        pattern: 'curea smartwatch',           excludes: [], name: 'Curea smartwatch WBAND-M',             cost: 10.55,  updated: '30.03.2026' },
+  { id: 'HD300PRO',      sku: 'HD300PRO',       pattern: 'delta max pro',              excludes: [], name: 'DELTA MAX PRO',                        cost: 181.00, updated: '30.03.2026' },
+  { id: 'BW-2GRI',       sku: 'BW-2GRI',        pattern: 'bw-2gri',                    excludes: [], name: 'Delta Max Ultra Smartwatch 4G (BW-2GRI)', cost: 203.15, updated: '30.03.2026' },
+  { id: 'PRST',          sku: 'PRST',           pattern: 'etichete autoadezive',       excludes: [], name: 'Etichete autoadezive',                 cost: 34.12,  updated: '30.03.2026' },
+  { id: 'WARMER',        sku: 'WARMER',         pattern: 'fierbator',                  excludes: [], name: 'Fierbator apa-lapte',                  cost: 232.77, updated: '30.03.2026' },
+  { id: 'DM56',          sku: 'DM56',           pattern: 'glamx delta max',            excludes: [], name: 'GLAMX DELTA MAX DM56',                 cost: 154.80, updated: '30.03.2026' },
+  { id: 'HUSA1',         sku: 'HUSA1',          pattern: 'husa protectie',             excludes: [], name: 'Husa protectie scaune auto',           cost: 42.54,  updated: '30.03.2026' },
+  { id: 'SMSWCSV1',      sku: 'SMSWCSV1',       pattern: 'intrerupator cap scara',     excludes: [], name: 'INTRERUPATOR CAP SCARA V1',            cost: 70.21,  updated: '30.03.2026' },
+  { id: 'SMSWV4',        sku: 'SMSWV4',         pattern: 'intrerupator smart v4',      excludes: [], name: 'INTRERUPATOR SMART V4',                cost: 62.26,  updated: '30.03.2026' },
+  { id: 'PR-1',          sku: 'PR-1',           pattern: 'imprimanta etichete',        excludes: [], name: 'Imprimanta etichete',                  cost: 224.05, updated: '30.03.2026' },
+  { id: 'XPERTCHEMY',    sku: 'XPERTCHEMY',     pattern: 'kit restaurare faruri',      excludes: [], name: 'KIT RESTAURARE FARURI',                cost: 23.45,  updated: '30.03.2026' },
+  { id: 'LED3IN1',       sku: 'LED3IN1',        pattern: 'lampa led 3 in 1',           excludes: [], name: 'Lampa LED 3 IN 1',                     cost: 47.13,  updated: '30.03.2026' },
+  { id: 'MPAD',          sku: 'MPAD',           pattern: 'mouse pad',                  excludes: [], name: 'Mouse Pad',                            cost: 143.37, updated: '30.03.2026' },
+  { id: 'PORT-ZIGBEE-V1',sku: 'PORT-ZIGBEE-V1', pattern: 'port zigbee',               excludes: [], name: 'PORT ZIGBEE',                          cost: 73.34,  updated: '30.03.2026' },
+  { id: 'SMC2',          sku: 'SMC2',           pattern: 'priza dubla',                excludes: [], name: 'PRIZA DUBLA',                          cost: 42.84,  updated: '30.03.2026' },
+  { id: 'PRINTSERVER',   sku: 'PRINTSERVER',    pattern: 'printer server',             excludes: [], name: 'Printer Server',                       cost: 151.64, updated: '30.03.2026' },
+  { id: 'DM76',          sku: 'DM76',           pattern: 'dm76',                       excludes: [], name: 'SMARTWATCH DELTA MAX GOLD',            cost: 162.42, updated: '30.03.2026' },
+  { id: 'WS-1-B',        sku: 'WS-1-B',         pattern: 'ws-1',                       excludes: [], name: 'SMARTWATCH WS-1',                      cost: 63.76,  updated: '30.03.2026' },
+  { id: 'SET2',          sku: 'SET2',           pattern: 'set bijuterii femei',        excludes: [], name: 'Set bijuterii femei',                  cost: 23.77,  updated: '30.03.2026' },
+  { id: 'SET1',          sku: 'SET1',           pattern: 'set cadou barbati',          excludes: [], name: 'Set cadou barbati',                    cost: 72.96,  updated: '30.03.2026' },
+  { id: 'SET2IN1',       sku: 'SET2IN1',        pattern: 'set smartwatch+casti',       excludes: [], name: 'Set smartwatch+casti',                 cost: 22.99,  updated: '30.03.2026' },
+  { id: 'SK41',          sku: 'SK41',           pattern: 'kalobee sk41',               excludes: [], name: 'Smartwatch Kalobee SK41',              cost: 112.73, updated: '30.03.2026' },
+  { id: 'X122',          sku: 'X122',           pattern: 'sterilizator uv tidalux',    excludes: [], name: 'Sterilizator UV Tidalux X122',         cost: 87.67,  updated: '30.03.2026' },
+  { id: 'H9IN1-VERDE',   sku: 'H9IN1-VERDE',    pattern: 'suport inteligent 9in1 verde',excludes:[], name: 'Suport inteligent 9in1 Verde',         cost: 6.76,   updated: '30.03.2026' },
+  { id: 'H9IN1-alb',     sku: 'H9IN1-alb',      pattern: 'suport inteligent 9in1 alb', excludes:[], name: 'Suport inteligent 9in1 Alb',           cost: 6.76,   updated: '30.03.2026' },
+  { id: '9IN1-COLOR',    sku: '9IN1-COLOR',     pattern: 'suport inteligent 9in1 color',excludes:[], name: 'Suport inteligent 9in1 Color',        cost: 6.76,   updated: '30.03.2026' },
+  { id: 'H9IN1-GRI',     sku: 'H9IN1-GRI',      pattern: 'suport inteligent 9in1 gri', excludes:[], name: 'Suport inteligent 9in1 Gri',           cost: 6.76,   updated: '30.03.2026' },
+  { id: 'H9IN1-ROZ',     sku: 'H9IN1-ROZ',      pattern: 'suport inteligent 9in1 roz', excludes:[], name: 'Suport inteligent 9in1 Roz',           cost: 6.76,   updated: '30.03.2026' },
+  { id: 'FAN1',          sku: 'FAN1',           pattern: 'ventilator turbo fan',       excludes: [], name: 'VENTILATOR TURBO FAN',                 cost: 31.17,  updated: '30.03.2026' },
+  { id: 'U8',            sku: 'U8',             pattern: 'u8',                         excludes: [], name: 'WATCH ULTRA U8',                       cost: 207.89, updated: '30.03.2026' },
 ];
 
 // URL-ul fișierului JSON de pe GitHub (raw) — actualizează cu repo-ul tău
@@ -966,7 +1001,7 @@ export default function ProfitPage() {
 
         {/* TABS */}
         <div className="pf-tabs">
-          {[{id:'summary',icon:'📊',label:'Sumar'},{id:'costs',icon:'💸',label:'Costuri'},{id:'products',icon:'📦',label:'Produse'},{id:'settings',icon:'⚙️',label:'Setări'}].map(tab => (
+          {[{id:'summary',icon:'📊',label:'Sumar'},{id:'costs',icon:'💸',label:'Costuri'},{id:'products',icon:'📦',label:'Produse'},{id:'analysis',icon:'🔬',label:'Analiză'},{id:'settings',icon:'⚙️',label:'Setări'}].map(tab => (
             <button key={tab.id} className={`pf-tab${activeTab===tab.id?' active':''}`} onClick={() => setActiveTab(tab.id)}>
               <span className="pf-tab-icon">{tab.icon}</span>{tab.label}
             </button>
@@ -1400,6 +1435,159 @@ export default function ProfitPage() {
             )}
           </>
         )}
+
+        {/* ══ ANALIZĂ PER PRODUS ══ */}
+        {activeTab === 'analysis' && (() => {
+          // Calculăm per produs: grupăm toate item-urile din comenzile livrate
+          const transportPerOrder = totalOrders > 0 ? effectiveTransportCost / totalOrders : 0;
+          const marketingPerOrder = totalOrders > 0 ? totalMarketing / totalOrders : 0;
+          const fixedPerOrder     = totalOrders > 0 ? (totalFixed + totalOther) / totalOrders : 0;
+          const cheltuieliPerOrder = transportPerOrder + marketingPerOrder + fixedPerOrder;
+
+          // Agregăm per SKU+Nume
+          const prodMap = {};
+          deliveredOrders.forEach(order => {
+            const itemCount = (order.items||[]).reduce((s,i) => s+(i.qty||1), 0) || 1;
+            const cheltuieliAcord = cheltuieliPerOrder / itemCount; // distribuim cheltuielile per item
+            ;(order.items||[]).forEach(item => {
+              const key = item.sku || item.name || 'necunoscut';
+              const { cost: costAch } = resolveCost(item);
+              const qty   = item.qty || 1;
+              const pret  = (item.price || 0);
+              const chelt = cheltuieliAcord * qty;
+              if (!prodMap[key]) prodMap[key] = {
+                name: item.name || item.sku || key,
+                sku: item.sku || '',
+                qty: 0, revenue: 0, cogs: 0, chelt: 0, profit: 0, hasCost: costAch > 0,
+              };
+              prodMap[key].qty     += qty;
+              prodMap[key].revenue += pret * qty;
+              prodMap[key].cogs    += costAch * qty;
+              prodMap[key].chelt   += chelt;
+              prodMap[key].profit  += (pret * qty) - (costAch * qty) - chelt;
+            });
+          });
+
+          const prodList = Object.values(prodMap)
+            .filter(p => p.qty > 0)
+            .sort((a, b) => b.profit - a.profit);
+
+          const [sortProd, setSortProd] = useState('profit');
+          const [showNoCost, setShowNoCost] = useState(false);
+
+          const sorted = [...prodList]
+            .filter(p => showNoCost || p.hasCost)
+            .sort((a, b) => {
+              if (sortProd === 'profit') return b.profit - a.profit;
+              if (sortProd === 'revenue') return b.revenue - a.revenue;
+              if (sortProd === 'qty') return b.qty - a.qty;
+              if (sortProd === 'margin') {
+                const mA = a.revenue > 0 ? a.profit/a.revenue : -999;
+                const mB = b.revenue > 0 ? b.profit/b.revenue : -999;
+                return mB - mA;
+              }
+              return 0;
+            });
+
+          const totalProfitProd = sorted.reduce((s,p) => s+p.profit, 0);
+          const totalRevProd    = sorted.reduce((s,p) => s+p.revenue, 0);
+
+          return (
+            <>
+              <div className="pf-stitle">Analiză profit per produs</div>
+              {!deliveredOrders.length ? (
+                <div className="pf-card" style={{textAlign:'center',color:'var(--c-text4)',padding:24}}>
+                  Încarcă comenzile din tab-ul Setări → Shopify mai întâi.
+                </div>
+              ) : (
+                <>
+                  {/* Sumar + Filtre */}
+                  <div className="pf-card" style={{marginBottom:8}}>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
+                      <span style={{fontSize:11,color:'var(--c-text3)'}}>Sortare:</span>
+                      {[['profit','💰 Profit'],['revenue','💵 Vânzări'],['qty','📦 Cantitate'],['margin','📈 Marjă']].map(([id,lbl]) => (
+                        <button key={id} onClick={()=>setSortProd(id)}
+                          style={{padding:'4px 10px',borderRadius:20,fontSize:11,cursor:'pointer',fontWeight:sortProd===id?700:400,
+                            background:sortProd===id?'#f97316':'#1e2a35',border:`1px solid ${sortProd===id?'#f97316':'#243040'}`,color:sortProd===id?'white':'#94a3b8'}}>
+                          {lbl}
+                        </button>
+                      ))}
+                      <label style={{fontSize:11,color:'var(--c-text3)',display:'flex',alignItems:'center',gap:4,marginLeft:'auto',cursor:'pointer'}}>
+                        <input type="checkbox" checked={showNoCost} onChange={e=>setShowNoCost(e.target.checked)}/>
+                        Și fără cost
+                      </label>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
+                      <div style={{background:'rgba(16,185,129,.08)',borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                        <div style={{fontSize:18,fontWeight:800,color:'#10b981'}}>{fmt(totalProfitProd)}</div>
+                        <div style={{fontSize:10,color:'var(--c-text4)'}}>Profit total RON</div>
+                      </div>
+                      <div style={{background:'rgba(249,115,22,.08)',borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                        <div style={{fontSize:18,fontWeight:800,color:'#f97316'}}>{fmt(totalRevProd)}</div>
+                        <div style={{fontSize:10,color:'var(--c-text4)'}}>Vânzări RON</div>
+                      </div>
+                      <div style={{background:'rgba(59,130,246,.08)',borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                        <div style={{fontSize:18,fontWeight:800,color:'#3b82f6'}}>{sorted.length}</div>
+                        <div style={{fontSize:10,color:'var(--c-text4)'}}>Produse unice</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Lista produse */}
+                  {sorted.map((p, idx) => {
+                    const margin = p.revenue > 0 ? (p.profit / p.revenue * 100) : 0;
+                    const profitColor = p.profit > 0 ? '#10b981' : '#f43f5e';
+                    const barW = totalRevProd > 0 ? Math.min(100, p.revenue / totalRevProd * 100 * 3) : 0;
+                    return (
+                      <div key={p.sku||p.name} style={{background:'#0d1520',border:'1px solid #1e2a35',borderRadius:10,padding:'12px 14px',marginBottom:6}}>
+                        {/* Rând 1: Rang + Nume + Qty */}
+                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                          <span style={{fontSize:10,fontWeight:800,color:'#334155',minWidth:20,textAlign:'right'}}>#{idx+1}</span>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:700,color:'#e8edf2',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</div>
+                            {p.sku && <div style={{fontSize:10,color:'#475569',fontFamily:'monospace'}}>{p.sku}</div>}
+                          </div>
+                          <span style={{fontSize:11,fontWeight:700,color:'#f97316',whiteSpace:'nowrap'}}>{p.qty} buc</span>
+                        </div>
+                        {/* Bar */}
+                        <div style={{height:3,background:'#1e2a35',borderRadius:2,marginBottom:8,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:`${barW}%`,background: p.profit > 0 ? '#10b981' : '#f43f5e',borderRadius:2,transition:'width .5s'}}/>
+                        </div>
+                        {/* Rând 2: 4 coloane de cifre */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:4}}>
+                          <div style={{textAlign:'center'}}>
+                            <div style={{fontSize:11,fontWeight:700,color:'#f97316'}}>{fmt(p.revenue)} RON</div>
+                            <div style={{fontSize:9,color:'var(--c-text4)'}}>Vânzări</div>
+                          </div>
+                          <div style={{textAlign:'center'}}>
+                            <div style={{fontSize:11,fontWeight:700,color:'#f43f5e'}}>{p.hasCost ? fmt(p.cogs)+' RON' : '—'}</div>
+                            <div style={{fontSize:9,color:'var(--c-text4)'}}>Cost achiziție</div>
+                          </div>
+                          <div style={{textAlign:'center'}}>
+                            <div style={{fontSize:11,fontWeight:700,color:'#f59e0b'}}>{fmt(p.chelt)} RON</div>
+                            <div style={{fontSize:9,color:'var(--c-text4)'}}>Cheltuieli</div>
+                          </div>
+                          <div style={{textAlign:'center'}}>
+                            <div style={{fontSize:12,fontWeight:800,color:profitColor}}>{fmt(p.profit)} RON</div>
+                            <div style={{fontSize:9,color:'var(--c-text4)'}}>{margin.toFixed(1)}% marjă</div>
+                          </div>
+                        </div>
+                        {!p.hasCost && (
+                          <div style={{marginTop:6,fontSize:10,color:'#f59e0b',background:'rgba(245,158,11,.08)',borderRadius:6,padding:'3px 8px'}}>
+                            ⚠ Cost achiziție necunoscut — profit estimat fără COGS
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div style={{fontSize:10,color:'var(--c-text4)',textAlign:'center',padding:'8px 0'}}>
+                    Cheltuieli distribuite proporțional per item · {fmt(cheltuieliPerOrder)} RON/comandă
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })()}
 
         {/* ══ SETĂRI ══ */}
         {activeTab === 'settings' && (
