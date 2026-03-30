@@ -300,8 +300,153 @@ export default function ProfitPage() {
 
   const xlsxImportRef = useRef(null);
   const importCostRef = useRef(null);
+  const sbExcelRef    = useRef(null); // Import Excel stoc la zi din SmartBill
   const [sbCostsLoading, setSbCostsLoading] = useState(false);
   const [sbCostsMsg, setSbCostsMsg] = useState('');
+
+  // Parsează Excel-ul "Stoc la zi" exportat din SmartBill Gestiune
+  // Coloane: Produs | U.M. | Stoc final | Cost unitar | Sold final
+  const importSmartBillExcel = (file) => {
+    if (!file) return;
+    setSbCostsMsg('');
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        // Parser nativ BIFF8/MULRK pentru XLS SmartBill
+        // SmartBill exportă cu MULRK records (nu RK simplu) + merged cells pe loturi
+        const buf  = ev.target.result;
+        const data = new Uint8Array(buf);
+        const dv   = new DataView(buf);
+
+        // Citim OLE2 + FAT + Workbook stream
+        const sectorSize = 2 ** dv.getUint16(30, true);
+        const fatSector  = dv.getUint32(76, true);
+        const fatOff     = (fatSector + 1) * sectorSize;
+        const fat        = Array.from({length: sectorSize/4}, (_,i) => dv.getUint32(fatOff + i*4, true));
+
+        // Workbook stream (sector chain starting at 0)
+        const wbChunks = [];
+        let sec = 0; const visited = new Set();
+        while (sec !== 0xFFFFFFFE && sec !== 0xFFFFFFFF && !visited.has(sec)) {
+          visited.add(sec);
+          const off = (sec + 1) * sectorSize;
+          wbChunks.push(data.slice(off, off + sectorSize));
+          sec = fat[sec] ?? 0xFFFFFFFE;
+        }
+        const wb = new Uint8Array(wbChunks.reduce((a, c) => a + c.length, 0));
+        let wbPos = 0;
+        wbChunks.forEach(c => { wb.set(c, wbPos); wbPos += c.length; });
+        const wbDv = new DataView(wb.buffer);
+
+        function decodeRK(rk) {
+          let val;
+          if (rk & 2) { val = rk >> 2; }
+          else {
+            const tmp = new DataView(new ArrayBuffer(8));
+            tmp.setUint32(4, (rk & 0xFFFFFFFC), true);
+            tmp.setUint32(0, 0, true);
+            val = tmp.getFloat64(0, true);
+          }
+          return (rk & 1) ? val / 100 : val;
+        }
+
+        // Parse SST
+        const sst = [];
+        let pos = 0;
+        while (pos < wb.length - 4) {
+          const rt = wbDv.getUint16(pos, true);
+          const rl = wbDv.getUint16(pos + 2, true);
+          if (rt === 0x00FC) { // SST
+            const unique = wbDv.getUint32(pos + 8, true);
+            let sp = pos + 12;
+            for (let i = 0; i < unique && sp < pos + 4 + rl; i++) {
+              const sl = wbDv.getUint16(sp, true);
+              const fl = wb[sp + 2]; sp += 3;
+              if (fl & 4) { const rt2 = wbDv.getUint16(sp, true); sp += 2 + rt2*4; }
+              let s = '';
+              if (fl & 1) {
+                for (let j = 0; j < sl; j++) s += String.fromCharCode(wbDv.getUint16(sp + j*2, true));
+                sp += sl * 2;
+              } else {
+                for (let j = 0; j < sl; j++) s += String.fromCharCode(wb[sp + j]);
+                sp += sl;
+              }
+              sst.push(s);
+            }
+            break;
+          }
+          pos += 4 + rl;
+        }
+
+        // Parse LABELSST + MULRK + RK + NUMBER
+        const strings = {}, numbers = {};
+        pos = 0;
+        while (pos < wb.length - 4) {
+          const rt = wbDv.getUint16(pos, true);
+          const rl = wbDv.getUint16(pos + 2, true);
+          if (rt === 0x00FD && rl >= 8) { // LABELSST
+            const r = wbDv.getUint16(pos+4, true), c = wbDv.getUint16(pos+6, true);
+            const idx = wbDv.getUint32(pos+12, true);
+            if (idx < sst.length) strings[`${r},${c}`] = sst[idx];
+          } else if (rt === 0x00BD) { // MULRK
+            const r = wbDv.getUint16(pos+4, true), fc = wbDv.getUint16(pos+6, true);
+            let off = pos + 8, col = fc;
+            while (off + 6 <= pos + 4 + rl - 2) {
+              const rk = wbDv.getUint32(off+2, true);
+              numbers[`${r},${col}`] = Math.round(decodeRK(rk) * 10000) / 10000;
+              off += 6; col++;
+            }
+          } else if (rt === 0x027E && rl >= 8) { // RK
+            const r = wbDv.getUint16(pos+4, true), c = wbDv.getUint16(pos+6, true);
+            numbers[`${r},${c}`] = decodeRK(wbDv.getUint32(pos+12, true));
+          } else if (rt === 0x0203 && rl >= 12) { // NUMBER
+            const r = wbDv.getUint16(pos+4, true), c = wbDv.getUint16(pos+6, true);
+            numbers[`${r},${c}`] = Math.round(wbDv.getFloat64(pos+10, true) * 10000) / 10000;
+          }
+          pos += 4 + rl;
+        }
+
+        // Colectăm date per SKU: CMP = total_sold / total_stoc
+        const skuMap = {};
+        for (const key of Object.keys(numbers)) {
+          const [r, c] = key.split(',').map(Number);
+          if (c !== 5) continue; // col 5 = Cost unitar
+          const stoc = numbers[`${r},4`] || 0;
+          const cost = numbers[`${r},5`] || 0;
+          const sold = numbers[`${r},6`] || 0;
+          const sku  = (strings[`${r},2`] || '').trim();
+          const name = (strings[`${r},1`] || '').trim();
+          if (!sku || stoc <= 0 || cost <= 0) continue;
+          if (!skuMap[sku]) skuMap[sku] = { name, totalStoc: 0, totalSold: 0 };
+          skuMap[sku].totalStoc += stoc;
+          skuMap[sku].totalSold += sold;
+        }
+
+        const updated  = new Date().toISOString().slice(0, 7);
+        const incoming = Object.entries(skuMap)
+          .filter(([, d]) => d.totalStoc > 0)
+          .map(([sku, d]) => ({
+            id: sku, sku,
+            name: d.name,
+            pattern: d.name.toLowerCase(),
+            excludes: [],
+            cost: Math.round(d.totalSold / d.totalStoc * 100) / 100,
+            updated,
+          }));
+
+        if (!incoming.length) {
+          setSbCostsMsg('❌ Nu s-au găsit produse. Asigură-te că ai bifat "Cost unitar" la Filtrare în SmartBill înainte de export.');
+          return;
+        }
+
+        const merged = mergeCosts(stdCosts, incoming);
+        setStdCosts(merged);
+        localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
+        setSbCostsMsg(`✅ ${incoming.length} produse importate cu CMP din SmartBill!`);
+      } catch (e) { setSbCostsMsg(`❌ ${e.message}`); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
 
   // Fetch costuri produse din SmartBill nomenclator
   const fetchSmartBillCosts = async () => {
@@ -1164,8 +1309,14 @@ export default function ProfitPage() {
               <div style={{display:'grid',gap:8}}>
                 <button className="pf-btn pf-btn-orange" onClick={fetchSmartBillCosts} disabled={sbCostsLoading}
                   style={{background:'linear-gradient(135deg,#10b981,#059669)'}}>
-                  {sbCostsLoading ? <><span className="pf-spin">⟳</span> Se sincronizează...</> : '🔄 Sincronizează prețuri din SmartBill'}
+                  {sbCostsLoading ? <><span className="pf-spin">⟳</span> Se sincronizează...</> : '🔄 Sincronizează prețuri din SmartBill (API)'}
                 </button>
+                <button className="pf-btn pf-btn-ghost" onClick={()=>sbExcelRef.current?.click()}
+                  style={{borderColor:'rgba(16,185,129,.4)',color:'#10b981'}}>
+                  📊 Import Excel SmartBill (Stoc la zi → Exporta Excel)
+                </button>
+                <input ref={sbExcelRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
+                  onChange={e=>{if(e.target.files[0]) importSmartBillExcel(e.target.files[0]); e.target.value='';}}/>
                 {sbCostsMsg && (
                   <div style={{fontSize:11,padding:'6px 10px',borderRadius:8,
                     background: sbCostsMsg.startsWith('✅') ? 'rgba(16,185,129,.1)' : sbCostsMsg.startsWith('⚠') ? 'rgba(245,158,11,.1)' : 'rgba(244,63,94,.1)',
@@ -1206,12 +1357,18 @@ export default function ProfitPage() {
               {/* Import format standard XLSX */}
               <input ref={xlsxImportRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
                 onChange={e=>{const f=e.target.files[0]; if(f) importCostsFromXLSX(f,costs=>{setStdCosts(costs);localStorage.setItem('glamx_std_costs',JSON.stringify(costs));alert(`✅ Importat ${costs.length} produse!`);}); e.target.value='';}} />
-              <div style={{marginTop:10,padding:'8px 10px',background:'rgba(249,115,22,.06)',border:'1px solid rgba(249,115,22,.15)',borderRadius:8,fontSize:10,color:'var(--c-text3)',lineHeight:1.7}}>
-                <strong>Flux actualizare prețuri:</strong><br/>
+              <div style={{marginTop:10,padding:'8px 10px',background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.15)',borderRadius:8,fontSize:10,color:'var(--c-text3)',lineHeight:1.7}}>
+                <strong style={{color:'#10b981'}}>Import Excel SmartBill (recomandat):</strong><br/>
+                1. SmartBill → Gestiune → <strong>Rapoarte → Stoc la zi</strong><br/>
+                2. Click <strong>Filtrare</strong> → bifează <strong>"Cost unitar"</strong><br/>
+                3. Click <strong>Exporta Excel</strong><br/>
+                4. Apasă butonul verde "Import Excel SmartBill" de mai sus
+              </div>
+              <div style={{marginTop:6,padding:'8px 10px',background:'rgba(249,115,22,.06)',border:'1px solid rgba(249,115,22,.15)',borderRadius:8,fontSize:10,color:'var(--c-text3)',lineHeight:1.7}}>
+                <strong>Flux import stoc nou (factură furnizor):</strong><br/>
                 1. Primești stoc nou → apasă "Import stoc nou" → selectezi fișierul<br/>
                 2. Se descarcă automat <code>product-costs.json</code><br/>
-                3. Uploadezi <code>product-costs.json</code> în <code>/public</code> pe GitHub<br/>
-                4. La orice reload, app-ul ia prețurile fresh din GitHub ✓
+                3. Uploadezi în <code>/public</code> pe GitHub ✓
               </div>
             </div>
 
