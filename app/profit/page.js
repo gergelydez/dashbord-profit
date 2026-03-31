@@ -4,8 +4,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
 const today = new Date();
-// preset default: last_month (luna trecuta)
-
 
 function splitCSV(line) {
   const res = []; let cur = '', q = false;
@@ -62,30 +60,25 @@ const DEFAULT_PRODUCT_COSTS = [
   { id: 'U8',            sku: 'U8',             pattern: 'u8',                         excludes: [], name: 'WATCH ULTRA U8',                       cost: 207.89, updated: '30.03.2026' },
 ];
 
-// URL-ul fișierului JSON de pe GitHub (raw) — actualizează cu repo-ul tău
 const COSTS_JSON_URL = '/product-costs.json';
 
-// Merge costuri noi peste costuri existente — update SKU-uri cunoscute, adauga SKU-uri noi
 function mergeCosts(existing, incoming) {
   const result = [...existing];
   incoming.forEach(newItem => {
     const existingIdx = result.findIndex(e => e.sku === newItem.sku || e.id === newItem.id);
     if (existingIdx >= 0) {
-      // Updateaza costul si data pentru toate variantele cu acelasi SKU
       result.forEach((item, i) => {
         if (item.sku === newItem.sku) {
           result[i] = { ...item, cost: newItem.cost, updated: newItem.updated };
         }
       });
     } else {
-      // Produs nou — adauga
       result.push(newItem);
     }
   });
   return result;
 }
 
-// Parseaza un fisier import-cost XLSX cu structura: SKU, Produs, Cant, ..., Col L = parte intreaga cost, Col M = zecimale
 function parseImportCostXLSX(file, existingCosts, onSuccess, onError) {
   const reader = new FileReader();
   reader.onload = (ev) => {
@@ -100,20 +93,11 @@ function parseImportCostXLSX(file, existingCosts, onSuccess, onError) {
           const sku = String(row[0]||'').trim();
           const name = String(row[1]||'').trim();
           if (!sku || !name || sku === 'SKU') return;
-          // Col L (index 11) = parte intreaga, Col M (index 12) = zecimale
           const intPart = parseFloat(row[11]) || 0;
           const decPart = parseFloat(row[12]) || 0;
           const cost = parseFloat(`${intPart}.${String(Math.round(decPart)).padStart(2,'0')}`);
           if (cost > 0) {
-            incoming.push({
-              id: sku,
-              sku: sku,
-              pattern: sku.toLowerCase(),
-              excludes: [],
-              name: name,
-              cost: cost,
-              updated: today,
-            });
+            incoming.push({ id: sku, sku, pattern: sku.toLowerCase(), excludes: [], name, cost, updated: today });
           }
         });
         if (incoming.length === 0) { onError('Nu s-au găsit produse cu cost valid.'); return; }
@@ -133,14 +117,11 @@ const DEFAULT_FIXED = [
   { id: 3, name: 'Ambalaje', amount: '', currency: 'RON', perOrder: true, perOrderAmt: '1' },
 ];
 
-// Calculat: 2522.34 RON / 118 colete = 21.37 RON/colet
 const TRANSPORT_DEFAULT = 21.37;
 
-// ── IDENTIC CU DASHBOARD ──────────────────────────────────────────
 const pad2 = n => String(n).padStart(2, '0');
 const toISO2 = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
 
-// getRange — copiat identic din page.js
 function getRange(preset, customFrom, customTo) {
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
@@ -159,7 +140,6 @@ function getRange(preset, customFrom, customTo) {
   }
 }
 
-// applyTrackingOverrides — copiat din page.js
 function applyTrackingOverrides(orders) {
   try {
     const raw = typeof window !== 'undefined' ? localStorage.getItem('gx_track_ov') : null;
@@ -177,8 +157,6 @@ function applyTrackingOverrides(orders) {
   } catch { return orders; }
 }
 
-// ── getFinalStatus — copiat identic din page.js ──────────────────
-// Citeste glsAwbMap si sdAwbMap din localStorage
 function getGlsAwbMap() {
   try { const s = localStorage.getItem('gls_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
 }
@@ -199,8 +177,6 @@ function getFinalStatus(o, glsAwbMap, sdAwbMap) {
   return o.ts;
 }
 
-// getLivrateInPeriod — identic cu dashboard:
-// createdAt in perioada + getFinalStatus === 'livrat' (include GLS AWB map)
 function getLivrateInPeriod(allOrders, preset, customFrom, customTo) {
   const { from, to } = getRange(preset, customFrom, customTo);
   const fromD = new Date(from + 'T00:00:00');
@@ -214,7 +190,6 @@ function getLivrateInPeriod(allOrders, preset, customFrom, customTo) {
   });
 }
 
-// getReturInPeriod — createdAt in perioada + getFinalStatus === 'retur'
 function getReturInPeriod(allOrders, preset, customFrom, customTo) {
   const { from, to } = getRange(preset, customFrom, customTo);
   const fromD = new Date(from + 'T00:00:00');
@@ -227,10 +202,8 @@ function getReturInPeriod(allOrders, preset, customFrom, customTo) {
     return getFinalStatus(o, glsMap, sdMap) === 'retur';
   });
 }
-const TVA_RATE = 0.21;
 
-// Statusuri Shopify care indică retur/refuz — aceeași logică ca dashboard-ul principal
-const RETURNED_SHIPMENT = new Set(['failure','failed_attempt','returned','failed_delivery','return_in_progress']);
+const TVA_RATE = 0.21;
 
 function exportCostsToXLSX(stdCosts) {
   const doExport = () => {
@@ -273,16 +246,22 @@ export default function ProfitPage() {
   const [customTo, setCustomTo] = useState('');
   const [activeTab, setActiveTab] = useState('summary');
   const [sortProd, setSortProd]   = useState('profit');
-  const [showNoCost, setShowNoCost] = useState(false);
+  const [showNoCost, setShowNoCost] = useState(true);
   const [perUnit, setPerUnit]     = useState(false);
   const [showOrdersSku, setShowOrdersSku] = useState(null);
 
+  // ── ORDERS TAB STATE ──
+  const [activeOrdersSkuFilter, setActiveOrdersSkuFilter] = useState('');
+  const [ordersSearchText, setOrdersSearchText] = useState('');
+  const [editingCost, setEditingCost] = useState({});
+  const [tempCostEdit, setTempCostEdit] = useState({});
+
   // Shopify
-  const [shopifyOrders, setShopifyOrders] = useState([]); // comenzi livrate in luna selectata
-  const [allShopifyOrders, setAllShopifyOrders] = useState([]); // toate comenzile (pentru retur)
+  const [shopifyOrders, setShopifyOrders] = useState([]);
+  const [allShopifyOrders, setAllShopifyOrders] = useState([]);
   const [shopifyLoading, setShopifyLoading] = useState(false);
 
-  // SmartBill credențiale
+  // SmartBill
   const [sbEmail, setSbEmail] = useState(() => { try { return localStorage.getItem('sb_email')||''; } catch { return ''; }});
   const [sbToken, setSbToken] = useState(() => { try { return localStorage.getItem('sb_token')||''; } catch { return ''; }});
   const [sbCif,   setSbCif]   = useState(() => { try { return localStorage.getItem('sb_cif')  ||''; } catch { return ''; }});
@@ -305,7 +284,10 @@ export default function ProfitPage() {
   const [glsDone, setGlsDone] = useState(false);
   const [transportPerParcel, setTransportPerParcel] = useState(TRANSPORT_DEFAULT);
 
-  // SameDay — detectat automat din Shopify (courier field)
+  // SameDay
+  const [sdRows, setSdRows] = useState([]);
+  const [sdCost, setSdCost] = useState(0);
+  const [sdDone, setSdDone] = useState(false);
   const [sdTransportPerParcel, setSdTransportPerParcel] = useState(28);
 
   // Marketing
@@ -339,31 +321,23 @@ export default function ProfitPage() {
 
   const xlsxImportRef = useRef(null);
   const importCostRef = useRef(null);
-  const sbExcelRef    = useRef(null); // Import Excel stoc la zi din SmartBill
+  const sbExcelRef    = useRef(null);
   const [sbCostsLoading, setSbCostsLoading] = useState(false);
   const [sbCostsMsg, setSbCostsMsg] = useState('');
 
-  // Parsează Excel-ul "Stoc la zi" exportat din SmartBill Gestiune
-  // Coloane: Produs | U.M. | Stoc final | Cost unitar | Sold final
   const importSmartBillExcel = (file) => {
     if (!file) return;
     setSbCostsMsg('');
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        // Parser nativ BIFF8/MULRK pentru XLS SmartBill
-        // SmartBill exportă cu MULRK records (nu RK simplu) + merged cells pe loturi
         const buf  = ev.target.result;
         const data = new Uint8Array(buf);
         const dv   = new DataView(buf);
-
-        // Citim OLE2 + FAT + Workbook stream
         const sectorSize = 2 ** dv.getUint16(30, true);
         const fatSector  = dv.getUint32(76, true);
         const fatOff     = (fatSector + 1) * sectorSize;
         const fat        = Array.from({length: sectorSize/4}, (_,i) => dv.getUint32(fatOff + i*4, true));
-
-        // Workbook stream (sector chain starting at 0)
         const wbChunks = [];
         let sec = 0; const visited = new Set();
         while (sec !== 0xFFFFFFFE && sec !== 0xFFFFFFFF && !visited.has(sec)) {
@@ -376,7 +350,6 @@ export default function ProfitPage() {
         let wbPos = 0;
         wbChunks.forEach(c => { wb.set(c, wbPos); wbPos += c.length; });
         const wbDv = new DataView(wb.buffer);
-
         function decodeRK(rk) {
           let val;
           if (rk & 2) { val = rk >> 2; }
@@ -388,14 +361,12 @@ export default function ProfitPage() {
           }
           return (rk & 1) ? val / 100 : val;
         }
-
-        // Parse SST
         const sst = [];
         let pos = 0;
         while (pos < wb.length - 4) {
           const rt = wbDv.getUint16(pos, true);
           const rl = wbDv.getUint16(pos + 2, true);
-          if (rt === 0x00FC) { // SST
+          if (rt === 0x00FC) {
             const unique = wbDv.getUint32(pos + 8, true);
             let sp = pos + 12;
             for (let i = 0; i < unique && sp < pos + 4 + rl; i++) {
@@ -416,18 +387,16 @@ export default function ProfitPage() {
           }
           pos += 4 + rl;
         }
-
-        // Parse LABELSST + MULRK + RK + NUMBER
         const strings = {}, numbers = {};
         pos = 0;
         while (pos < wb.length - 4) {
           const rt = wbDv.getUint16(pos, true);
           const rl = wbDv.getUint16(pos + 2, true);
-          if (rt === 0x00FD && rl >= 8) { // LABELSST
+          if (rt === 0x00FD && rl >= 8) {
             const r = wbDv.getUint16(pos+4, true), c = wbDv.getUint16(pos+6, true);
             const idx = wbDv.getUint32(pos+12, true);
             if (idx < sst.length) strings[`${r},${c}`] = sst[idx];
-          } else if (rt === 0x00BD) { // MULRK
+          } else if (rt === 0x00BD) {
             const r = wbDv.getUint16(pos+4, true), fc = wbDv.getUint16(pos+6, true);
             let off = pos + 8, col = fc;
             while (off + 6 <= pos + 4 + rl - 2) {
@@ -435,21 +404,19 @@ export default function ProfitPage() {
               numbers[`${r},${col}`] = Math.round(decodeRK(rk) * 10000) / 10000;
               off += 6; col++;
             }
-          } else if (rt === 0x027E && rl >= 8) { // RK
+          } else if (rt === 0x027E && rl >= 8) {
             const r = wbDv.getUint16(pos+4, true), c = wbDv.getUint16(pos+6, true);
             numbers[`${r},${c}`] = decodeRK(wbDv.getUint32(pos+12, true));
-          } else if (rt === 0x0203 && rl >= 12) { // NUMBER
+          } else if (rt === 0x0203 && rl >= 12) {
             const r = wbDv.getUint16(pos+4, true), c = wbDv.getUint16(pos+6, true);
             numbers[`${r},${c}`] = Math.round(wbDv.getFloat64(pos+10, true) * 10000) / 10000;
           }
           pos += 4 + rl;
         }
-
-        // Colectăm date per SKU: CMP = total_sold / total_stoc
         const skuMap = {};
         for (const key of Object.keys(numbers)) {
           const [r, c] = key.split(',').map(Number);
-          if (c !== 5) continue; // col 5 = Cost unitar
+          if (c !== 5) continue;
           const stoc = numbers[`${r},4`] || 0;
           const cost = numbers[`${r},5`] || 0;
           const sold = numbers[`${r},6`] || 0;
@@ -460,24 +427,17 @@ export default function ProfitPage() {
           skuMap[sku].totalStoc += stoc;
           skuMap[sku].totalSold += sold;
         }
-
         const updated  = new Date().toISOString().slice(0, 7);
         const incoming = Object.entries(skuMap)
           .filter(([, d]) => d.totalStoc > 0)
           .map(([sku, d]) => ({
-            id: sku, sku,
-            name: d.name,
-            pattern: d.name.toLowerCase(),
-            excludes: [],
-            cost: Math.round(d.totalSold / d.totalStoc * 100) / 100,
-            updated,
+            id: sku, sku, name: d.name, pattern: d.name.toLowerCase(), excludes: [],
+            cost: Math.round(d.totalSold / d.totalStoc * 100) / 100, updated,
           }));
-
         if (!incoming.length) {
           setSbCostsMsg('❌ Nu s-au găsit produse. Asigură-te că ai bifat "Cost unitar" la Filtrare în SmartBill înainte de export.');
           return;
         }
-
         const merged = mergeCosts(stdCosts, incoming);
         setStdCosts(merged);
         localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
@@ -487,43 +447,30 @@ export default function ProfitPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Fetch costuri produse din SmartBill nomenclator
   const fetchSmartBillCosts = async () => {
     const email = localStorage.getItem('sb_email');
     const token = localStorage.getItem('sb_token');
     const cif   = localStorage.getItem('sb_cif');
     const wh    = localStorage.getItem('sb_warehouse') || '';
     if (!email || !token || !cif) {
-      setSbCostsMsg('❌ Completează credențialele SmartBill în tab-ul Costuri → Shopify');
+      setSbCostsMsg('❌ Completează credențialele SmartBill în tab-ul Setări');
       return;
     }
-    setSbCostsLoading(true);
-    setSbCostsMsg('');
+    setSbCostsLoading(true); setSbCostsMsg('');
     try {
       const url = `/api/smartbill/products?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&cif=${encodeURIComponent(cif)}${wh?`&warehouse=${encodeURIComponent(wh)}`:''}`;
       const res  = await fetch(url);
       const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setSbCostsMsg(`❌ ${data.error || data.details || 'Eroare SmartBill'}`);
-        return;
-      }
-      if (!data.stdCosts?.length) {
-        setSbCostsMsg('⚠️ Nu s-au găsit produse cu preț de achiziție în SmartBill. Verifică că ai modulul Gestiune activ și prețuri de achiziție setate.');
-        return;
-      }
-      // Merge cu costurile existente — SmartBill are prioritate
+      if (!res.ok || !data.ok) { setSbCostsMsg(`❌ ${data.error || data.details || 'Eroare SmartBill'}`); return; }
+      if (!data.stdCosts?.length) { setSbCostsMsg('⚠️ Nu s-au găsit produse cu preț de achiziție în SmartBill.'); return; }
       const merged = mergeCosts(stdCosts, data.stdCosts);
       setStdCosts(merged);
       localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
       setSbCostsMsg(`✅ ${data.stdCosts.length} produse importate din SmartBill!`);
-    } catch (e) {
-      setSbCostsMsg(`❌ ${e.message}`);
-    } finally {
-      setSbCostsLoading(false);
-    }
+    } catch (e) { setSbCostsMsg(`❌ ${e.message}`); }
+    finally { setSbCostsLoading(false); }
   };
 
-  // ── LOAD SAVED SETTINGS ──
   useEffect(() => {
     const g = (key) => localStorage.getItem(key);
     const sf = g('glamx_fixed_costs'); if (sf) setFixedCosts(JSON.parse(sf));
@@ -539,9 +486,6 @@ export default function ProfitPage() {
     const ssc = g('glamx_shopify_costs'); if (ssc) setShopifyCosts(JSON.parse(ssc));
     const svc = g('glamx_shopify_variant_costs'); if (svc) setShopifyVariantCosts(JSON.parse(svc));
     const ssku = g('glamx_shopify_sku_costs'); if (ssku) setShopifySkuCosts(JSON.parse(ssku));
-
-    // Load orders (saved from previous session) — profit estimat imediat
-    // Citeste din gx_orders_all (cheia salvata de dashboard) — contine ultimele 60 zile
     const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
     if (sord) {
       try {
@@ -552,14 +496,10 @@ export default function ProfitPage() {
         if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
       } catch {}
     }
-
-    // Incarca costuri din product-costs.json (public folder) — are prioritate peste localStorage
-    // daca fisierul exista si e mai nou decat ce e salvat
     fetch(COSTS_JSON_URL)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data || !Array.isArray(data)) return;
-        // Merge cu ce e in localStorage — costurile din JSON sunt mai fresh
         const localRaw = localStorage.getItem('glamx_std_costs');
         const local = localRaw ? JSON.parse(localRaw) : DEFAULT_PRODUCT_COSTS;
         const merged = mergeCosts(local, data);
@@ -568,11 +508,9 @@ export default function ProfitPage() {
         const lastUpd = data.find(d => d.updated && d.updated !== '—')?.updated || '';
         if (lastUpd) setCostsLastUpdated(lastUpd);
       })
-      .catch(() => { /* fisierul nu exista inca — folosim localStorage */ });
+      .catch(() => {});
   }, []);
 
-  // ── FETCH SHOPIFY ──
-  // Re-filtreaza comenzile cand se schimba luna
   useEffect(() => {
     if (!preset) return;
     const g = (key) => localStorage.getItem(key);
@@ -622,7 +560,6 @@ export default function ProfitPage() {
       setShopifyOrders(livrate.length > 0 ? livrate : processed);
       setShopifyDone(true);
       localStorage.setItem('gx_orders_profit', JSON.stringify(processed));
-
       try {
         const costRes = await fetch(`/api/product-costs?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}`);
         const costData = await costRes.json();
@@ -637,7 +574,6 @@ export default function ProfitPage() {
     finally { setShopifyLoading(false); }
   };
 
-  // ── GLS PARSE ──
   const parseGLSExcel = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const isXLSX = /\.xlsx?$/i.test(file.name);
@@ -679,7 +615,6 @@ export default function ProfitPage() {
     }
   };
 
-  // ── SAMEDAY PARSE (acelasi format ca GLS) ──
   const parseSameDayExcel = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const isXLSX = /\.xlsx?$/i.test(file.name);
@@ -722,49 +657,86 @@ export default function ProfitPage() {
   };
 
   // ── CALCULATIONS ──
-
-  // Comenzi livrate si platite
-  // shopifyOrders contine deja doar comenzile livrate in luna selectata
-  // (filtrate prin getLivrateInPeriod — identic cu dashboard-ul)
   const deliveredOrders = shopifyOrders;
-
-  // Colete refuzate/returnate — aceeasi logica ca dashboard-ul principal
-  // Retururi in luna selectata — din allShopifyOrders (nu doar cele livrate)
   const returnedOrders = getReturInPeriod(allShopifyOrders, preset, customFrom, customTo);
-
   const totalRevenue = deliveredOrders.reduce((s, o) => s + (o.total || 0), 0);
   const totalOrders = deliveredOrders.length;
   const totalItems = deliveredOrders.reduce((s, o) => s + (o.items||[]).reduce((ss, i) => ss + (i.qty||1), 0), 0);
   const returnedCount = returnedOrders.length;
 
-  const resolveCost = (item) => {
+  const resolveCost = useCallback((item) => {
     const nameKey = (item.name||'').toLowerCase().trim();
-    const skuKey = (item.sku||'').toLowerCase().trim();
+    // Normalizează SKU: elimină sufixe de variantă (ex: DM56-METAL → DM56, DM56/FOLIE → DM56)
+    const rawSku = (item.sku||'').trim();
+    const skuKey = rawSku.toLowerCase();
     const variantId = String(item.variantId||'');
-    const override = costSource[item.name];
-    if (override === 'manual' || (!override && manualCosts[item.name] !== undefined && manualCosts[item.name] !== '')) return { cost: parseFloat(manualCosts[item.name])||0, src: 'manual' };
-    if (override === 'smartbill' || (!override && productCosts[nameKey])) return { cost: productCosts[nameKey]||0, src: 'smartbill' };
-    const shopifyCost = (variantId?shopifyVariantCosts[variantId]:null) || (skuKey?shopifySkuCosts[skuKey]:null) || shopifyCosts[nameKey];
-    if (override === 'shopify' || (!override && shopifyCost)) return { cost: shopifyCost||0, src: 'shopify' };
-    for (const std of stdCosts) {
-      const pat = std.pattern.toLowerCase(); if (!pat) continue;
+
+    // 1. Override manual
+    const overrideName = costSource[item.name] || costSource[rawSku];
+    if (overrideName === 'manual' || (!overrideName && (manualCosts[item.name] !== undefined && manualCosts[item.name] !== ''))) {
+      return { cost: parseFloat(manualCosts[item.name])||0, src: 'manual' };
+    }
+
+    // 2. SmartBill productCosts
+    if (overrideName === 'smartbill' || (!overrideName && productCosts[nameKey])) {
+      return { cost: productCosts[nameKey]||0, src: 'smartbill' };
+    }
+
+    // 3. Shopify variant/sku costs
+    const shopifyCost = (variantId ? shopifyVariantCosts[variantId] : null)
+      || (skuKey ? shopifySkuCosts[skuKey] : null)
+      || shopifyCosts[nameKey];
+    if (overrideName === 'shopify' || (!overrideName && shopifyCost)) {
+      return { cost: shopifyCost||0, src: 'shopify' };
+    }
+
+    // 4. SKU exact match în stdCosts
+    if (skuKey) {
+      const exactSkuMatch = stdCosts.find(s => s.sku && s.sku.toLowerCase() === skuKey);
+      if (exactSkuMatch) return { cost: typeof exactSkuMatch.cost==='number' ? exactSkuMatch.cost : parseFloat(exactSkuMatch.cost)||0, src: 'standard' };
+    }
+
+    // 5. SKU prefix match — DM56-METAL matchează DM56
+    if (skuKey) {
+      const prefixMatch = stdCosts.find(s => {
+        const base = (s.sku||s.id||'').toLowerCase();
+        return base && (skuKey === base || skuKey.startsWith(base + '-') || skuKey.startsWith(base + '/') || skuKey.startsWith(base + '_'));
+      });
+      if (prefixMatch) return { cost: typeof prefixMatch.cost==='number' ? prefixMatch.cost : parseFloat(prefixMatch.cost)||0, src: 'standard' };
+    }
+
+    // 6. Pattern match pe NUMELE produsului (funcționează și fără SKU)
+    // Sortăm după lungimea pattern-ului desc — pattern mai specific câștigă
+    const sortedByPatLen = [...stdCosts].sort((a,b) => (b.pattern||'').length - (a.pattern||'').length);
+    for (const std of sortedByPatLen) {
+      const pat = (std.pattern||'').toLowerCase().trim();
+      if (!pat) continue;
       if (nameKey.includes(pat)) {
         const excluded = (std.excludes||[]).some(ex => nameKey.includes(ex.toLowerCase()));
-        if (!excluded) return { cost: typeof std.cost==='number'?std.cost:parseFloat(std.cost)||0, src: 'standard' };
+        if (!excluded) return { cost: typeof std.cost==='number' ? std.cost : parseFloat(std.cost)||0, src: 'standard' };
       }
     }
+
+    // 7. Pattern match pe SKU string (ex: SKU contine "dm56" → matchează pattern "glamx delta max")
+    if (skuKey) {
+      for (const std of sortedByPatLen) {
+        const stdSkuLower = (std.sku||std.id||'').toLowerCase();
+        if (stdSkuLower && skuKey.includes(stdSkuLower)) {
+          return { cost: typeof std.cost==='number' ? std.cost : parseFloat(std.cost)||0, src: 'standard' };
+        }
+      }
+    }
+
     return { cost: 0, src: 'none' };
-  };
+  }, [stdCosts, productCosts, shopifyCosts, shopifyVariantCosts, shopifySkuCosts, manualCosts, costSource]);
 
   const getCOGS = useCallback(() => {
     if (!shopifyOrders.length) return 0;
     return deliveredOrders.reduce((total, order) => total + (order.items||[]).reduce((s, item) => s + (resolveCost(item).cost * (item.qty||1)), 0), 0);
-  }, [deliveredOrders, productCosts, shopifyCosts, shopifyVariantCosts, shopifySkuCosts, manualCosts, costSource, stdCosts]);
+  }, [deliveredOrders, resolveCost]);
 
   const cogs = getCOGS();
 
-  // Transport
-  // Detect courier per order from Shopify data
   const glsMapC = getGlsAwbMap();
   const sdMapC  = getSdAwbMap();
   const sdOrders   = deliveredOrders.filter(o => o.courier === 'sameday');
@@ -776,15 +748,11 @@ export default function ProfitPage() {
   const costPerParcel    = glsDone && glsRows.length > 0 ? glsCost / glsRows.length : transportPerParcel;
   const sdCostPerParcel  = sdTransportPerParcel;
 
-  // Transport: GLS real (din excel) + SameDay calculat automat
   const glsEffective = glsDone ? glsCost : glsCount * transportPerParcel;
   const sdEffective  = sdCount * sdTransportPerParcel;
   const effectiveTransportCost = glsEffective + sdEffective;
+  const refusedTransportCost = returnedCount * costPerParcel;
 
-  // Colete refuzate — cost transport dus+retur + CPA pierdut
-  const refusedTransportCost = returnedCount * costPerParcel; // doar retur (transportul dus e deja in costul GLS)
-
-  // Marketing — definit inainte de effectiveCPA ca sa poata fi folosit
   const metaNum = parseFloat(metaCost)||0;
   const tikTokNum = parseFloat(tikTokCost)||0;
   const googleNum = parseFloat(googleCost)||0;
@@ -794,34 +762,27 @@ export default function ProfitPage() {
   const totalMarketing = useCPA ? cpaTotal : manualMarketingTotal;
   const roasMarketing = totalMarketing > 0 ? totalRevenue / totalMarketing : 0;
 
-  // CPA efectiv real: daca avem sume reale folosim alea, altfel cpaValue fix
   const effectiveCPA = (!useCPA && totalOrders > 0 && totalMarketing > 0)
     ? totalMarketing / totalOrders
     : (parseFloat(cpaValue) || 0);
   const refusedCpaCost = returnedCount * effectiveCPA;
   const totalRefusedCost = refusedTransportCost + refusedCpaCost;
 
-  // TVA intracomunitara pe Meta + Shopify (nu TikTok)
   const shopifyFixAmount = parseFloat(fixedCosts.find(c => c.name.toLowerCase().includes('shopify'))?.amount||'0')||0;
   const tvaBase = (tvaOnMeta && !useCPA ? metaNum : 0) + (tvaOnShopify ? shopifyFixAmount : 0);
   const totalTVA = tvaBase * TVA_RATE;
 
-  // Fixed & other
   const totalFixed = fixedCosts.reduce((s, c) => s + (c.perOrder ? (parseFloat(c.perOrderAmt)||0)*totalOrders : (parseFloat(c.amount)||0)), 0);
   const totalOther = otherCosts.reduce((s, c) => s + (parseFloat(c.amount)||0), 0);
 
-  // Totals
   const totalCosts = cogs + effectiveTransportCost + totalMarketing + totalFixed + totalOther + totalRefusedCost;
   const grossProfit = totalRevenue - cogs;
   const netProfitBeforeTVA = totalRevenue - totalCosts;
   const netProfitAfterTVA = netProfitBeforeTVA - totalTVA;
   const marginBefore = totalRevenue > 0 ? (netProfitBeforeTVA / totalRevenue) * 100 : 0;
   const marginAfter = totalRevenue > 0 ? (netProfitAfterTVA / totalRevenue) * 100 : 0;
-
-  // Is this estimated (no GLS, CPA mode)?
   const isEstimated = !glsDone || useCPA;
 
-  // Helpers
   const addFixed = () => setFixedCosts(p => [...p, { id: Date.now(), name: '', amount: '', currency: 'RON', perOrder: false, perOrderAmt: '' }]);
   const updateFixed = (id, field, val) => setFixedCosts(p => p.map(c => c.id === id ? { ...c, [field]: val } : c));
   const removeFixed = (id) => setFixedCosts(p => p.filter(c => c.id !== id));
@@ -841,7 +802,6 @@ export default function ProfitPage() {
     localStorage.setItem('glamx_use_cpa', String(useCPA));
     localStorage.setItem('glamx_transport_per_parcel', String(transportPerParcel));
     localStorage.setItem('glamx_sd_transport_per_parcel', String(sdTransportPerParcel));
-    localStorage.setItem('glamx_sd_transport_per_parcel', String(sdTransportPerParcel));
     alert('✅ Salvat!');
   };
 
@@ -855,12 +815,11 @@ export default function ProfitPage() {
     .pf-title-wrap{flex:1;min-width:0}
     .pf-title{font-size:15px;font-weight:800;letter-spacing:-.4px}
     .pf-sub{font-size:10px;color:var(--c-text3)}
-    .pf-month input[type=month]{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:var(--c-text);border-radius:8px;padding:5px 8px;font-size:12px;font-weight:600;outline:none;-webkit-appearance:none}
     .pf-back{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:var(--c-text3);padding:5px 10px;border-radius:8px;font-size:11px;font-weight:600;text-decoration:none;flex-shrink:0}
     .pf-est-badge{display:inline-flex;align-items:center;gap:4px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);color:var(--c-yellow);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700}
-    .pf-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:14px}
-    .pf-tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 4px;border-radius:10px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);color:var(--c-text4);font-size:10px;font-weight:700;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.4px}
-    .pf-tab-icon{font-size:18px;line-height:1}
+    .pf-tabs{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-bottom:14px}
+    .pf-tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 2px;border-radius:10px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);color:var(--c-text4);font-size:9px;font-weight:700;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.3px}
+    .pf-tab-icon{font-size:16px;line-height:1}
     .pf-tab.active{background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.3);color:var(--c-orange)}
     .pf-tab:active{transform:scale(.95)}
     .pf-net-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
@@ -935,14 +894,11 @@ export default function ProfitPage() {
     .mkt-mode-btn{padding:9px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);font-size:11px;font-weight:700;color:var(--c-text4);cursor:pointer;text-align:center;transition:all .15s}
     .mkt-mode-btn.active{background:rgba(168,85,247,.12);border-color:rgba(168,85,247,.3);color:#a855f7}
     .pf-cost-row{display:flex;gap:6px;align-items:center;margin-bottom:8px}
-    .pf-bar-wrap{height:4px;background:rgba(255,255,255,.06);border-radius:2px;margin-top:5px;overflow:hidden}
-    .pf-bar-fill{height:100%;border-radius:2px;transition:width .8s}
     .pf-prod-table{width:100%;border-collapse:collapse;font-size:11px}
     .pf-prod-table th{padding:7px 8px;text-align:left;font-size:9px;color:var(--c-text4);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(255,255,255,.05);background:rgba(255,255,255,.02)}
     .pf-prod-table td{padding:8px 8px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
     .pf-prod-table tr:last-child td{border-bottom:none}
     .xlsx-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-    .returned-box{background:rgba(244,63,94,.05);border:1px solid rgba(244,63,94,.15);border-radius:10px;padding:12px;margin-top:10px}
     .tva-box{background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.15);border-radius:10px;padding:12px}
     .pf-navlinks{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:14px}
     .pf-navlink{display:flex;align-items:center;justify-content:center;gap:4px;padding:8px 4px;border-radius:10px;font-size:10px;font-weight:800;text-decoration:none;text-align:center;border:1px solid;letter-spacing:.2px}
@@ -972,7 +928,6 @@ export default function ProfitPage() {
               {shopifyDone && !isEstimated && <span style={{fontSize:10,color:'var(--c-green)',fontWeight:700}}>✓ Real</span>}
             </div>
           </div>
-
           <a href="/" className="pf-back">← Back</a>
         </div>
 
@@ -1003,9 +958,16 @@ export default function ProfitPage() {
           <a href="/whatsapp" className="pf-navlink" style={{background:'rgba(37,211,102,.1)',color:'#25d366',borderColor:'rgba(37,211,102,.2)'}}>📱 WA</a>
         </div>
 
-        {/* TABS */}
+        {/* TABS — 6 tabs now */}
         <div className="pf-tabs">
-          {[{id:'summary',icon:'📊',label:'Sumar'},{id:'costs',icon:'💸',label:'Costuri'},{id:'products',icon:'📦',label:'Produse'},{id:'analysis',icon:'🔬',label:'Analiză'},{id:'settings',icon:'⚙️',label:'Setări'}].map(tab => (
+          {[
+            {id:'summary',  icon:'📊', label:'Sumar'},
+            {id:'costs',    icon:'💸', label:'Costuri'},
+            {id:'orders',   icon:'🧾', label:'Comenzi'},
+            {id:'products', icon:'📦', label:'Produse'},
+            {id:'analysis', icon:'🔬', label:'Analiză'},
+            {id:'settings', icon:'⚙️', label:'Setări'},
+          ].map(tab => (
             <button key={tab.id} className={`pf-tab${activeTab===tab.id?' active':''}`} onClick={() => setActiveTab(tab.id)}>
               <span className="pf-tab-icon">{tab.icon}</span>{tab.label}
             </button>
@@ -1015,7 +977,6 @@ export default function ProfitPage() {
         {/* ══ SUMAR ══ */}
         {activeTab === 'summary' && (
           <>
-            {/* Shopify connect if not done */}
             {!shopifyDone && (
               <div className="pf-card" style={{marginBottom:14}}>
                 <div className="pf-card-header"><span className="pf-card-icon">🛍️</span><span className="pf-card-title">Conectează Shopify pentru profit live</span></div>
@@ -1025,8 +986,6 @@ export default function ProfitPage() {
                 </button>
               </div>
             )}
-
-            {/* Profit cards */}
             <div className="pf-net-grid">
               <div className={`pf-net-card ${netProfitBeforeTVA>=0?'green':'red'}`}>
                 <div className="pf-net-label">Profit net {isEstimated?'(est.)':''}</div>
@@ -1039,8 +998,6 @@ export default function ProfitPage() {
                 <div className="pf-net-sub">TVA de plată: <strong style={{color:'var(--c-yellow)'}}>{fmt(totalTVA)} RON</strong></div>
               </div>
             </div>
-
-            {/* Stats row */}
             <div className="pf-stat-row">
               {[
                 {label:'Comenzi',val:totalOrders,color:'var(--c-orange)'},
@@ -1059,8 +1016,6 @@ export default function ProfitPage() {
                 </button>
               )}
             </div>
-
-            {/* KPIs */}
             <div className="pf-kpi-grid">
               {[
                 {emoji:'📦',val:fmtK(cogs),label:'Cost produse',sub:cogs>0?`${totalRevenue>0?Math.round(cogs/totalRevenue*100):0}% venituri`:'Necompletat',accent:'#3b82f6'},
@@ -1078,8 +1033,6 @@ export default function ProfitPage() {
                 </div>
               ))}
             </div>
-
-            {/* P&L */}
             <div className="pf-stitle">Detaliu P&L {isEstimated&&<span className="pf-est-badge" style={{fontSize:9}}>⚡ valori estimate</span>}</div>
             <div className="pf-pl">
               <div className="pf-pl-row"><span className="pf-pl-label">💰 Venituri brute</span><span className="pf-pl-val orange">+{fmt(totalRevenue)} RON</span></div>
@@ -1116,8 +1069,6 @@ export default function ProfitPage() {
                 <span className="pf-pl-val" style={{fontWeight:900,fontSize:13,color:netProfitAfterTVA>=0?'var(--c-green)':'var(--c-red)'}}>{netProfitAfterTVA>=0?'+':''}{fmt(netProfitAfterTVA)} RON</span>
               </div>
             </div>
-
-            {/* Retururi detectate */}
             {returnedCount > 0 && (
               <>
                 <div className="pf-stitle">Colete refuzate/returnate — detectate automat</div>
@@ -1145,7 +1096,6 @@ export default function ProfitPage() {
         {/* ══ COSTURI ══ */}
         {activeTab === 'costs' && (
           <>
-            {/* Transport */}
             <div className="pf-stitle">Transport GLS</div>
             <div className={`pf-card ${glsDone?'done':''}`}>
               <div className="pf-card-header">
@@ -1168,14 +1118,12 @@ export default function ProfitPage() {
                     <input className="pf-input" type="text" inputMode="decimal" placeholder="Ex: 2522.34" value={glsManual} onChange={e=>setGlsManual(e.target.value)} />
                     <button className="pf-btn pf-btn-orange" style={{width:'auto',padding:'0 14px'}} onClick={()=>{const v=parseFloat(glsManual.replace(',','.')); if(!isNaN(v)&&v>0){setGlsCost(v);setGlsDone(true);}}}>OK</button>
                   </div>
-                  <label className="pf-label">Cost estimat per colet (RON) — folosit până încarci GLS real</label>
+                  <label className="pf-label">Cost estimat per colet (RON)</label>
                   <input className="pf-input" type="number" step="0.01" value={transportPerParcel} onChange={e=>setTransportPerParcel(parseFloat(e.target.value)||0)} />
                   <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>📊 Calculat luna trecută: 2522.34 ÷ 118 = <strong>21.37 RON/colet</strong></div>
                 </>
               )}
             </div>
-
-            {/* SameDay — auto din Shopify */}
             <div className="pf-stitle">Transport SameDay</div>
             <div className="pf-card" style={{borderColor:sdCount>0?'rgba(16,185,129,.25)':'rgba(255,255,255,.06)'}}>
               <div className="pf-card-header">
@@ -1193,8 +1141,6 @@ export default function ProfitPage() {
               <input className="pf-input" type="number" step="0.5" value={sdTransportPerParcel} onChange={e=>setSdTransportPerParcel(parseFloat(e.target.value)||0)} />
               {sdCount>0&&<div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>{sdCount} × {sdTransportPerParcel} RON = <strong>{fmt(sdEffective)} RON</strong></div>}
             </div>
-
-            {/* Marketing */}
             <div className="pf-stitle">Marketing</div>
             <div className="pf-card">
               <div className="pf-card-header">
@@ -1213,7 +1159,6 @@ export default function ProfitPage() {
                   <div style={{marginTop:8,padding:'8px 10px',background:'rgba(168,85,247,.06)',border:'1px solid rgba(168,85,247,.15)',borderRadius:8,fontSize:11,color:'var(--c-text3)',lineHeight:1.7}}>
                     <div>{cpaValue} RON × {totalOrders} comenzi = <strong style={{color:'#a855f7'}}>{fmt(cpaTotal)} RON</strong></div>
                     {totalMarketing>0&&totalRevenue>0&&<div>ROAS: <strong style={{color:'#a855f7'}}>{roasMarketing.toFixed(2)}x</strong></div>}
-                    <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>⚠️ Modul CPA: TVA Meta nu se calculează separat. Treci la "Sume reale" pentru TVA precis.</div>
                   </div>
                 </>
               ) : (
@@ -1237,19 +1182,16 @@ export default function ProfitPage() {
                   {totalMarketing>0&&<div style={{marginTop:8,padding:'8px 10px',background:'rgba(168,85,247,.06)',border:'1px solid rgba(168,85,247,.15)',borderRadius:8,fontSize:11,color:'var(--c-text3)',lineHeight:1.7}}>
                     <div>Total: <strong style={{color:'#a855f7'}}>{fmt(totalMarketing)} RON</strong></div>
                     {totalOrders>0&&<div>CPA efectiv: <strong>{fmt(totalMarketing/totalOrders)} RON/cmd</strong></div>}
-                    {totalOrders>0&&tvaOnMeta&&<div style={{color:'var(--c-yellow)'}}>CPA efectiv cu TVA 21%: <strong>{fmt((totalMarketing + totalTVA) / totalOrders)} RON/cmd</strong></div>}
                     {totalRevenue>0&&<div>ROAS: <strong>{roasMarketing.toFixed(2)}x</strong></div>}
                   </div>}
                 </>
               )}
             </div>
-
-            {/* TVA */}
             <div className="pf-stitle">TVA intracomunitară</div>
             <div className="pf-card">
               <div className="pf-card-header"><span className="pf-card-icon">🧾</span><span className="pf-card-title">TVA de plată · 21%</span><span className="pf-card-status" style={{color:'var(--c-yellow)'}}>{fmt(totalTVA)} RON</span></div>
               <div className="tva-box">
-                <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:10,lineHeight:1.6}}>TVA intracomunitară pe servicii digitale din UE. TikTok emite factură cu TVA inclusă.</div>
+                <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:10,lineHeight:1.6}}>TVA intracomunitară pe servicii digitale din UE.</div>
                 {[
                   {label:'Meta Ads',val:tvaOnMeta,set:setTvaOnMeta,base:!useCPA?metaNum:0,note:useCPA?'Treci la "Sume reale" pentru calcul':''},
                   {label:'Shopify subscription',val:tvaOnShopify,set:setTvaOnShopify,base:shopifyFixAmount,note:''},
@@ -1270,8 +1212,6 @@ export default function ProfitPage() {
                 </div>}
               </div>
             </div>
-
-            {/* Fixed costs */}
             <div className="pf-stitle">Costuri fixe</div>
             <div className="pf-card" style={{marginBottom:10}}>
               {fixedCosts.map(c => (
@@ -1296,7 +1236,6 @@ export default function ProfitPage() {
               ))}
               <button className="pf-btn pf-btn-ghost" onClick={addFixed}>+ Adaugă cost fix</button>
             </div>
-
             <div className="pf-stitle">Alte costuri variabile</div>
             <div className="pf-card">
               {otherCosts.length===0&&<div style={{fontSize:12,color:'var(--c-text4)',marginBottom:8}}>Nu ai adăugat.</div>}
@@ -1312,17 +1251,296 @@ export default function ProfitPage() {
           </>
         )}
 
+        {/* ══ COMENZI ══ */}
+        {activeTab === 'orders' && (() => {
+          const transportPerOrder  = totalOrders > 0 ? effectiveTransportCost / totalOrders : 0;
+          const marketingPerOrder  = totalOrders > 0 ? totalMarketing / totalOrders : 0;
+          const fixedPerOrder      = totalOrders > 0 ? (totalFixed + totalOther) / totalOrders : 0;
+          const cheltuieliPerOrder = transportPerOrder + marketingPerOrder + fixedPerOrder;
+
+          // Toate SKU-urile unice din comenzile livrate
+          const allSkus = [...new Set(
+            deliveredOrders.flatMap(o => (o.items||[]).map(i => (i.sku||'').trim()).filter(Boolean))
+          )].sort();
+
+          // Filtrare comenzi
+          const filteredOrders = deliveredOrders.filter(order => {
+            const matchesSku = !activeOrdersSkuFilter ||
+              (order.items||[]).some(i =>
+                (i.sku||'').toLowerCase() === activeOrdersSkuFilter.toLowerCase()
+              );
+            const matchesSearch = !ordersSearchText ||
+              (order.name||'').toLowerCase().includes(ordersSearchText.toLowerCase()) ||
+              (order.items||[]).some(i => (i.name||'').toLowerCase().includes(ordersSearchText.toLowerCase()));
+            return matchesSku && matchesSearch;
+          });
+
+          // Calcul profit per comandă
+          const calcOrderProfit = (order) => {
+            const items = order.items || [];
+            const totalQty = items.reduce((s,i) => s+(i.qty||1), 0) || 1;
+            const revenue  = items.reduce((s,i) => s + (i.price||0)*(i.qty||1), 0);
+            const cogsPart = items.reduce((s,i) => s + resolveCost(i).cost*(i.qty||1), 0);
+            const chelt    = cheltuieliPerOrder;
+            const profit   = revenue - cogsPart - chelt;
+            const margin   = revenue > 0 ? profit/revenue*100 : 0;
+            return { revenue, cogsPart, chelt, profit, margin, totalQty };
+          };
+
+          // Totaluri pentru comenzile filtrate
+          const totalsFilt = filteredOrders.reduce((acc, o) => {
+            const c = calcOrderProfit(o);
+            acc.revenue  += c.revenue;
+            acc.cogs     += c.cogsPart;
+            acc.chelt    += c.chelt;
+            acc.profit   += c.profit;
+            return acc;
+          }, { revenue:0, cogs:0, chelt:0, profit:0 });
+
+          return (
+            <>
+              <div className="pf-stitle">Comenzi livrate — {filteredOrders.length} din {deliveredOrders.length}</div>
+
+              {!deliveredOrders.length ? (
+                <div className="pf-card" style={{textAlign:'center',color:'var(--c-text4)',padding:24}}>
+                  <div style={{fontSize:24,marginBottom:8}}>🛍️</div>
+                  <div style={{fontSize:13,marginBottom:12}}>Încarcă comenzile din tab-ul Setări → Shopify mai întâi.</div>
+                  <button className="pf-btn pf-btn-orange" onClick={fetchShopify} disabled={shopifyLoading}>
+                    {shopifyLoading?<><span className="pf-spin">⟳</span> Se încarcă…</>:'⟳ Încarcă comenzile'}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Filtre */}
+                  <div className="pf-card" style={{marginBottom:8,padding:'10px 12px'}}>
+                    <input className="pf-input" type="text" placeholder="🔍 Caută după nr. comandă sau produs..."
+                      value={ordersSearchText} onChange={e=>setOrdersSearchText(e.target.value)}
+                      style={{marginBottom:8}} />
+                    <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center'}}>
+                      <span style={{fontSize:10,color:'var(--c-text4)',fontWeight:700,flexShrink:0}}>SKU:</span>
+                      <button onClick={()=>setActiveOrdersSkuFilter('')}
+                        style={{padding:'4px 10px',borderRadius:20,fontSize:10,cursor:'pointer',fontWeight:!activeOrdersSkuFilter?700:400,
+                          background:!activeOrdersSkuFilter?'#f97316':'#1e2a35',
+                          border:`1px solid ${!activeOrdersSkuFilter?'#f97316':'#243040'}`,
+                          color:!activeOrdersSkuFilter?'white':'#94a3b8'}}>
+                        Toate ({deliveredOrders.length})
+                      </button>
+                      {allSkus.map(sku => {
+                        const cnt = deliveredOrders.filter(o=>(o.items||[]).some(i=>(i.sku||'')===sku)).length;
+                        return (
+                          <button key={sku} onClick={()=>setActiveOrdersSkuFilter(activeOrdersSkuFilter===sku?'':sku)}
+                            style={{padding:'4px 10px',borderRadius:20,fontSize:10,cursor:'pointer',fontWeight:activeOrdersSkuFilter===sku?700:400,
+                              background:activeOrdersSkuFilter===sku?'rgba(249,115,22,.2)':'#1e2a35',
+                              border:`1px solid ${activeOrdersSkuFilter===sku?'#f97316':'#243040'}`,
+                              color:activeOrdersSkuFilter===sku?'#f97316':'#94a3b8'}}>
+                            {sku} <span style={{opacity:.6}}>({cnt})</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Sumar filtre */}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginBottom:8}}>
+                    {[
+                      {label:'Vânzări',    val:fmt(totalsFilt.revenue)+' RON',  clr:'#f97316'},
+                      {label:'Cost ach.',  val:fmt(totalsFilt.cogs)+' RON',     clr:'#f43f5e'},
+                      {label:'Cheltuieli', val:fmt(totalsFilt.chelt)+' RON',    clr:'#f59e0b'},
+                      {label:'Profit',     val:(totalsFilt.profit>=0?'+':'')+fmt(totalsFilt.profit)+' RON', clr:totalsFilt.profit>=0?'#10b981':'#f43f5e'},
+                    ].map(({label,val,clr})=>(
+                      <div key={label} style={{background:'#0d1520',border:`1px solid ${clr}22`,borderRadius:8,padding:'7px 8px',textAlign:'center'}}>
+                        <div style={{fontSize:12,fontWeight:800,color:clr,fontFamily:'monospace',lineHeight:1.2}}>{val}</div>
+                        <div style={{fontSize:9,color:'var(--c-text4)',marginTop:2}}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Lista comenzilor */}
+                  {filteredOrders.map(order => {
+                    const { revenue, cogsPart, chelt, profit, margin } = calcOrderProfit(order);
+                    const items = order.items || [];
+                    const profitClr = profit >= 0 ? '#10b981' : '#f43f5e';
+                    const date = (order.createdAt||'').slice(0,10);
+                    const courierLabel = order.courier === 'sameday' ? '⚡ SD' : order.courier === 'gls' ? '🚚 GLS' : '📦';
+
+                    return (
+                      <div key={order.id} style={{
+                        background:'#0d1520',
+                        border:`1px solid ${profit>=0?'#1a2535':'rgba(244,63,94,.15)'}`,
+                        borderRadius:10, marginBottom:6, overflow:'hidden'
+                      }}>
+                        {/* Header comandă */}
+                        <div style={{display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderBottom:'1px solid #1a2535'}}>
+                          <span style={{color:'#f97316',fontWeight:800,fontSize:12,fontFamily:'monospace',minWidth:60}}>{order.name}</span>
+                          <span style={{fontSize:10,color:'#475569'}}>{date}</span>
+                          <span style={{fontSize:10,color:'#475569',background:'rgba(255,255,255,.04)',padding:'1px 6px',borderRadius:4}}>{courierLabel}</span>
+                          <span style={{flex:1}}/>
+                          <span style={{fontSize:11,color:'#94a3b8',fontFamily:'monospace'}}>{fmt(revenue)} RON</span>
+                          <span style={{fontSize:12,fontWeight:800,color:profitClr,fontFamily:'monospace',minWidth:75,textAlign:'right'}}>
+                            {profit>=0?'+':''}{fmt(profit)} RON
+                          </span>
+                        </div>
+
+                        {/* Produse */}
+                        <div style={{padding:'6px 12px'}}>
+                          {items.map((item, idx) => {
+                            const { cost: costUnit, src } = resolveCost(item);
+                            const qty = item.qty || 1;
+                            const itemSku = item.sku || '';
+                            const srcClr = {standard:'#10b981',shopify:'#3b82f6',smartbill:'#a855f7',manual:'#f59e0b',none:'#f43f5e'};
+                            const srcLbl = {standard:'STD',shopify:'SH',smartbill:'SB',manual:'M',none:'?'};
+                            const isEditingThis = editingCost[itemSku] !== undefined && itemSku;
+
+                            return (
+                              <div key={idx} style={{
+                                display:'flex',alignItems:'center',gap:5,
+                                padding:'5px 0',
+                                borderBottom: idx < items.length-1 ? '1px solid rgba(255,255,255,.04)' : 'none',
+                                fontSize:11, flexWrap:'nowrap'
+                              }}>
+                                {/* SKU badge */}
+                                {itemSku && (
+                                  <span style={{fontFamily:'monospace',fontSize:9,background:'rgba(249,115,22,.08)',
+                                    color:'#f97316',padding:'1px 5px',borderRadius:4,flexShrink:0,whiteSpace:'nowrap'}}>
+                                    {itemSku}
+                                  </span>
+                                )}
+                                {/* Nume produs */}
+                                <span style={{color:'#94a3b8',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',minWidth:0}} title={item.name}>
+                                  {item.name}
+                                </span>
+                                {/* Qty × preț */}
+                                <span style={{color:'#475569',whiteSpace:'nowrap',fontSize:10,flexShrink:0}}>
+                                  {qty > 1 ? `${qty}×` : ''}{fmt(item.price)} RON
+                                </span>
+                                {/* Cost achiziție — editabil per SKU */}
+                                <div style={{display:'flex',alignItems:'center',gap:3,flexShrink:0}}>
+                                  {isEditingThis ? (
+                                    <>
+                                      <input
+                                        type="number" step="0.01"
+                                        value={tempCostEdit[itemSku] ?? costUnit}
+                                        onChange={e => setTempCostEdit(p=>({...p,[itemSku]:e.target.value}))}
+                                        style={{width:65,background:'rgba(16,185,129,.1)',border:'1px solid rgba(16,185,129,.3)',
+                                          color:'#10b981',borderRadius:5,padding:'2px 5px',fontSize:11,fontFamily:'monospace',outline:'none'}}
+                                        autoFocus
+                                      />
+                                      <button onClick={()=>{
+                                        const newCost = parseFloat(String(tempCostEdit[itemSku]).replace(',','.'));
+                                        if (!isNaN(newCost) && newCost >= 0) {
+                                          setStdCosts(prev => {
+                                            const idx2 = prev.findIndex(s => s.sku === itemSku || s.id === itemSku);
+                                            if (idx2 >= 0) {
+                                              const updated = [...prev];
+                                              updated[idx2] = {...updated[idx2], cost: newCost, updated: new Date().toISOString().slice(0,10)};
+                                              localStorage.setItem('glamx_std_costs', JSON.stringify(updated));
+                                              return updated;
+                                            }
+                                            // SKU nou — adaugă în listă
+                                            const newEntry = {
+                                              id: itemSku, sku: itemSku,
+                                              pattern: itemSku.toLowerCase(),
+                                              excludes: [], name: item.name, cost: newCost,
+                                              updated: new Date().toISOString().slice(0,10)
+                                            };
+                                            const updated2 = [...prev, newEntry];
+                                            localStorage.setItem('glamx_std_costs', JSON.stringify(updated2));
+                                            return updated2;
+                                          });
+                                        }
+                                        setEditingCost(p=>{const n={...p};delete n[itemSku];return n;});
+                                        setTempCostEdit(p=>{const n={...p};delete n[itemSku];return n;});
+                                      }} style={{background:'#10b981',border:'none',color:'white',borderRadius:5,padding:'2px 6px',fontSize:10,cursor:'pointer',fontWeight:700}}>✓</button>
+                                      <button onClick={()=>{
+                                        setEditingCost(p=>{const n={...p};delete n[itemSku];return n;});
+                                        setTempCostEdit(p=>{const n={...p};delete n[itemSku];return n;});
+                                      }} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:5,padding:'2px 5px',fontSize:10,cursor:'pointer'}}>✕</button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span style={{
+                                        fontFamily:'monospace',fontSize:10,fontWeight:700,
+                                        color: costUnit > 0 ? '#f43f5e' : '#f59e0b',
+                                        background: costUnit > 0 ? 'rgba(244,63,94,.08)' : 'rgba(245,158,11,.08)',
+                                        padding:'1px 5px',borderRadius:4,whiteSpace:'nowrap'
+                                      }}>
+                                        -{fmt(costUnit*qty)} RON
+                                      </span>
+                                      <span style={{fontSize:8,color:srcClr[src]||'#64748b',fontWeight:800,flexShrink:0}}>{srcLbl[src]||'?'}</span>
+                                      {itemSku && (
+                                        <button
+                                          onClick={()=>{
+                                            setEditingCost(p=>({...p,[itemSku]:true}));
+                                            setTempCostEdit(p=>({...p,[itemSku]:costUnit}));
+                                          }}
+                                          title={`Editează costul pentru SKU ${itemSku} (se aplică tuturor variantelor)`}
+                                          style={{background:'transparent',border:'1px solid #1e2a35',color:'#475569',
+                                            borderRadius:4,padding:'1px 4px',fontSize:9,cursor:'pointer',flexShrink:0}}
+                                        >✏️</button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Footer profit breakdown */}
+                        <div style={{
+                          display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',
+                          background:'rgba(0,0,0,.25)',
+                          borderTop:'1px solid #1a2535',
+                          padding:'6px 12px',gap:4
+                        }}>
+                          {[
+                            {label:'Vânzări',  val:fmt(revenue),  clr:'#f97316'},
+                            {label:'Cost ach.',val:fmt(cogsPart), clr:'#f43f5e'},
+                            {label:'Chelt.',   val:fmt(chelt),    clr:'#f59e0b'},
+                            {label:`Profit ${margin.toFixed(0)}%`, val:(profit>=0?'+':'')+fmt(profit), clr:profitClr, bold:true},
+                          ].map(({label,val,clr,bold})=>(
+                            <div key={label} style={{textAlign:'center'}}>
+                              <div style={{fontSize:bold?11:10,fontWeight:bold?800:600,color:clr,fontFamily:'monospace'}}>{val}</div>
+                              <div style={{fontSize:9,color:'#475569'}}>{label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {filteredOrders.length === 0 && (
+                    <div style={{textAlign:'center',color:'var(--c-text4)',padding:24,fontSize:13}}>
+                      Nicio comandă găsită pentru filtrul selectat.
+                    </div>
+                  )}
+
+                  <div style={{fontSize:10,color:'var(--c-text4)',textAlign:'center',padding:'8px 0',lineHeight:1.7}}>
+                    Cheltuieli/comandă: {fmt(transportPerOrder)} transport + {fmt(marketingPerOrder)} marketing + {fmt(fixedPerOrder)} fixe = <strong>{fmt(cheltuieliPerOrder)} RON</strong><br/>
+                    STD = standard · SH = Shopify · SB = SmartBill · M = manual · ? = necunoscut<br/>
+                    ✏️ Editarea costului unui SKU se aplică automat la toate variantele cu același SKU
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })()}
+
         {/* ══ PRODUSE ══ */}
         {activeTab === 'products' && (
           <>
             <div className="pf-stitle">Prețuri de achiziție</div>
             <div className="pf-card" style={{marginBottom:10}}>
-              <p style={{fontSize:12,color:'var(--c-text3)',marginBottom:12,lineHeight:1.6}}>Prețurile tale de achiziție — cele mai noi. Au prioritate față de Shopify.</p>
+              <p style={{fontSize:12,color:'var(--c-text3)',marginBottom:12,lineHeight:1.6}}>
+                Prețurile tale de achiziție. Au prioritate față de Shopify.
+                {costsLastUpdated && <span style={{color:'var(--c-green)',marginLeft:6}}>✓ Actualizat {costsLastUpdated}</span>}
+              </p>
               <table className="pf-prod-table">
-                <thead><tr><th>Produs</th><th style={{width:90,textAlign:'right'}}>Cost RON</th><th style={{width:32}}></th></tr></thead>
+                <thead><tr><th>SKU</th><th>Produs</th><th style={{width:90,textAlign:'right'}}>Cost RON</th><th style={{width:32}}></th></tr></thead>
                 <tbody>
                   {stdCosts.map((s,i) => (
                     <tr key={s.id}>
+                      <td style={{color:'var(--c-orange)',fontSize:10,fontFamily:'monospace',whiteSpace:'nowrap'}}>{s.sku||s.id}</td>
                       <td style={{color:'var(--c-text3)',fontSize:11}}>{s.name}</td>
                       <td style={{textAlign:'right'}}>
                         <input type="text" inputMode="decimal" value={s.cost}
@@ -1335,16 +1553,10 @@ export default function ProfitPage() {
                   ))}
                 </tbody>
               </table>
-              <button onClick={()=>setStdCosts(p=>[...p,{id:'new_'+Date.now(),pattern:'',excludes:[],name:'Produs nou',cost:0}])} style={{marginTop:8}} className="pf-btn pf-btn-ghost">+ Adaugă produs</button>
+              <button onClick={()=>setStdCosts(p=>[...p,{id:'new_'+Date.now(),sku:'',pattern:'',excludes:[],name:'Produs nou',cost:0}])} style={{marginTop:8}} className="pf-btn pf-btn-ghost">+ Adaugă produs</button>
             </div>
-
-            <div className="pf-stitle">Import stoc nou / Export</div>
+            <div className="pf-stitle">Import / Export costuri</div>
             <div className="pf-card">
-              <p style={{fontSize:12,color:'var(--c-text3)',marginBottom:10,lineHeight:1.6}}>
-                Importă direct fișierul <strong>import-cost.xlsx</strong> primit la fiecare stoc nou.
-                Produsele existente se actualizează, produsele noi se adaugă automat.
-                {costsLastUpdated && <span style={{color:'var(--c-green)',marginLeft:6}}>✓ Actualizat {costsLastUpdated}</span>}
-              </p>
               <div style={{display:'grid',gap:8}}>
                 <button className="pf-btn pf-btn-orange" onClick={fetchSmartBillCosts} disabled={sbCostsLoading}
                   style={{background:'linear-gradient(135deg,#10b981,#059669)'}}>
@@ -1352,9 +1564,9 @@ export default function ProfitPage() {
                 </button>
                 <button className="pf-btn pf-btn-ghost" onClick={()=>sbExcelRef.current?.click()}
                   style={{borderColor:'rgba(16,185,129,.4)',color:'#10b981'}}>
-                  📊 Import Excel SmartBill (Stoc la zi → Exporta Excel)
+                  📊 Import Excel SmartBill (Stoc la zi)
                 </button>
-                <input ref={sbExcelRef} type="file" accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{display:'none'}}
+                <input ref={sbExcelRef} type="file" accept=".xls,.xlsx" style={{display:'none'}}
                   onChange={e=>{if(e.target.files[0]) importSmartBillExcel(e.target.files[0]); e.target.value='';}}/>
                 {sbCostsMsg && (
                   <div style={{fontSize:11,padding:'6px 10px',borderRadius:8,
@@ -1373,7 +1585,6 @@ export default function ProfitPage() {
                   <button className="pf-btn pf-btn-ghost" onClick={()=>xlsxImportRef.current?.click()}>⬆️ Import format standard</button>
                 </div>
               </div>
-              {/* Import stoc nou — format import-cost.xlsx */}
               <input ref={importCostRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
                 onChange={e=>{
                   const f=e.target.files[0];
@@ -1381,7 +1592,6 @@ export default function ProfitPage() {
                     (merged, incoming) => {
                       setStdCosts(merged);
                       localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
-                      // Salveaza si in product-costs.json (download pentru GitHub)
                       const blob = new Blob([JSON.stringify(merged, null, 2)], {type:'application/json'});
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');
@@ -1393,27 +1603,12 @@ export default function ProfitPage() {
                   );
                   e.target.value='';
                 }} />
-              {/* Import format standard XLSX */}
               <input ref={xlsxImportRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
                 onChange={e=>{const f=e.target.files[0]; if(f) importCostsFromXLSX(f,costs=>{setStdCosts(costs);localStorage.setItem('glamx_std_costs',JSON.stringify(costs));alert(`✅ Importat ${costs.length} produse!`);}); e.target.value='';}} />
-              <div style={{marginTop:10,padding:'8px 10px',background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.15)',borderRadius:8,fontSize:10,color:'var(--c-text3)',lineHeight:1.7}}>
-                <strong style={{color:'#10b981'}}>Import Excel SmartBill (recomandat):</strong><br/>
-                1. SmartBill → Gestiune → <strong>Rapoarte → Stoc la zi</strong><br/>
-                2. Click <strong>Filtrare</strong> → bifează <strong>"Cost unitar"</strong><br/>
-                3. Click <strong>Exporta Excel</strong><br/>
-                4. Apasă butonul verde "Import Excel SmartBill" de mai sus
-              </div>
-              <div style={{marginTop:6,padding:'8px 10px',background:'rgba(249,115,22,.06)',border:'1px solid rgba(249,115,22,.15)',borderRadius:8,fontSize:10,color:'var(--c-text3)',lineHeight:1.7}}>
-                <strong>Flux import stoc nou (factură furnizor):</strong><br/>
-                1. Primești stoc nou → apasă "Import stoc nou" → selectezi fișierul<br/>
-                2. Se descarcă automat <code>product-costs.json</code><br/>
-                3. Uploadezi în <code>/public</code> pe GitHub ✓
-              </div>
             </div>
-
             {uniqueProducts.length > 0 && (
               <>
-                <div className="pf-stitle">Cost rezolvat</div>
+                <div className="pf-stitle">Cost rezolvat (din comenzile curente)</div>
                 <div className="pf-card">
                   <table className="pf-prod-table">
                     <thead><tr><th>Produs</th><th style={{width:80,textAlign:'right'}}>Cost</th><th style={{width:44,textAlign:'center'}}>Sursă</th></tr></thead>
@@ -1447,35 +1642,64 @@ export default function ProfitPage() {
           const fixedPerOrder      = totalOrders > 0 ? (totalFixed + totalOther) / totalOrders : 0;
           const cheltuieliPerOrder = transportPerOrder + marketingPerOrder + fixedPerOrder;
 
-          // Grupăm pe SKU (nu pe variantă) — DM56 silicon, DM56 metal = același SKU
+          // Grupăm pe SKU — dacă SKU e gol, determinăm grupul din stdCosts după pattern pe nume
+          // Astfel toate variantele (cu/fără SKU) ajung în același grup
+          const resolveGroupKey = (item) => {
+            const rawSku = (item.sku||'').trim();
+            if (rawSku) {
+              // Caută SKU de bază în stdCosts (prefix match)
+              const skuLow = rawSku.toLowerCase();
+              const baseEntry = stdCosts.find(s => {
+                const base = (s.sku||s.id||'').toLowerCase();
+                return base && (skuLow === base || skuLow.startsWith(base+'-') || skuLow.startsWith(base+'/') || skuLow.startsWith(base+'_'));
+              });
+              // Returnează SKU-ul canonical din stdCosts dacă există, altfel SKU-ul brut
+              return { groupKey: (baseEntry?.sku || baseEntry?.id || rawSku).toUpperCase(), displayName: baseEntry?.name || item.name || rawSku, canonicalSku: baseEntry?.sku || baseEntry?.id || rawSku };
+            }
+            // Fără SKU — caută după pattern în nume
+            const nameLow = (item.name||'').toLowerCase().trim();
+            const sortedByPatLen = [...stdCosts].sort((a,b) => (b.pattern||'').length - (a.pattern||'').length);
+            for (const std of sortedByPatLen) {
+              const pat = (std.pattern||'').toLowerCase().trim();
+              if (!pat) continue;
+              if (nameLow.includes(pat)) {
+                const excluded = (std.excludes||[]).some(ex => nameLow.includes(ex.toLowerCase()));
+                if (!excluded) return { groupKey: (std.sku||std.id).toUpperCase(), displayName: std.name, canonicalSku: std.sku||std.id };
+              }
+            }
+            // Fallback: grupare pe nume exact
+            return { groupKey: (item.name||'NECUNOSCUT').toUpperCase(), displayName: item.name||'Produs necunoscut', canonicalSku: '' };
+          };
+
           const skuMap = {};
           deliveredOrders.forEach(order => {
             const itemsInOrder = (order.items || []);
             const totalQtyOrder = itemsInOrder.reduce((s,i) => s + (i.qty||1), 0) || 1;
             itemsInOrder.forEach(item => {
-              const sku = (item.sku || item.name || 'necunoscut').trim();
+              const { groupKey, displayName, canonicalSku } = resolveGroupKey(item);
               const { cost: costAch } = resolveCost(item);
               const qty  = item.qty || 1;
               const pret = item.price || 0;
-              // Cheltuielile se distribuie proporțional pe cantitate
               const chelt = (cheltuieliPerOrder / totalQtyOrder) * qty;
-              if (!skuMap[sku]) skuMap[sku] = {
-                sku,
-                // Numele canonical = primul întâlnit (fără variantă dacă e posibil)
-                name: item.name || sku,
-                costUnit: costAch, // costul per bucată (e fix per SKU)
-                hasCost: costAch > 0,
+              if (!skuMap[groupKey]) skuMap[groupKey] = {
+                sku: canonicalSku || groupKey,
+                name: displayName,
+                costUnit: costAch, hasCost: costAch > 0,
                 qty: 0, revenue: 0, cogs: 0, chelt: 0, profit: 0,
-                orders: [], // comenzile care conțin acest SKU
+                orders: [],
               };
-              skuMap[sku].qty     += qty;
-              skuMap[sku].revenue += pret * qty;
-              skuMap[sku].cogs    += costAch * qty;
-              skuMap[sku].chelt   += chelt;
-              skuMap[sku].profit  += (pret - costAch) * qty - chelt;
-              // Adăugăm comanda la lista produsului (fără duplicate)
-              if (!skuMap[sku].orders.find(o => o.id === order.id)) {
-                skuMap[sku].orders.push({ id: order.id, name: order.name||order.id, client: order.client||'', total: order.total||0, date: (order.createdAt||'').slice(0,10) });
+              // Dacă ulterior găsim cost pentru un item care înainte nu avea, actualizăm
+              if (!skuMap[groupKey].hasCost && costAch > 0) {
+                skuMap[groupKey].hasCost = true;
+                skuMap[groupKey].costUnit = costAch;
+              }
+              skuMap[groupKey].qty     += qty;
+              skuMap[groupKey].revenue += pret * qty;
+              skuMap[groupKey].cogs    += costAch * qty;
+              skuMap[groupKey].chelt   += chelt;
+              skuMap[groupKey].profit  += (pret - costAch) * qty - chelt;
+              if (!skuMap[groupKey].orders.find(o => o.id === order.id)) {
+                skuMap[groupKey].orders.push({ id: order.id, name: order.name||order.id, client: order.client||'', total: order.total||0, date: (order.createdAt||'').slice(0,10) });
               }
             });
           });
@@ -1490,22 +1714,23 @@ export default function ProfitPage() {
               return 0;
             });
 
+          const allSkuEntries = Object.values(skuMap).filter(p => p.qty > 0);
+          const noCostCount = allSkuEntries.filter(p => !p.hasCost).length;
+
           const totalRevProd    = sorted.reduce((s,p) => s+p.revenue, 0);
           const totalProfitProd = sorted.reduce((s,p) => s+p.profit, 0);
           const totalQtyProd    = sorted.reduce((s,p) => s+p.qty, 0);
 
           return (
             <>
-              <div className="pf-stitle">Analiză profit per produs</div>
+              <div className="pf-stitle">Analiză profit per produs (grupat pe SKU)</div>
               {!deliveredOrders.length ? (
                 <div className="pf-card" style={{textAlign:'center',color:'var(--c-text4)',padding:24}}>
                   Încarcă comenzile din tab-ul Setări → Shopify mai întâi.
                 </div>
               ) : (
                 <>
-                  {/* Sumar */}
                   <div className="pf-card" style={{marginBottom:8}}>
-                    {/* Filtre + Toggle */}
                     <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
                       <span style={{fontSize:11,color:'var(--c-text3)'}}>Sortare:</span>
                       {[['profit','💰 Profit'],['revenue','💵 Vânzări'],['qty','📦 Qty'],['margin','📈 Marjă']].map(([id,lbl]) => (
@@ -1523,10 +1748,9 @@ export default function ProfitPage() {
                       </button>
                       <label style={{fontSize:11,color:'var(--c-text3)',display:'flex',alignItems:'center',gap:4,cursor:'pointer'}}>
                         <input type="checkbox" checked={showNoCost} onChange={e=>setShowNoCost(e.target.checked)}/>
-                        Fără cost
+                        Fără cost {noCostCount > 0 && <span style={{color:'#f59e0b',fontWeight:700}}>({noCostCount})</span>}
                       </label>
                     </div>
-                    {/* KPI */}
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
                       {[
                         {label:'Profit total', val:fmt(totalProfitProd)+' RON', color:'#10b981'},
@@ -1541,38 +1765,126 @@ export default function ProfitPage() {
                     </div>
                   </div>
 
-                  {/* Card per SKU */}
                   {sorted.map((p, idx) => {
-                    const margin   = p.revenue > 0 ? (p.profit/p.revenue*100) : 0;
-                    const profitClr= p.profit > 0 ? '#10b981' : '#f43f5e';
-                    const div      = perUnit ? p.qty : 1;
-                    const isOpen   = showOrdersSku === p.sku;
+                    const isEditingAnalysis = editingCost[p.sku] !== undefined;
+                    // Costul per unitate curent (din stdCosts dacă a fost editat, altfel p.costUnit)
+                    const currentCostUnit = (() => {
+                      const entry = stdCosts.find(s => (s.sku||s.id||'').toUpperCase() === p.sku.toUpperCase());
+                      return entry ? (typeof entry.cost === 'number' ? entry.cost : parseFloat(entry.cost)||0) : p.costUnit;
+                    })();
+                    // Recalculăm cu costul curent (poate fi editat)
+                    const cogsReal   = currentCostUnit * p.qty;
+                    const profitReal = p.revenue - cogsReal - p.chelt;
+                    const margin     = p.revenue > 0 ? (profitReal/p.revenue*100) : 0;
+                    const profitClr  = profitReal > 0 ? '#10b981' : '#f43f5e';
+                    const div        = perUnit ? p.qty : 1;
+                    const isOpen     = showOrdersSku === p.sku;
+
+                    const saveCostForSku = (skuKey, newCost, itemName) => {
+                      setStdCosts(prev => {
+                        const idx2 = prev.findIndex(s => (s.sku||s.id||'').toUpperCase() === skuKey.toUpperCase());
+                        if (idx2 >= 0) {
+                          const updated = [...prev];
+                          updated[idx2] = {...updated[idx2], cost: newCost, updated: new Date().toISOString().slice(0,10)};
+                          localStorage.setItem('glamx_std_costs', JSON.stringify(updated));
+                          return updated;
+                        }
+                        const newEntry = { id: skuKey, sku: skuKey, pattern: skuKey.toLowerCase(), excludes: [], name: itemName||skuKey, cost: newCost, updated: new Date().toISOString().slice(0,10) };
+                        const updated2 = [...prev, newEntry];
+                        localStorage.setItem('glamx_std_costs', JSON.stringify(updated2));
+                        return updated2;
+                      });
+                    };
+
                     return (
-                      <div key={p.sku} style={{background:'#0d1520',border:`1px solid ${isOpen?'rgba(249,115,22,.4)':'#1e2a35'}`,borderRadius:10,marginBottom:6,overflow:'hidden'}}>
+                      <div key={p.sku} style={{background:'#0d1520',border:`1px solid ${isOpen?'rgba(249,115,22,.4)':isEditingAnalysis?'rgba(16,185,129,.35)':'#1e2a35'}`,borderRadius:10,marginBottom:6,overflow:'hidden'}}>
                         <div style={{padding:'12px 14px'}}>
-                          {/* Header: rang + SKU badge + nome + qty clickabil */}
+                          {/* Header */}
                           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
                             <span style={{fontSize:10,color:'#334155',minWidth:18}}>#{idx+1}</span>
-                            <span style={{fontFamily:'monospace',fontSize:10,background:'rgba(249,115,22,.1)',color:'#f97316',padding:'2px 6px',borderRadius:4,whiteSpace:'nowrap'}}>{p.sku}</span>
+                            <span style={{fontFamily:'mono space',fontSize:10,background:'rgba(249,115,22,.1)',color:'#f97316',padding:'2px 6px',borderRadius:4,whiteSpace:'nowrap'}}>{p.sku}</span>
                             <span style={{fontSize:12,fontWeight:700,color:'#e8edf2',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</span>
-                            {/* Qty clickabil — deschide lista comenzilor */}
                             <button onClick={()=>setShowOrdersSku(isOpen ? null : p.sku)}
                               style={{background:isOpen?'rgba(249,115,22,.2)':'rgba(255,255,255,.06)',border:`1px solid ${isOpen?'#f97316':'#243040'}`,
                                 color:isOpen?'#f97316':'#94a3b8',borderRadius:8,padding:'3px 10px',fontSize:11,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
                               {p.qty} buc {isOpen?'▲':'▼'}
                             </button>
                           </div>
+
                           {/* Bar */}
                           <div style={{height:3,background:'#1e2a35',borderRadius:2,marginBottom:8,overflow:'hidden'}}>
-                            <div style={{height:'100%',width:`${totalRevProd>0?Math.min(100,p.revenue/totalRevProd*200):0}%`,background:p.profit>0?'#10b981':'#f43f5e',borderRadius:2}}/>
+                            <div style={{height:'100%',width:`${totalRevProd>0?Math.min(100,p.revenue/totalRevProd*200):0}%`,background:profitReal>0?'#10b981':'#f43f5e',borderRadius:2}}/>
                           </div>
+
+                          {/* Cost achiziție editabil — zona principală */}
+                          <div style={{background: isEditingAnalysis?'rgba(16,185,129,.06)':'rgba(255,255,255,.02)', border:`1px solid ${isEditingAnalysis?'rgba(16,185,129,.25)':'rgba(255,255,255,.05)'}`, borderRadius:8, padding:'8px 10px', marginBottom:8}}>
+                            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+                              <div>
+                                <div style={{fontSize:9,color:'var(--c-text4)',textTransform:'uppercase',letterSpacing:.5,fontWeight:700,marginBottom:2}}>Cost achiziție / buc</div>
+                                {isEditingAnalysis ? (
+                                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                    <input
+                                      type="number" step="0.01" autoFocus
+                                      value={tempCostEdit[p.sku] ?? currentCostUnit}
+                                      onChange={e => setTempCostEdit(prev=>({...prev,[p.sku]:e.target.value}))}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') {
+                                          const v = parseFloat(String(tempCostEdit[p.sku]).replace(',','.'));
+                                          if (!isNaN(v) && v >= 0) saveCostForSku(p.sku, v, p.name);
+                                          setEditingCost(prev=>{const n={...prev};delete n[p.sku];return n;});
+                                          setTempCostEdit(prev=>{const n={...prev};delete n[p.sku];return n;});
+                                        }
+                                        if (e.key === 'Escape') {
+                                          setEditingCost(prev=>{const n={...prev};delete n[p.sku];return n;});
+                                          setTempCostEdit(prev=>{const n={...prev};delete n[p.sku];return n;});
+                                        }
+                                      }}
+                                      style={{width:90,background:'rgba(16,185,129,.12)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:6,padding:'4px 8px',fontSize:14,fontFamily:'monospace',fontWeight:700,outline:'none'}}
+                                    />
+                                    <span style={{fontSize:11,color:'#64748b'}}>RON</span>
+                                    <button onClick={()=>{
+                                      const v = parseFloat(String(tempCostEdit[p.sku]).replace(',','.'));
+                                      if (!isNaN(v) && v >= 0) saveCostForSku(p.sku, v, p.name);
+                                      setEditingCost(prev=>{const n={...prev};delete n[p.sku];return n;});
+                                      setTempCostEdit(prev=>{const n={...prev};delete n[p.sku];return n;});
+                                    }} style={{background:'#10b981',border:'none',color:'white',borderRadius:6,padding:'4px 10px',fontSize:12,fontWeight:800,cursor:'pointer'}}>✓ OK</button>
+                                    <button onClick={()=>{
+                                      setEditingCost(prev=>{const n={...prev};delete n[p.sku];return n;});
+                                      setTempCostEdit(prev=>{const n={...prev};delete n[p.sku];return n;});
+                                    }} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:6,padding:'4px 8px',fontSize:11,cursor:'pointer'}}>✕</button>
+                                  </div>
+                                ) : (
+                                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                                    <span style={{fontSize:16,fontWeight:800,color: currentCostUnit>0?'#f43f5e':'#f59e0b',fontFamily:'monospace'}}>
+                                      {currentCostUnit > 0 ? fmt(currentCostUnit)+' RON' : '— necunoscut'}
+                                    </span>
+                                    {currentCostUnit > 0 && p.qty > 1 && (
+                                      <span style={{fontSize:10,color:'#475569'}}>× {p.qty} = {fmt(cogsReal)} RON total</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              {!isEditingAnalysis && (
+                                <button
+                                  onClick={()=>{
+                                    setEditingCost(prev=>({...prev,[p.sku]:true}));
+                                    setTempCostEdit(prev=>({...prev,[p.sku]:currentCostUnit}));
+                                  }}
+                                  style={{background: currentCostUnit>0?'rgba(255,255,255,.06)':'rgba(249,115,22,.15)', border:`1px solid ${currentCostUnit>0?'#243040':'rgba(249,115,22,.4)'}`, color:currentCostUnit>0?'#64748b':'#f97316', borderRadius:8, padding:'6px 12px', fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap', flexShrink:0}}
+                                >
+                                  ✏️ {currentCostUnit > 0 ? 'Editează' : 'Adaugă cost'}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
                           {/* 4 cifre */}
                           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:4}}>
                             {[
-                              {lbl:'Vânzări',      val:p.revenue/div,  clr:'#f97316'},
-                              {lbl:'Cost ach.',    val:p.cogs/div,     clr:'#f43f5e', hide:!p.hasCost},
-                              {lbl:'Cheltuieli',   val:p.chelt/div,    clr:'#f59e0b'},
-                              {lbl:perUnit?'Profit/buc':`Profit ${margin.toFixed(1)}%`, val:p.profit/div, clr:profitClr, bold:true},
+                              {lbl:'Vânzări',    val:p.revenue/div,    clr:'#f97316'},
+                              {lbl:'Cost ach.',  val:cogsReal/div,     clr:'#f43f5e', hide:currentCostUnit<=0},
+                              {lbl:'Cheltuieli', val:p.chelt/div,      clr:'#f59e0b'},
+                              {lbl:perUnit?'Profit/buc':`Profit ${margin.toFixed(1)}%`, val:profitReal/div, clr:profitClr, bold:true},
                             ].map(({lbl,val,clr,hide,bold})=>(
                               <div key={lbl} style={{textAlign:'center'}}>
                                 <div style={{fontSize:bold?12:11,fontWeight:bold?800:700,color:clr}}>{hide?'—':fmt(val)+' RON'}</div>
@@ -1580,10 +1892,10 @@ export default function ProfitPage() {
                               </div>
                             ))}
                           </div>
-                          {!p.hasCost && <div style={{marginTop:6,fontSize:10,color:'#f59e0b',background:'rgba(245,158,11,.06)',borderRadius:6,padding:'3px 8px'}}>⚠ Cost achiziție necunoscut</div>}
+                          {currentCostUnit <= 0 && <div style={{marginTop:6,fontSize:10,color:'#f59e0b',background:'rgba(245,158,11,.06)',borderRadius:6,padding:'4px 10px'}}>⚠ Apasă "Adaugă cost" pentru a calcula profitul real</div>}
                         </div>
 
-                        {/* Lista comenzilor expandabilă */}
+                        {/* Lista comenzilor */}
                         {isOpen && (
                           <div style={{borderTop:'1px solid rgba(249,115,22,.2)',background:'rgba(0,0,0,.3)',padding:'8px 14px'}}>
                             <div style={{fontSize:10,color:'#f97316',fontWeight:700,marginBottom:6,textTransform:'uppercase',letterSpacing:1}}>
@@ -1637,8 +1949,7 @@ export default function ProfitPage() {
                   </div>
                 ))}
                 <div style={{fontSize:10,color:'var(--c-text4)',padding:'6px 8px',background:'rgba(249,115,22,.05)',borderRadius:6,lineHeight:1.7}}>
-                  📍 Token-ul se găsește în SmartBill → <strong>Contul Meu → Integrări</strong> → secțiunea API din josul paginii.<br/>
-                  Gestiunea este opțională — dacă o completezi, prețurile de achiziție vin direct din stoc (mai precise).
+                  📍 Token-ul se găsește în SmartBill → <strong>Contul Meu → Integrări</strong> → secțiunea API.
                 </div>
                 <button className="pf-btn pf-btn-orange" onClick={saveSbCreds}
                   disabled={!sbEmail||!sbToken||!sbCif}>
@@ -1648,7 +1959,7 @@ export default function ProfitPage() {
             </div>
             <div className="pf-stitle">Shopify</div>
             <div className={`pf-card ${shopifyDone?'done':''}`}>
-              <div className="pf-card-header"><span className="pf-card-icon">🛍️</span><span className="pf-card-title">Date comenzi</span><span className={`pf-card-status ${shopifyDone?'ok':''}`}>{shopifyDone?`✓ ${deliveredOrders.length} comenzi`:'Neconectat'}</span></div>
+              <div className="pf-card-header"><span className="pf-card-icon">🛍️</span><span className="pf-card-title">Date comenzi</span><span className={`pf-card-status ${shopifyDone?'ok':''}`}>{shopifyDone?`✓ ${deliveredOrders.length} comenzi livrate`:'Neconectat'}</span></div>
               {!shopifyDone?(
                 <button className="pf-btn pf-btn-orange" onClick={fetchShopify} disabled={shopifyLoading}>{shopifyLoading?<><span className="pf-spin">⟳</span> Se încarcă…</>:'⟳ Încarcă comenzile lunii'}</button>
               ):(
@@ -1660,7 +1971,6 @@ export default function ProfitPage() {
                 </div>
               )}
             </div>
-
             <div className="pf-stitle">Sumar complet</div>
             <div className="pf-card">
               {[
@@ -1693,5 +2003,4 @@ export default function ProfitPage() {
     </>
   );
 }
-
 
