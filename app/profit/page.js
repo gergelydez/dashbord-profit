@@ -255,6 +255,11 @@ export default function ProfitPage() {
   const [ordersSearchText, setOrdersSearchText] = useState('');
   const [editingCost, setEditingCost] = useState({});
   const [tempCostEdit, setTempCostEdit] = useState({});
+  const [showOrdersModal, setShowOrdersModal] = useState(false);
+  const [modalView, setModalView] = useState('sku'); // 'sku' | 'orders'
+  const [modalSkuFilter, setModalSkuFilter] = useState('');
+  const [modalEditCost, setModalEditCost] = useState({});
+  const [modalTempCost, setModalTempCost] = useState({});
 
   // Shopify
   const [shopifyOrders, setShopifyOrders] = useState([]);
@@ -1000,13 +1005,15 @@ export default function ProfitPage() {
             </div>
             <div className="pf-stat-row">
               {[
-                {label:'Comenzi',val:totalOrders,color:'var(--c-orange)'},
+                {label:'Comenzi',val:totalOrders,color:'var(--c-orange)', clickable: true},
                 {label:'Refuzate',val:returnedCount,color:returnedCount>0?'var(--c-red)':'var(--c-text4)'},
                 {label:'Venituri',val:fmtK(totalRevenue)+'K',color:'var(--c-green)'},
                 {label:'Profit/cmd',val:totalOrders>0?fmtK(netProfitAfterTVA/totalOrders):'—',color:netProfitAfterTVA>=0?'var(--c-green)':'var(--c-red)'},
               ].map((s,i)=>(
-                <div key={i} className="pf-stat">
-                  <div className="pf-stat-label">{s.label}</div>
+                <div key={i} className="pf-stat"
+                  onClick={s.clickable && totalOrders > 0 ? ()=>setShowOrdersModal(true) : undefined}
+                  style={s.clickable && totalOrders > 0 ? {cursor:'pointer',borderColor:'rgba(249,115,22,.25)',background:'rgba(249,115,22,.06)',transition:'all .15s'} : {}}>
+                  <div className="pf-stat-label" style={s.clickable&&totalOrders>0?{color:'var(--c-orange)'}:{}}>{s.label} {s.clickable&&totalOrders>0&&<span style={{fontSize:8,opacity:.6}}>↗</span>}</div>
                   <div className="pf-stat-val" style={{color:s.color}}>{s.val}</div>
                 </div>
               ))}
@@ -1997,10 +2004,347 @@ export default function ProfitPage() {
 
       </div>
 
+      {/* ══ MODAL COMENZI ══ */}
+      {showOrdersModal && (() => {
+        const tpo = totalOrders > 0 ? effectiveTransportCost / totalOrders : 0;
+        const mpo = totalOrders > 0 ? totalMarketing / totalOrders : 0;
+        const fpo = totalOrders > 0 ? (totalFixed + totalOther) / totalOrders : 0;
+        const chelt_po = tpo + mpo + fpo;
+
+        // Helper: resolve cost per item (same logic as resolveCost but uses modalEditCost overrides first)
+        const resolveModalCost = (item) => {
+          const rawSku = (item.sku||'').trim();
+          const skuUp = rawSku.toUpperCase();
+          // Check modal override first
+          if (modalEditCost[skuUp] !== undefined) return { cost: parseFloat(modalEditCost[skuUp])||0, src: 'manual' };
+          // Check stdCosts override
+          const entry = stdCosts.find(s => (s.sku||s.id||'').toUpperCase() === skuUp);
+          if (entry && entry.cost > 0) return { cost: typeof entry.cost==='number'?entry.cost:parseFloat(entry.cost)||0, src: 'standard' };
+          // Fall through to full resolveCost
+          return resolveCost(item);
+        };
+
+        // Build SKU groups
+        const resolveGroup = (item) => {
+          const rawSku = (item.sku||'').trim();
+          if (rawSku) {
+            const skuLow = rawSku.toLowerCase();
+            const base = stdCosts.find(s => {
+              const b = (s.sku||s.id||'').toLowerCase();
+              return b && (skuLow === b || skuLow.startsWith(b+'-') || skuLow.startsWith(b+'/') || skuLow.startsWith(b+'_'));
+            });
+            return { key: (base?.sku||base?.id||rawSku).toUpperCase(), name: base?.name||item.name||rawSku, sku: base?.sku||base?.id||rawSku };
+          }
+          const nl = (item.name||'').toLowerCase();
+          const sorted = [...stdCosts].sort((a,b)=>(b.pattern||'').length-(a.pattern||'').length);
+          for (const s of sorted) {
+            const p = (s.pattern||'').toLowerCase();
+            if (p && nl.includes(p) && !(s.excludes||[]).some(ex=>nl.includes(ex.toLowerCase())))
+              return { key: (s.sku||s.id).toUpperCase(), name: s.name, sku: s.sku||s.id };
+          }
+          return { key: (item.name||'NECUNOSCUT').toUpperCase(), name: item.name||'Necunoscut', sku: '' };
+        };
+
+        const skuMap = {};
+        deliveredOrders.forEach(order => {
+          const qty_total = (order.items||[]).reduce((s,i)=>s+(i.qty||1),0)||1;
+          (order.items||[]).forEach(item => {
+            const g = resolveGroup(item);
+            const { cost } = resolveModalCost(item);
+            const qty = item.qty||1;
+            const pret = item.price||0;
+            const ch = (chelt_po / qty_total) * qty;
+            if (!skuMap[g.key]) skuMap[g.key] = { key:g.key, name:g.name, sku:g.sku, qty:0, revenue:0, cogs:0, chelt:0, profit:0, costUnit:cost, hasCost:cost>0, orders:[] };
+            if (!skuMap[g.key].hasCost && cost>0) { skuMap[g.key].hasCost=true; skuMap[g.key].costUnit=cost; }
+            skuMap[g.key].qty     += qty;
+            skuMap[g.key].revenue += pret*qty;
+            skuMap[g.key].cogs    += cost*qty;
+            skuMap[g.key].chelt   += ch;
+            skuMap[g.key].profit  += (pret-cost)*qty - ch;
+            if (!skuMap[g.key].orders.find(o=>o.id===order.id))
+              skuMap[g.key].orders.push({ id:order.id, name:order.name||order.id, total:order.total||0, date:(order.createdAt||'').slice(0,10), courier:order.courier||'', items:order.items||[], chelt:chelt_po });
+          });
+        });
+
+        const skuList = Object.values(skuMap).sort((a,b)=>b.revenue-a.revenue);
+        const filtered = modalSkuFilter ? skuList.filter(s=>s.key===modalSkuFilter) : skuList;
+
+        // Orders filtered by SKU
+        const ordersFiltered = modalSkuFilter
+          ? deliveredOrders.filter(o=>(o.items||[]).some(i=>resolveGroup(i).key===modalSkuFilter))
+          : deliveredOrders;
+
+        const totalRevM  = skuList.reduce((s,p)=>s+p.revenue,0);
+        const totalCogM  = skuList.reduce((s,p)=>s+p.cogs,0);
+        const totalChM   = skuList.reduce((s,p)=>s+p.chelt,0);
+        const totalProfM = skuList.reduce((s,p)=>s+p.profit,0);
+        const noCostSkus = skuList.filter(s=>!s.hasCost).length;
+
+        const saveModalCost = (skuKey, val, name) => {
+          const nc = parseFloat(String(val).replace(',','.'));
+          if (isNaN(nc)||nc<0) return;
+          setModalEditCost(prev=>({...prev,[skuKey.toUpperCase()]:nc}));
+          // persist to stdCosts
+          setStdCosts(prev => {
+            const idx2 = prev.findIndex(s=>(s.sku||s.id||'').toUpperCase()===skuKey.toUpperCase());
+            if (idx2>=0) {
+              const u=[...prev]; u[idx2]={...u[idx2],cost:nc,updated:new Date().toISOString().slice(0,10)};
+              localStorage.setItem('glamx_std_costs',JSON.stringify(u)); return u;
+            }
+            const ne={id:skuKey,sku:skuKey,pattern:skuKey.toLowerCase(),excludes:[],name:name||skuKey,cost:nc,updated:new Date().toISOString().slice(0,10)};
+            const u2=[...prev,ne]; localStorage.setItem('glamx_std_costs',JSON.stringify(u2)); return u2;
+          });
+        };
+
+        return (
+          <div style={{position:'fixed',inset:0,zIndex:999,display:'flex',flexDirection:'column',background:'#07090e'}}>
+            {/* Modal header */}
+            <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',borderBottom:'1px solid rgba(255,255,255,.07)',background:'rgba(7,9,14,.98)',backdropFilter:'blur(20px)',flexShrink:0}}>
+              <button onClick={()=>setShowOrdersModal(false)} style={{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.1)',color:'#94a3b8',borderRadius:8,padding:'6px 12px',fontSize:12,fontWeight:700,cursor:'pointer'}}>← Înapoi</button>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:800,color:'#f1f5f9'}}>📦 Raport comenzi livrate</div>
+                <div style={{fontSize:10,color:'#475569',marginTop:1}}>{totalOrders} comenzi · {(()=>{const r=getRange(preset,customFrom,customTo);return r.from+' — '+r.to;})()}</div>
+              </div>
+              {/* View toggle */}
+              <div style={{display:'flex',gap:4,background:'rgba(255,255,255,.05)',borderRadius:8,padding:3}}>
+                {[['sku','📊 SKU'],['orders','📋 Comenzi']].map(([v,l])=>(
+                  <button key={v} onClick={()=>setModalView(v)} style={{padding:'5px 10px',borderRadius:6,fontSize:11,fontWeight:700,cursor:'pointer',border:'none',background:modalView===v?'rgba(249,115,22,.2)':'transparent',color:modalView===v?'#f97316':'#64748b',transition:'all .15s'}}>{l}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* SKU filter pills */}
+            <div style={{display:'flex',gap:5,padding:'8px 16px',overflowX:'auto',borderBottom:'1px solid rgba(255,255,255,.05)',flexShrink:0,scrollbarWidth:'none'}}>
+              <button onClick={()=>setModalSkuFilter('')} style={{padding:'4px 12px',borderRadius:20,fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',border:'1px solid',borderColor:!modalSkuFilter?'#f97316':'#1e2a35',background:!modalSkuFilter?'rgba(249,115,22,.15)':'#0d1520',color:!modalSkuFilter?'#f97316':'#64748b'}}>
+                Toate ({totalOrders})
+              </button>
+              {skuList.map(s=>(
+                <button key={s.key} onClick={()=>setModalSkuFilter(modalSkuFilter===s.key?'':s.key)}
+                  style={{padding:'4px 12px',borderRadius:20,fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',border:'1px solid',
+                    borderColor:modalSkuFilter===s.key?'#f97316':'#1e2a35',
+                    background:modalSkuFilter===s.key?'rgba(249,115,22,.15)':'#0d1520',
+                    color:modalSkuFilter===s.key?'#f97316':'#64748b'}}>
+                  {s.sku||s.key} <span style={{opacity:.5}}>({s.orders.length})</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Content */}
+            <div style={{flex:1,overflowY:'auto',padding:'12px 16px 80px'}}>
+
+              {/* ── VIEW: SKU ── */}
+              {modalView === 'sku' && (
+                <>
+                  {/* Summary bar */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,marginBottom:12}}>
+                    {[
+                      {l:'Vânzări totale',   v:fmt(totalRevM)+' RON',  c:'#f97316'},
+                      {l:'Cost produse',     v:fmt(totalCogM)+' RON',  c:'#f43f5e'},
+                      {l:'Cheltuieli',       v:fmt(totalChM)+' RON',   c:'#f59e0b'},
+                      {l:'Profit net',       v:(totalProfM>=0?'+':'')+fmt(totalProfM)+' RON', c:totalProfM>=0?'#10b981':'#f43f5e'},
+                    ].map(({l,v,c})=>(
+                      <div key={l} style={{background:'#0d1520',border:`1px solid ${c}18`,borderRadius:10,padding:'10px 12px',textAlign:'center'}}>
+                        <div style={{fontSize:13,fontWeight:800,color:c,fontFamily:'monospace',letterSpacing:-.3}}>{v}</div>
+                        <div style={{fontSize:9,color:'#475569',marginTop:2,textTransform:'uppercase',letterSpacing:.5}}>{l}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {noCostSkus > 0 && (
+                    <div style={{background:'rgba(245,158,11,.07)',border:'1px solid rgba(245,158,11,.2)',borderRadius:8,padding:'8px 12px',marginBottom:10,fontSize:11,color:'#f59e0b',display:'flex',alignItems:'center',gap:8}}>
+                      ⚠️ <strong>{noCostSkus} SKU-uri</strong> fără cost de achiziție — profitul lor nu e calculat corect. Apasă ✏️ pentru a adăuga costul.
+                    </div>
+                  )}
+
+                  {/* SKU table */}
+                  <div style={{background:'#0a0f1a',border:'1px solid #1a2535',borderRadius:12,overflow:'hidden'}}>
+                    {/* Table header */}
+                    <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 80px',gap:0,padding:'8px 14px',borderBottom:'1px solid #1a2535',background:'rgba(255,255,255,.02)'}}>
+                      {['Produs / SKU','Cmd','Vânzări','Cost ach.','Cheltuieli','Profit','Profit/cmd'].map(h=>(
+                        <div key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700,textAlign:h==='Produs / SKU'?'left':'right'}}>{h}</div>
+                      ))}
+                    </div>
+
+                    {(modalSkuFilter ? filtered : skuList).map((p, idx) => {
+                      const profitClr = p.profit >= 0 ? '#10b981' : '#f43f5e';
+                      const margin = p.revenue > 0 ? (p.profit/p.revenue*100) : 0;
+                      const isEditingM = modalTempCost[p.key] !== undefined;
+                      const currentCost = modalEditCost[p.key.toUpperCase()] ?? p.costUnit;
+
+                      return (
+                        <div key={p.key} style={{borderBottom:'1px solid #111927'}}>
+                          {/* Main row */}
+                          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 80px',gap:0,padding:'11px 14px',alignItems:'center',transition:'background .1s'}}
+                            onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.02)'}
+                            onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                            {/* Produs */}
+                            <div>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <span style={{fontFamily:'monospace',fontSize:10,background:'rgba(249,115,22,.1)',color:'#f97316',padding:'2px 6px',borderRadius:4,flexShrink:0}}>{p.sku||p.key}</span>
+                                {!p.hasCost && <span style={{fontSize:8,background:'rgba(245,158,11,.15)',color:'#f59e0b',padding:'1px 5px',borderRadius:3,fontWeight:800}}>FĂRĂ COST</span>}
+                              </div>
+                              <div style={{fontSize:11,color:'#94a3b8',marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</div>
+                            </div>
+                            {/* Cmd */}
+                            <div style={{textAlign:'right',fontSize:12,fontWeight:700,color:'#e2e8f0'}}>{p.orders.length}</div>
+                            {/* Vânzări */}
+                            <div style={{textAlign:'right',fontSize:12,fontWeight:600,color:'#f97316',fontFamily:'monospace'}}>{fmt(p.revenue)}</div>
+                            {/* Cost ach */}
+                            <div style={{textAlign:'right'}}>
+                              {isEditingM ? (
+                                <div style={{display:'flex',alignItems:'center',gap:4,justifyContent:'flex-end'}}>
+                                  <input type="number" step="0.01" autoFocus
+                                    value={modalTempCost[p.key]??currentCost}
+                                    onChange={e=>setModalTempCost(prev=>({...prev,[p.key]:e.target.value}))}
+                                    onKeyDown={e=>{
+                                      if(e.key==='Enter'){saveModalCost(p.sku||p.key,modalTempCost[p.key],p.name);setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}
+                                      if(e.key==='Escape'){setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}
+                                    }}
+                                    style={{width:60,background:'rgba(16,185,129,.12)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:5,padding:'3px 6px',fontSize:11,fontFamily:'monospace',outline:'none',textAlign:'right'}}/>
+                                  <button onClick={()=>{saveModalCost(p.sku||p.key,modalTempCost[p.key],p.name);setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}} style={{background:'#10b981',border:'none',color:'white',borderRadius:4,padding:'3px 7px',fontSize:10,fontWeight:800,cursor:'pointer'}}>✓</button>
+                                  <button onClick={()=>setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;})} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:4,padding:'3px 5px',fontSize:10,cursor:'pointer'}}>✕</button>
+                                </div>
+                              ) : (
+                                <div style={{display:'flex',alignItems:'center',gap:4,justifyContent:'flex-end',cursor:'pointer'}} onClick={()=>setModalTempCost(prev=>({...prev,[p.key]:currentCost}))}>
+                                  <span style={{fontSize:12,fontFamily:'monospace',color:currentCost>0?'#f43f5e':'#f59e0b',fontWeight:600}}>{currentCost>0?fmt(currentCost)+' RON/buc':'—'}</span>
+                                  <span style={{fontSize:10,color:'#334155',flexShrink:0}}>✏️</span>
+                                </div>
+                              )}
+                            </div>
+                            {/* Cheltuieli */}
+                            <div style={{textAlign:'right',fontSize:12,color:'#f59e0b',fontFamily:'monospace'}}>{fmt(p.chelt)}</div>
+                            {/* Profit */}
+                            <div style={{textAlign:'right'}}>
+                              <div style={{fontSize:13,fontWeight:800,color:profitClr,fontFamily:'monospace'}}>{p.profit>=0?'+':''}{fmt(p.profit)}</div>
+                              <div style={{fontSize:9,color:'#334155',marginTop:1}}>{margin.toFixed(1)}% marjă</div>
+                            </div>
+                            {/* Profit/cmd */}
+                            <div style={{textAlign:'right'}}>
+                              <div style={{fontSize:12,fontWeight:700,color:profitClr,fontFamily:'monospace'}}>{p.orders.length>0?(p.profit>=0?'+':'')+fmt(p.profit/p.orders.length):'—'}</div>
+                              <div style={{fontSize:9,color:'#334155',marginTop:1}}>avg</div>
+                            </div>
+                          </div>
+
+                          {/* Cost info bar */}
+                          {currentCost > 0 && (
+                            <div style={{display:'flex',gap:12,padding:'4px 14px 8px',fontSize:10,color:'#334155'}}>
+                              <span>{currentCost} RON/buc × {p.qty} buc = <strong style={{color:'#475569'}}>{fmt(currentCost*p.qty)} RON</strong> cost total</span>
+                              <span style={{marginLeft:'auto',color:'#1e3a5f'}}>Profit mediu/comandă: <strong style={{color:profitClr}}>{p.orders.length>0?(p.profit>=0?'+':'')+fmt(p.profit/p.orders.length)+' RON':'-'}</strong></span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* TOTAL row */}
+                    <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 80px',gap:0,padding:'12px 14px',background:'rgba(255,255,255,.03)',borderTop:'2px solid #1e2a35'}}>
+                      <div style={{fontSize:11,fontWeight:800,color:'#e2e8f0'}}>TOTAL ({skuList.length} SKU-uri)</div>
+                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#e2e8f0'}}>{totalOrders}</div>
+                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(totalRevM)}</div>
+                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(totalCogM)}</div>
+                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f59e0b',fontFamily:'monospace'}}>{fmt(totalChM)}</div>
+                      <div style={{textAlign:'right'}}>
+                        <div style={{fontSize:13,fontWeight:900,color:totalProfM>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{totalProfM>=0?'+':''}{fmt(totalProfM)}</div>
+                        <div style={{fontSize:9,color:'#334155'}}>{totalRevM>0?(totalProfM/totalRevM*100).toFixed(1):0}% marjă</div>
+                      </div>
+                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:totalProfM>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{totalOrders>0?(totalProfM>=0?'+':'')+fmt(totalProfM/totalOrders):'—'}</div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ── VIEW: COMENZI ── */}
+              {modalView === 'orders' && (
+                <>
+                  <div style={{fontSize:11,color:'#475569',marginBottom:10}}>{ordersFiltered.length} comenzi{modalSkuFilter?` cu SKU ${modalSkuFilter}`:''}</div>
+
+                  {/* Table header */}
+                  <div style={{background:'#0a0f1a',border:'1px solid #1a2535',borderRadius:12,overflow:'hidden'}}>
+                    <div style={{display:'grid',gridTemplateColumns:'90px 1fr 80px 80px 80px 80px',gap:0,padding:'8px 14px',borderBottom:'1px solid #1a2535',background:'rgba(255,255,255,.02)'}}>
+                      {['Comandă','Produse','Vânzări','Cost ach.','Chelt.','Profit'].map(h=>(
+                        <div key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700,textAlign:h==='Produse'?'left':'right'}}>{h}</div>
+                      ))}
+                    </div>
+
+                    {ordersFiltered.map((order, oi) => {
+                      const items = order.items||[];
+                      const qty_total = items.reduce((s,i)=>s+(i.qty||1),0)||1;
+                      const rev   = items.reduce((s,i)=>s+(i.price||0)*(i.qty||1),0);
+                      const cg    = items.reduce((s,i)=>s+resolveModalCost(i).cost*(i.qty||1),0);
+                      const ch    = chelt_po;
+                      const prf   = rev - cg - ch;
+                      const prfClr= prf>=0?'#10b981':'#f43f5e';
+                      const date  = (order.createdAt||'').slice(0,10);
+
+                      return (
+                        <div key={order.id} style={{borderBottom:'1px solid #0d1520'}}>
+                          <div style={{display:'grid',gridTemplateColumns:'90px 1fr 80px 80px 80px 80px',gap:0,padding:'10px 14px',alignItems:'start'}}>
+                            {/* Nr comandă */}
+                            <div>
+                              <div style={{fontSize:11,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{order.name}</div>
+                              <div style={{fontSize:9,color:'#334155',marginTop:2}}>{date}</div>
+                              <div style={{fontSize:9,color:'#1e3a5f',marginTop:1}}>{order.courier==='sameday'?'⚡ SD':order.courier==='gls'?'🚚 GLS':'📦'}</div>
+                            </div>
+                            {/* Produse */}
+                            <div style={{paddingLeft:8}}>
+                              {items.map((item,ii) => {
+                                const g = resolveGroup(item);
+                                const {cost:ic, src} = resolveModalCost(item);
+                                const srcClr={standard:'#10b981',shopify:'#3b82f6',manual:'#f59e0b',none:'#f43f5e'};
+                                return (
+                                  <div key={ii} style={{display:'flex',alignItems:'center',gap:5,marginBottom:ii<items.length-1?4:0}}>
+                                    <span style={{fontFamily:'monospace',fontSize:9,background:'rgba(249,115,22,.08)',color:'#f97316',padding:'1px 4px',borderRadius:3,flexShrink:0}}>{g.sku||g.key.slice(0,8)}</span>
+                                    <span style={{fontSize:10,color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}} title={item.name}>{item.name}</span>
+                                    {item.qty>1&&<span style={{fontSize:9,color:'#334155',flexShrink:0}}>×{item.qty}</span>}
+                                    <span style={{fontSize:9,color:ic>0?srcClr[src]:'#f59e0b',fontWeight:700,flexShrink:0}}>{ic>0?fmt(ic)+'R':'?'}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {/* Vânzări */}
+                            <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:'#f97316',fontFamily:'monospace'}}>{fmt(rev)}</div>
+                            {/* Cost */}
+                            <div style={{textAlign:'right',fontSize:11,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(cg)}</div>
+                            {/* Chelt */}
+                            <div style={{textAlign:'right',fontSize:11,color:'#f59e0b',fontFamily:'monospace'}}>{fmt(ch)}</div>
+                            {/* Profit */}
+                            <div style={{textAlign:'right'}}>
+                              <div style={{fontSize:12,fontWeight:800,color:prfClr,fontFamily:'monospace'}}>{prf>=0?'+':''}{fmt(prf)}</div>
+                              <div style={{fontSize:8,color:'#334155',marginTop:1}}>{rev>0?(prf/rev*100).toFixed(0):'0'}%</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Total */}
+                    {(() => {
+                      const totR = ordersFiltered.reduce((s,o)=>{const items=o.items||[];return s+items.reduce((ss,i)=>ss+(i.price||0)*(i.qty||1),0);},0);
+                      const totC = ordersFiltered.reduce((s,o)=>{const items=o.items||[];return s+items.reduce((ss,i)=>ss+resolveModalCost(i).cost*(i.qty||1),0);},0);
+                      const totCh = ordersFiltered.length * chelt_po;
+                      const totP = totR - totC - totCh;
+                      return (
+                        <div style={{display:'grid',gridTemplateColumns:'90px 1fr 80px 80px 80px 80px',gap:0,padding:'10px 14px',background:'rgba(255,255,255,.03)',borderTop:'2px solid #1e2a35'}}>
+                          <div style={{fontSize:11,fontWeight:800,color:'#e2e8f0'}}>TOTAL</div>
+                          <div style={{paddingLeft:8,fontSize:10,color:'#475569'}}>{ordersFiltered.length} comenzi</div>
+                          <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(totR)}</div>
+                          <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(totC)}</div>
+                          <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f59e0b',fontFamily:'monospace'}}>{fmt(totCh)}</div>
+                          <div style={{textAlign:'right',fontSize:13,fontWeight:900,color:totP>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{totP>=0?'+':''}{fmt(totP)}</div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="pf-save-bar">
         <button className="pf-save-btn" onClick={saveSettings}>💾 Salvează</button>
       </div>
     </>
   );
 }
-
