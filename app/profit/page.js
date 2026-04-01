@@ -1880,10 +1880,10 @@ export default function ProfitPage() {
                   </div>
 
                   {sorted.map((p, idx) => {
-                    const isEditingAnalysis = editingCost[p.sku] !== undefined;
+                    const isEditingAnalysis = p.sku && editingCost[p.sku] !== undefined;
                     // Costul per unitate curent (din stdCosts dacă a fost editat, altfel p.costUnit)
                     const currentCostUnit = (() => {
-                      const entry = stdCosts.find(s => (s.sku||s.id||'').toUpperCase() === p.sku.toUpperCase());
+                      const entry = stdCosts.find(s => (s.sku||s.id||'').toUpperCase() === (p.sku||'').toUpperCase());
                       return entry ? (typeof entry.cost === 'number' ? entry.cost : parseFloat(entry.cost)||0) : p.costUnit;
                     })();
                     // Recalculăm cu costul curent (poate fi editat)
@@ -1892,7 +1892,7 @@ export default function ProfitPage() {
                     const margin     = p.revenue > 0 ? (profitReal/p.revenue*100) : 0;
                     const profitClr  = profitReal > 0 ? '#10b981' : '#f43f5e';
                     const div        = perUnit ? p.qty : 1;
-                    const isOpen     = showOrdersSku === p.sku;
+                    const isOpen     = p.sku && showOrdersSku === p.sku;
 
                     const saveCostForSku = (skuKey, newCost, itemName) => {
                       setStdCosts(prev => {
@@ -1911,12 +1911,12 @@ export default function ProfitPage() {
                     };
 
                     return (
-                      <div key={p.sku} style={{background:'#0d1520',border:`1px solid ${isOpen?'rgba(249,115,22,.4)':isEditingAnalysis?'rgba(16,185,129,.35)':'#1e2a35'}`,borderRadius:10,marginBottom:6,overflow:'hidden'}}>
+                      <div key={p.sku||p.name||idx} style={{background:'#0d1520',border:`1px solid ${isOpen?'rgba(249,115,22,.4)':isEditingAnalysis?'rgba(16,185,129,.35)':'#1e2a35'}`,borderRadius:10,marginBottom:6,overflow:'hidden'}}>
                         <div style={{padding:'12px 14px'}}>
                           {/* Header */}
                           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
                             <span style={{fontSize:10,color:'#334155',minWidth:18}}>#{idx+1}</span>
-                            <span style={{fontFamily:'mono space',fontSize:10,background:'rgba(249,115,22,.1)',color:'#f97316',padding:'2px 6px',borderRadius:4,whiteSpace:'nowrap'}}>{p.sku}</span>
+                            <span style={{fontFamily:'monospace',fontSize:10,background:'rgba(249,115,22,.1)',color:'#f97316',padding:'2px 6px',borderRadius:4,whiteSpace:'nowrap'}}>{p.sku}</span>
                             <span style={{fontSize:12,fontWeight:700,color:'#e8edf2',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</span>
                             <button onClick={()=>setShowOrdersSku(isOpen ? null : p.sku)}
                               style={{background:isOpen?'rgba(249,115,22,.2)':'rgba(255,255,255,.06)',border:`1px solid ${isOpen?'#f97316':'#243040'}`,
@@ -2118,23 +2118,16 @@ export default function ProfitPage() {
         const fpo = totalOrders > 0 ? (totalFixed + totalOther) / totalOrders : 0;
         const chelt_po = tpo + mpo + fpo;
 
-        // Helper: resolve cost per item (same logic as resolveCost but uses modalEditCost overrides first)
-        // resolveGroup: determina grupul SKU canonic pentru un item
-        // Foloseste aceeasi logica ca resolveCost: SKU exact → prefix → pattern name → SKU in name → fuzzy
         const resolveGroup = (item) => {
           const nameRaw = (item.name||'').trim();
           const nameKey = nameRaw.toLowerCase();
           const rawSku  = (item.sku||'').trim();
           const skuKey  = rawSku.toLowerCase();
           const byPatLen = [...stdCosts].sort((a,b)=>(b.pattern||'').length-(a.pattern||'').length);
-
-          // 1. SKU exact match
           if (skuKey) {
             const exact = stdCosts.find(s => (s.sku||s.id||'').toLowerCase() === skuKey);
             if (exact) return { key:(exact.sku||exact.id).toUpperCase(), name:exact.name, sku:exact.sku||exact.id };
           }
-
-          // 2. SKU prefix/suffix match
           if (skuKey) {
             const prefix = stdCosts.find(s => {
               const b = (s.sku||s.id||'').toLowerCase();
@@ -2142,42 +2135,30 @@ export default function ProfitPage() {
             });
             if (prefix) return { key:(prefix.sku||prefix.id).toUpperCase(), name:prefix.name, sku:prefix.sku||prefix.id };
           }
-
-          // 3. Pattern match pe nume
           for (const s of byPatLen) {
             const p = (s.pattern||'').toLowerCase().trim();
             if (!p || p.length<3) continue;
             if (nameKey.includes(p) && !(s.excludes||[]).some(ex=>nameKey.includes(ex.toLowerCase())))
               return { key:(s.sku||s.id).toUpperCase(), name:s.name, sku:s.sku||s.id };
           }
-
-          // 4. SKU din stdCosts apare in numele produsului
           for (const s of byPatLen) {
             const sk = (s.sku||s.id||'').toLowerCase();
             if (sk.length>=2 && nameKey.includes(sk))
               return { key:(s.sku||s.id).toUpperCase(), name:s.name, sku:s.sku||s.id };
           }
-
-          // 5. Fuzzy words
           for (const s of byPatLen) {
             const words = (s.pattern||'').toLowerCase().split(/\s+/).filter(w=>w.length>=4);
             if (words.length>=2 && words.every(w=>nameKey.includes(w)) && !(s.excludes||[]).some(ex=>nameKey.includes(ex.toLowerCase())))
               return { key:(s.sku||s.id).toUpperCase(), name:s.name, sku:s.sku||s.id };
           }
-
-          // Fallback: grup pe SKU brut sau pe nume
-          const fallbackKey = rawSku ? rawSku.toUpperCase() : nameRaw.toUpperCase().slice(0,30);
-          return { key:fallbackKey, name:nameRaw||'Necunoscut', sku:rawSku };
+          const fk = rawSku ? rawSku.toUpperCase() : nameRaw.toUpperCase().slice(0,30);
+          return { key:fk||'NECUNOSCUT', name:nameRaw||'Necunoscut', sku:rawSku };
         };
 
-        // resolveModalCost: modalEditCost override > stdCosts > resolveCost complet
         const resolveModalCost = (item) => {
-          // Gasim grupul canonic pentru a obtine SKU-ul
           const g = resolveGroup(item);
           const skuUp = g.key;
-          // Override din modal
           if (modalEditCost[skuUp] !== undefined) return { cost: parseFloat(modalEditCost[skuUp])||0, src: 'manual' };
-          // resolveCost complet (SKU exact > prefix > pattern > fuzzy)
           return resolveCost(item);
         };
 
@@ -2198,14 +2179,11 @@ export default function ProfitPage() {
             skuMap[g.key].chelt   += ch;
             skuMap[g.key].profit  += (pret-cost)*qty - ch;
             if (!skuMap[g.key].orders.find(o=>o.id===order.id))
-              skuMap[g.key].orders.push({ id:order.id, name:order.name||order.id, total:order.total||0, date:(order.createdAt||'').slice(0,10), courier:order.courier||'', items:order.items||[], chelt:chelt_po });
+              skuMap[g.key].orders.push({ id:order.id, name:order.name||order.id, total:order.total||0, date:(order.createdAt||'').slice(0,10), courier:order.courier||'', items:order.items||[] });
           });
         });
 
         const skuList = Object.values(skuMap).sort((a,b)=>b.revenue-a.revenue);
-        const filtered = modalSkuFilter ? skuList.filter(s=>s.key===modalSkuFilter) : skuList;
-
-        // Orders filtered by SKU
         const ordersFiltered = modalSkuFilter
           ? deliveredOrders.filter(o=>(o.items||[]).some(i=>resolveGroup(i).key===modalSkuFilter))
           : deliveredOrders;
@@ -2219,282 +2197,304 @@ export default function ProfitPage() {
         const saveModalCost = (skuKey, val, name) => {
           const nc = parseFloat(String(val).replace(',','.'));
           if (isNaN(nc)||nc<0) return;
-          setModalEditCost(prev=>({...prev,[skuKey.toUpperCase()]:nc}));
-          // persist to stdCosts
+          setModalEditCost(prev=>({...prev,[(skuKey||'').toUpperCase()]:nc}));
           setStdCosts(prev => {
-            const idx2 = prev.findIndex(s=>(s.sku||s.id||'').toUpperCase()===skuKey.toUpperCase());
+            const idx2 = prev.findIndex(s=>(s.sku||s.id||'').toUpperCase()===(skuKey||'').toUpperCase());
             if (idx2>=0) {
               const u=[...prev]; u[idx2]={...u[idx2],cost:nc,updated:new Date().toISOString().slice(0,10)};
               localStorage.setItem('glamx_std_costs',JSON.stringify(u)); return u;
             }
-            const ne={id:skuKey,sku:skuKey,pattern:skuKey.toLowerCase(),excludes:[],name:name||skuKey,cost:nc,updated:new Date().toISOString().slice(0,10)};
+            const ne={id:skuKey,sku:skuKey,pattern:(skuKey||'').toLowerCase(),excludes:[],name:name||skuKey,cost:nc,updated:new Date().toISOString().slice(0,10)};
             const u2=[...prev,ne]; localStorage.setItem('glamx_std_costs',JSON.stringify(u2)); return u2;
           });
         };
 
         return (
-          <div style={{position:'fixed',inset:0,zIndex:999,display:'flex',flexDirection:'column',background:'#07090e'}}>
-            {/* Modal header */}
-            <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',borderBottom:'1px solid rgba(255,255,255,.07)',background:'rgba(7,9,14,.98)',backdropFilter:'blur(20px)',flexShrink:0}}>
-              <button onClick={()=>setShowOrdersModal(false)} style={{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.1)',color:'#94a3b8',borderRadius:8,padding:'6px 12px',fontSize:12,fontWeight:700,cursor:'pointer'}}>← Înapoi</button>
-              <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:800,color:'#f1f5f9'}}>📦 Raport comenzi livrate</div>
-                <div style={{fontSize:10,color:'#475569',marginTop:1}}>{totalOrders} comenzi · {(()=>{const r=getRange(preset,customFrom,customTo);return r.from+' — '+r.to;})()}</div>
+          <div style={{position:'fixed',inset:0,zIndex:999,display:'flex',flexDirection:'column',background:'#07090e',fontFamily:'system-ui,-apple-system,sans-serif'}}>
+
+            {/* ── HEADER ── */}
+            <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,.07)',background:'rgba(7,9,14,.98)',backdropFilter:'blur(20px)',flexShrink:0}}>
+              <button onClick={()=>setShowOrdersModal(false)}
+                style={{display:'flex',alignItems:'center',gap:4,background:'rgba(255,255,255,.07)',border:'1px solid rgba(255,255,255,.1)',color:'#94a3b8',borderRadius:8,padding:'7px 11px',fontSize:12,fontWeight:700,cursor:'pointer',flexShrink:0}}>
+                ← Înapoi
+              </button>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:800,color:'#f1f5f9',letterSpacing:-.3}}>📦 Raport comenzi</div>
+                <div style={{fontSize:10,color:'#475569',marginTop:1}}>{totalOrders} livrate · {getRange(preset,customFrom,customTo).from} — {getRange(preset,customFrom,customTo).to}</div>
               </div>
-              {/* View toggle */}
-              <div style={{display:'flex',gap:4,background:'rgba(255,255,255,.05)',borderRadius:8,padding:3}}>
-                {[['sku','📊 SKU'],['orders','📋 Comenzi']].map(([v,l])=>(
-                  <button key={v} onClick={()=>setModalView(v)} style={{padding:'5px 10px',borderRadius:6,fontSize:11,fontWeight:700,cursor:'pointer',border:'none',background:modalView===v?'rgba(249,115,22,.2)':'transparent',color:modalView===v?'#f97316':'#64748b',transition:'all .15s'}}>{l}</button>
+              <div style={{display:'flex',background:'rgba(255,255,255,.06)',borderRadius:8,padding:3,gap:2,flexShrink:0}}>
+                {[['sku','SKU'],['orders','Comenzi']].map(([v,l])=>(
+                  <button key={v} onClick={()=>{setModalView(v);setModalSkuFilter('');}}
+                    style={{padding:'5px 10px',borderRadius:6,fontSize:11,fontWeight:700,cursor:'pointer',border:'none',
+                      background:modalView===v?'#f97316':'transparent',
+                      color:modalView===v?'white':'#64748b',transition:'all .15s'}}>
+                    {l}
+                  </button>
                 ))}
               </div>
             </div>
 
-            {/* SKU filter pills */}
-            <div style={{display:'flex',gap:5,padding:'8px 16px',overflowX:'auto',borderBottom:'1px solid rgba(255,255,255,.05)',flexShrink:0,scrollbarWidth:'none'}}>
-              <button onClick={()=>setModalSkuFilter('')} style={{padding:'4px 12px',borderRadius:20,fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',border:'1px solid',borderColor:!modalSkuFilter?'#f97316':'#1e2a35',background:!modalSkuFilter?'rgba(249,115,22,.15)':'#0d1520',color:!modalSkuFilter?'#f97316':'#64748b'}}>
+            {/* ── SKU PILLS ── */}
+            <div style={{display:'flex',gap:5,padding:'8px 14px',overflowX:'auto',borderBottom:'1px solid rgba(255,255,255,.05)',flexShrink:0,WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
+              <button onClick={()=>setModalSkuFilter('')}
+                style={{padding:'5px 12px',borderRadius:20,fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',border:'1px solid',flexShrink:0,
+                  borderColor:!modalSkuFilter?'#f97316':'rgba(255,255,255,.08)',
+                  background:!modalSkuFilter?'rgba(249,115,22,.15)':'rgba(255,255,255,.03)',
+                  color:!modalSkuFilter?'#f97316':'#64748b'}}>
                 Toate ({totalOrders})
               </button>
               {skuList.map(s=>(
                 <button key={s.key} onClick={()=>setModalSkuFilter(modalSkuFilter===s.key?'':s.key)}
-                  style={{padding:'4px 12px',borderRadius:20,fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',border:'1px solid',
-                    borderColor:modalSkuFilter===s.key?'#f97316':'#1e2a35',
-                    background:modalSkuFilter===s.key?'rgba(249,115,22,.15)':'#0d1520',
+                  style={{padding:'5px 12px',borderRadius:20,fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',border:'1px solid',flexShrink:0,
+                    borderColor:modalSkuFilter===s.key?'#f97316':'rgba(255,255,255,.08)',
+                    background:modalSkuFilter===s.key?'rgba(249,115,22,.15)':'rgba(255,255,255,.03)',
                     color:modalSkuFilter===s.key?'#f97316':'#64748b'}}>
-                  {s.sku||s.key} <span style={{opacity:.5}}>({s.orders.length})</span>
+                  {s.sku||s.key} <span style={{opacity:.55}}>({s.orders.length})</span>
                 </button>
               ))}
             </div>
 
-            {/* Content */}
-            <div style={{flex:1,overflowY:'auto',padding:'12px 16px 80px'}}>
+            {/* ── CONTENT ── */}
+            <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'10px 14px 100px'}}>
 
-              {/* ── VIEW: SKU ── */}
+              {/* ════ VIEW SKU ════ */}
               {modalView === 'sku' && (
                 <>
-                  {/* Summary bar */}
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,marginBottom:12}}>
+                  {/* Sumar 2×2 */}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:10}}>
                     {[
-                      {l:'Vânzări totale',   v:fmt(totalRevM)+' RON',  c:'#f97316'},
-                      {l:'Cost produse',     v:fmt(totalCogM)+' RON',  c:'#f43f5e'},
-                      {l:'Cheltuieli',       v:fmt(totalChM)+' RON',   c:'#f59e0b'},
-                      {l:'Profit net',       v:(totalProfM>=0?'+':'')+fmt(totalProfM)+' RON', c:totalProfM>=0?'#10b981':'#f43f5e'},
-                    ].map(({l,v,c})=>(
-                      <div key={l} style={{background:'#0d1520',border:`1px solid ${c}18`,borderRadius:10,padding:'10px 12px',textAlign:'center'}}>
-                        <div style={{fontSize:13,fontWeight:800,color:c,fontFamily:'monospace',letterSpacing:-.3}}>{v}</div>
-                        <div style={{fontSize:9,color:'#475569',marginTop:2,textTransform:'uppercase',letterSpacing:.5}}>{l}</div>
+                      {l:'Vânzări',   v:fmt(totalRevM),   c:'#f97316', sub:'RON total'},
+                      {l:'Profit net',v:(totalProfM>=0?'+':'')+fmt(totalProfM), c:totalProfM>=0?'#10b981':'#f43f5e', sub:'RON net'},
+                      {l:'Cost produse',v:fmt(totalCogM), c:'#f43f5e', sub:'RON achiziție'},
+                      {l:'Cheltuieli', v:fmt(totalChM),   c:'#f59e0b', sub:'RON distrib.'},
+                    ].map(({l,v,c,sub})=>(
+                      <div key={l} style={{background:'#0d1520',border:`1px solid ${c}20`,borderRadius:10,padding:'10px 12px'}}>
+                        <div style={{fontSize:11,color:'#475569',marginBottom:3,fontWeight:600}}>{l}</div>
+                        <div style={{fontSize:18,fontWeight:800,color:c,fontFamily:'monospace',letterSpacing:-.5,lineHeight:1}}>{v}</div>
+                        <div style={{fontSize:9,color:'#334155',marginTop:3}}>{sub}</div>
                       </div>
                     ))}
                   </div>
 
                   {noCostSkus > 0 && (
-                    <div style={{background:'rgba(245,158,11,.07)',border:'1px solid rgba(245,158,11,.2)',borderRadius:8,padding:'8px 12px',marginBottom:10,fontSize:11,color:'#f59e0b',display:'flex',alignItems:'center',gap:8}}>
-                      ⚠️ <strong>{noCostSkus} SKU-uri</strong> fără cost de achiziție — profitul lor nu e calculat corect. Apasă ✏️ pentru a adăuga costul.
+                    <div style={{background:'rgba(245,158,11,.07)',border:'1px solid rgba(245,158,11,.2)',borderRadius:8,padding:'8px 12px',marginBottom:8,fontSize:11,color:'#f59e0b',display:'flex',alignItems:'center',gap:6}}>
+                      ⚠️ <span><strong>{noCostSkus} SKU</strong> fără cost · tap ✏️ pentru a adăuga</span>
                     </div>
                   )}
 
-                  {/* SKU table */}
-                  <div style={{background:'#0a0f1a',border:'1px solid #1a2535',borderRadius:12,overflow:'hidden'}}>
-                    {/* Table header */}
-                    <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 80px',gap:0,padding:'8px 14px',borderBottom:'1px solid #1a2535',background:'rgba(255,255,255,.02)'}}>
-                      {['Produs / SKU','Cmd','Vânzări','Cost ach.','Cheltuieli','Profit','Profit/cmd'].map(h=>(
-                        <div key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700,textAlign:h==='Produs / SKU'?'left':'right'}}>{h}</div>
-                      ))}
-                    </div>
+                  {/* SKU Cards — mobile optimized */}
+                  {(modalSkuFilter ? skuList.filter(s=>s.key===modalSkuFilter) : skuList).map((p, idx) => {
+                    const profitClr = p.profit >= 0 ? '#10b981' : '#f43f5e';
+                    const margin = p.revenue > 0 ? (p.profit/p.revenue*100) : 0;
+                    const isEditingM = modalTempCost[p.key] !== undefined;
+                    const currentCost = modalEditCost[(p.key||'').toUpperCase()] ?? p.costUnit;
+                    const profitPerCmd = p.orders.length > 0 ? p.profit / p.orders.length : 0;
 
-                    {(modalSkuFilter ? filtered : skuList).map((p, idx) => {
-                      const profitClr = p.profit >= 0 ? '#10b981' : '#f43f5e';
-                      const margin = p.revenue > 0 ? (p.profit/p.revenue*100) : 0;
-                      const isEditingM = modalTempCost[p.key] !== undefined;
-                      const currentCost = modalEditCost[p.key.toUpperCase()] ?? p.costUnit;
-
-                      return (
-                        <div key={p.key} style={{borderBottom:'1px solid #111927'}}>
-                          {/* Main row */}
-                          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 80px',gap:0,padding:'11px 14px',alignItems:'center',transition:'background .1s'}}
-                            onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.02)'}
-                            onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                            {/* Produs */}
-                            <div>
-                              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                                <span style={{fontFamily:'monospace',fontSize:10,background:'rgba(249,115,22,.1)',color:'#f97316',padding:'2px 6px',borderRadius:4,flexShrink:0}}>{p.sku||p.key}</span>
-                                {!p.hasCost && <span style={{fontSize:8,background:'rgba(245,158,11,.15)',color:'#f59e0b',padding:'1px 5px',borderRadius:3,fontWeight:800}}>FĂRĂ COST</span>}
-                              </div>
-                              <div style={{fontSize:11,color:'#94a3b8',marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</div>
+                    return (
+                      <div key={p.key||idx} style={{background:'#0a0f1a',border:`1px solid ${!p.hasCost?'rgba(245,158,11,.25)':'#1a2535'}`,borderRadius:12,marginBottom:8,overflow:'hidden'}}>
+                        {/* Card header */}
+                        <div style={{display:'flex',alignItems:'center',gap:8,padding:'11px 13px',borderBottom:'1px solid rgba(255,255,255,.04)'}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
+                              <span style={{fontFamily:'monospace',fontSize:10,background:'rgba(249,115,22,.12)',color:'#f97316',padding:'2px 7px',borderRadius:4,fontWeight:800,flexShrink:0}}>{p.sku||p.key}</span>
+                              {!p.hasCost && <span style={{fontSize:8,background:'rgba(245,158,11,.15)',color:'#f59e0b',padding:'1px 5px',borderRadius:3,fontWeight:800,flexShrink:0}}>FĂRĂ COST</span>}
                             </div>
-                            {/* Cmd */}
-                            <div style={{textAlign:'right',fontSize:12,fontWeight:700,color:'#e2e8f0'}}>{p.orders.length}</div>
-                            {/* Vânzări */}
-                            <div style={{textAlign:'right',fontSize:12,fontWeight:600,color:'#f97316',fontFamily:'monospace'}}>{fmt(p.revenue)}</div>
-                            {/* Cost ach */}
-                            <div style={{textAlign:'right'}}>
-                              {isEditingM ? (
-                                <div style={{display:'flex',alignItems:'center',gap:4,justifyContent:'flex-end'}}>
-                                  <input type="number" step="0.01" autoFocus
-                                    value={modalTempCost[p.key]??currentCost}
-                                    onChange={e=>setModalTempCost(prev=>({...prev,[p.key]:e.target.value}))}
-                                    onKeyDown={e=>{
-                                      if(e.key==='Enter'){saveModalCost(p.sku||p.key,modalTempCost[p.key],p.name);setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}
-                                      if(e.key==='Escape'){setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}
-                                    }}
-                                    style={{width:60,background:'rgba(16,185,129,.12)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:5,padding:'3px 6px',fontSize:11,fontFamily:'monospace',outline:'none',textAlign:'right'}}/>
-                                  <button onClick={()=>{saveModalCost(p.sku||p.key,modalTempCost[p.key],p.name);setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}} style={{background:'#10b981',border:'none',color:'white',borderRadius:4,padding:'3px 7px',fontSize:10,fontWeight:800,cursor:'pointer'}}>✓</button>
-                                  <button onClick={()=>setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;})} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:4,padding:'3px 5px',fontSize:10,cursor:'pointer'}}>✕</button>
-                                </div>
-                              ) : (
-                                <div style={{display:'flex',alignItems:'center',gap:4,justifyContent:'flex-end',cursor:'pointer'}} onClick={()=>setModalTempCost(prev=>({...prev,[p.key]:currentCost}))}>
-                                  <span style={{fontSize:12,fontFamily:'monospace',color:currentCost>0?'#f43f5e':'#f59e0b',fontWeight:600}}>{currentCost>0?fmt(currentCost)+' RON/buc':'—'}</span>
-                                  <span style={{fontSize:10,color:'#334155',flexShrink:0}}>✏️</span>
-                                </div>
-                              )}
-                            </div>
-                            {/* Cheltuieli */}
-                            <div style={{textAlign:'right',fontSize:12,color:'#f59e0b',fontFamily:'monospace'}}>{fmt(p.chelt)}</div>
-                            {/* Profit */}
-                            <div style={{textAlign:'right'}}>
-                              <div style={{fontSize:13,fontWeight:800,color:profitClr,fontFamily:'monospace'}}>{p.profit>=0?'+':''}{fmt(p.profit)}</div>
-                              <div style={{fontSize:9,color:'#334155',marginTop:1}}>{margin.toFixed(1)}% marjă</div>
-                            </div>
-                            {/* Profit/cmd */}
-                            <div style={{textAlign:'right'}}>
-                              <div style={{fontSize:12,fontWeight:700,color:profitClr,fontFamily:'monospace'}}>{p.orders.length>0?(p.profit>=0?'+':'')+fmt(p.profit/p.orders.length):'—'}</div>
-                              <div style={{fontSize:9,color:'#334155',marginTop:1}}>avg</div>
-                            </div>
+                            <div style={{fontSize:11,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</div>
                           </div>
-
-                          {/* Cost info bar */}
-                          {currentCost > 0 && (
-                            <div style={{display:'flex',gap:12,padding:'4px 14px 8px',fontSize:10,color:'#334155'}}>
-                              <span>{currentCost} RON/buc × {p.qty} buc = <strong style={{color:'#475569'}}>{fmt(currentCost*p.qty)} RON</strong> cost total</span>
-                              <span style={{marginLeft:'auto',color:'#1e3a5f'}}>Profit mediu/comandă: <strong style={{color:profitClr}}>{p.orders.length>0?(p.profit>=0?'+':'')+fmt(p.profit/p.orders.length)+' RON':'-'}</strong></span>
-                            </div>
-                          )}
+                          <div style={{textAlign:'right',flexShrink:0}}>
+                            <div style={{fontSize:16,fontWeight:900,color:profitClr,fontFamily:'monospace',letterSpacing:-.5}}>{p.profit>=0?'+':''}{fmt(p.profit)}</div>
+                            <div style={{fontSize:9,color:'#334155',marginTop:1}}>{margin.toFixed(1)}% marjă</div>
+                          </div>
                         </div>
-                      );
-                    })}
 
-                    {/* TOTAL row */}
-                    <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 80px',gap:0,padding:'12px 14px',background:'rgba(255,255,255,.03)',borderTop:'2px solid #1e2a35'}}>
-                      <div style={{fontSize:11,fontWeight:800,color:'#e2e8f0'}}>TOTAL ({skuList.length} SKU-uri)</div>
-                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#e2e8f0'}}>{totalOrders}</div>
-                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(totalRevM)}</div>
-                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(totalCogM)}</div>
-                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f59e0b',fontFamily:'monospace'}}>{fmt(totalChM)}</div>
-                      <div style={{textAlign:'right'}}>
-                        <div style={{fontSize:13,fontWeight:900,color:totalProfM>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{totalProfM>=0?'+':''}{fmt(totalProfM)}</div>
-                        <div style={{fontSize:9,color:'#334155'}}>{totalRevM>0?(totalProfM/totalRevM*100).toFixed(1):0}% marjă</div>
+                        {/* Stats row */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',borderBottom:'1px solid rgba(255,255,255,.04)'}}>
+                          {[
+                            {l:'Vânzări',    v:fmt(p.revenue),        c:'#f97316'},
+                            {l:'Cost ach.',  v:currentCost>0?fmt(p.cogs):'—', c:'#f43f5e'},
+                            {l:'Chelt.',     v:fmt(p.chelt),          c:'#f59e0b'},
+                            {l:'Profit/cmd', v:profitPerCmd>=0?'+'+fmt(profitPerCmd):fmt(profitPerCmd), c:profitClr},
+                          ].map(({l,v,c})=>(
+                            <div key={l} style={{padding:'8px 10px',textAlign:'center',borderRight:'1px solid rgba(255,255,255,.04)'}}>
+                              <div style={{fontSize:11,fontWeight:700,color:c,fontFamily:'monospace'}}>{v}</div>
+                              <div style={{fontSize:8,color:'#334155',marginTop:1,textTransform:'uppercase',letterSpacing:.4}}>{l}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Cost edit row */}
+                        <div style={{padding:'8px 13px',display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
+                          <div style={{fontSize:10,color:'#475569'}}>
+                            {p.orders.length} comenzi · {p.qty} buc
+                          </div>
+                          <div style={{display:'flex',alignItems:'center',gap:6}}>
+                            {isEditingM ? (
+                              <>
+                                <input type="number" step="0.01" autoFocus
+                                  value={modalTempCost[p.key]??currentCost}
+                                  onChange={e=>setModalTempCost(prev=>({...prev,[p.key]:e.target.value}))}
+                                  onKeyDown={e=>{
+                                    if(e.key==='Enter'){saveModalCost(p.sku||p.key,modalTempCost[p.key],p.name);setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}
+                                    if(e.key==='Escape'){setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}
+                                  }}
+                                  style={{width:72,background:'rgba(16,185,129,.12)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:6,padding:'4px 7px',fontSize:12,fontFamily:'monospace',fontWeight:700,outline:'none',textAlign:'right'}}/>
+                                <span style={{fontSize:10,color:'#475569'}}>RON/buc</span>
+                                <button onClick={()=>{saveModalCost(p.sku||p.key,modalTempCost[p.key],p.name);setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;});}}
+                                  style={{background:'#10b981',border:'none',color:'white',borderRadius:6,padding:'5px 10px',fontSize:11,fontWeight:800,cursor:'pointer'}}>✓</button>
+                                <button onClick={()=>setModalTempCost(prev=>{const n={...prev};delete n[p.key];return n;})}
+                                  style={{background:'transparent',border:'1px solid #243040',color:'#475569',borderRadius:6,padding:'5px 8px',fontSize:11,cursor:'pointer'}}>✕</button>
+                              </>
+                            ) : (
+                              <button onClick={()=>setModalTempCost(prev=>({...prev,[p.key]:currentCost}))}
+                                style={{display:'flex',alignItems:'center',gap:5,background:currentCost>0?'rgba(255,255,255,.05)':'rgba(245,158,11,.1)',
+                                  border:`1px solid ${currentCost>0?'rgba(255,255,255,.08)':'rgba(245,158,11,.3)'}`,
+                                  color:currentCost>0?'#64748b':'#f59e0b',borderRadius:7,padding:'5px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                                ✏️ {currentCost>0?fmt(currentCost)+' RON/buc':'Adaugă cost'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:totalProfM>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{totalOrders>0?(totalProfM>=0?'+':'')+fmt(totalProfM/totalOrders):'—'}</div>
+                    );
+                  })}
+
+                  {/* TOTAL SKU */}
+                  <div style={{background:'rgba(16,185,129,.05)',border:'1px solid rgba(16,185,129,.15)',borderRadius:12,padding:'12px 14px',marginTop:4}}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                      <div>
+                        <div style={{fontSize:10,color:'#475569',marginBottom:2}}>Total vânzări</div>
+                        <div style={{fontSize:16,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(totalRevM)} RON</div>
+                      </div>
+                      <div style={{textAlign:'right'}}>
+                        <div style={{fontSize:10,color:'#475569',marginBottom:2}}>Profit net total</div>
+                        <div style={{fontSize:16,fontWeight:800,color:totalProfM>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{totalProfM>=0?'+':''}{fmt(totalProfM)} RON</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10,color:'#475569',marginBottom:2}}>Cost produse</div>
+                        <div style={{fontSize:14,fontWeight:700,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(totalCogM)} RON</div>
+                      </div>
+                      <div style={{textAlign:'right'}}>
+                        <div style={{fontSize:10,color:'#475569',marginBottom:2}}>Marjă medie</div>
+                        <div style={{fontSize:14,fontWeight:700,color:totalProfM>=0?'#10b981':'#f43f5e'}}>{totalRevM>0?(totalProfM/totalRevM*100).toFixed(1):0}%</div>
+                      </div>
                     </div>
                   </div>
                 </>
               )}
 
-              {/* ── VIEW: COMENZI ── */}
+              {/* ════ VIEW COMENZI ════ */}
               {modalView === 'orders' && (
                 <>
-                  <div style={{fontSize:11,color:'#475569',marginBottom:10}}>{ordersFiltered.length} comenzi{modalSkuFilter?` cu SKU ${modalSkuFilter}`:''}</div>
+                  <div style={{fontSize:11,color:'#475569',marginBottom:8,fontWeight:600}}>
+                    {ordersFiltered.length} comenzi{modalSkuFilter?` · SKU: ${modalSkuFilter}`:''}
+                  </div>
 
-                  {/* Table header */}
-                  <div style={{background:'#0a0f1a',border:'1px solid #1a2535',borderRadius:12,overflow:'hidden'}}>
-                    <div style={{display:'grid',gridTemplateColumns:'90px 1fr 80px 80px 80px 80px',gap:0,padding:'8px 14px',borderBottom:'1px solid #1a2535',background:'rgba(255,255,255,.02)'}}>
-                      {['Comandă','Produse','Vânzări','Cost ach.','Chelt.','Profit'].map(h=>(
-                        <div key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700,textAlign:h==='Produse'?'left':'right'}}>{h}</div>
-                      ))}
-                    </div>
+                  {ordersFiltered.map((order) => {
+                    const items = order.items||[];
+                    const qty_total = items.reduce((s,i)=>s+(i.qty||1),0)||1;
+                    const rev   = items.reduce((s,i)=>s+(i.price||0)*(i.qty||1),0);
+                    const cg    = items.reduce((s,i)=>s+resolveModalCost(i).cost*(i.qty||1),0);
+                    const ch    = chelt_po;
+                    const prf   = rev - cg - ch;
+                    const prfClr = prf>=0?'#10b981':'#f43f5e';
+                    const date  = (order.createdAt||'').slice(0,10).split('-').reverse().join('.');
+                    const courierBadge = order.courier==='sameday'?'⚡SD':order.courier==='gls'?'🚚GLS':'📦';
 
-                    {ordersFiltered.map((order, oi) => {
-                      const items = order.items||[];
-                      const qty_total = items.reduce((s,i)=>s+(i.qty||1),0)||1;
-                      const rev   = items.reduce((s,i)=>s+(i.price||0)*(i.qty||1),0);
-                      const cg    = items.reduce((s,i)=>s+resolveModalCost(i).cost*(i.qty||1),0);
-                      const ch    = chelt_po;
-                      const prf   = rev - cg - ch;
-                      const prfClr= prf>=0?'#10b981':'#f43f5e';
-                      const date  = (order.createdAt||'').slice(0,10);
-
-                      return (
-                        <div key={order.id} style={{borderBottom:'1px solid #0d1520'}}>
-                          <div style={{display:'grid',gridTemplateColumns:'90px 1fr 80px 80px 80px 80px',gap:0,padding:'10px 14px',alignItems:'start'}}>
-                            {/* Nr comandă */}
-                            <div>
-                              <div style={{fontSize:11,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{order.name}</div>
-                              <div style={{fontSize:9,color:'#334155',marginTop:2}}>{date}</div>
-                              <div style={{fontSize:9,color:'#1e3a5f',marginTop:1}}>{order.courier==='sameday'?'⚡ SD':order.courier==='gls'?'🚚 GLS':'📦'}</div>
-                            </div>
-                            {/* Produse */}
-                            <div style={{paddingLeft:8}}>
-                              {items.map((item,ii) => {
-                                const g = resolveGroup(item);
-                                const {cost:ic, src} = resolveModalCost(item);
-                                const srcClr={standard:'#10b981',shopify:'#3b82f6',manual:'#f59e0b',none:'#f43f5e'};
-                                const isEditingItem = modalTempCost[g.key] !== undefined;
-                                return (
-                                  <div key={ii} style={{display:'flex',alignItems:'center',gap:5,marginBottom:ii<items.length-1?4:0,flexWrap:'nowrap'}}>
-                                    <span style={{fontFamily:'monospace',fontSize:9,background:'rgba(249,115,22,.08)',color:'#f97316',padding:'1px 4px',borderRadius:3,flexShrink:0}}>{g.sku||g.key.slice(0,8)}</span>
-                                    <span style={{fontSize:10,color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}} title={item.name}>{item.name}</span>
-                                    {item.qty>1&&<span style={{fontSize:9,color:'#334155',flexShrink:0}}>×{item.qty}</span>}
-                                    {isEditingItem ? (
-                                      <div style={{display:'flex',alignItems:'center',gap:3,flexShrink:0}}>
-                                        <input type="number" step="0.01" autoFocus
-                                          value={modalTempCost[g.key]??ic}
-                                          onChange={e=>setModalTempCost(prev=>({...prev,[g.key]:e.target.value}))}
-                                          onKeyDown={e=>{
-                                            if(e.key==='Enter'){saveModalCost(g.sku||g.key,modalTempCost[g.key],g.name);setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}
-                                            if(e.key==='Escape'){setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}
-                                          }}
-                                          style={{width:55,background:'rgba(16,185,129,.12)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:4,padding:'2px 4px',fontSize:10,fontFamily:'monospace',outline:'none',textAlign:'right'}}/>
-                                        <button onClick={()=>{saveModalCost(g.sku||g.key,modalTempCost[g.key],g.name);setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}} style={{background:'#10b981',border:'none',color:'white',borderRadius:4,padding:'2px 5px',fontSize:9,fontWeight:800,cursor:'pointer'}}>✓</button>
-                                        <button onClick={()=>setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;})} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:4,padding:'2px 4px',fontSize:9,cursor:'pointer'}}>✕</button>
-                                      </div>
-                                    ) : (
-                                      <span
-                                        onClick={()=>setModalTempCost(prev=>({...prev,[g.key]:ic||''}))}
-                                        title={ic>0?`Cost: ${fmt(ic)} RON — click pentru editare`:'Fără cost — click pentru a adăuga'}
-                                        style={{fontSize:9,color:ic>0?srcClr[src]:'white',fontWeight:800,flexShrink:0,cursor:'pointer',
-                                          background:ic>0?'rgba(16,185,129,.1)':'#ef4444',
-                                          border:`1px solid ${ic>0?'rgba(16,185,129,.3)':'#dc2626'}`,
-                                          padding:'1px 5px',borderRadius:3,userSelect:'none'}}>
-                                        {ic>0?fmt(ic)+'R':'✏️ ?'}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                            {/* Vânzări */}
-                            <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:'#f97316',fontFamily:'monospace'}}>{fmt(rev)}</div>
-                            {/* Cost */}
-                            <div style={{textAlign:'right',fontSize:11,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(cg)}</div>
-                            {/* Chelt */}
-                            <div style={{textAlign:'right',fontSize:11,color:'#f59e0b',fontFamily:'monospace'}}>{fmt(ch)}</div>
-                            {/* Profit */}
-                            <div style={{textAlign:'right'}}>
-                              <div style={{fontSize:12,fontWeight:800,color:prfClr,fontFamily:'monospace'}}>{prf>=0?'+':''}{fmt(prf)}</div>
-                              <div style={{fontSize:8,color:'#334155',marginTop:1}}>{rev>0?(prf/rev*100).toFixed(0):'0'}%</div>
+                    return (
+                      <div key={order.id} style={{background:'#0a0f1a',border:`1px solid ${prf>=0?'#1a2535':'rgba(244,63,94,.15)'}`,borderRadius:12,marginBottom:6,overflow:'hidden'}}>
+                        {/* Order header */}
+                        <div style={{display:'flex',alignItems:'center',padding:'9px 12px',borderBottom:'1px solid rgba(255,255,255,.04)'}}>
+                          <div style={{flex:1}}>
+                            <div style={{display:'flex',alignItems:'center',gap:6}}>
+                              <span style={{fontSize:12,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{order.name}</span>
+                              <span style={{fontSize:9,color:'#334155',background:'rgba(255,255,255,.04)',padding:'1px 5px',borderRadius:3}}>{courierBadge}</span>
+                              <span style={{fontSize:9,color:'#334155'}}>{date}</span>
                             </div>
                           </div>
+                          <div style={{textAlign:'right'}}>
+                            <div style={{fontSize:13,fontWeight:800,color:prfClr,fontFamily:'monospace'}}>{prf>=0?'+':''}{fmt(prf)}</div>
+                            <div style={{fontSize:9,color:'#334155'}}>{fmt(rev)} vânzări</div>
+                          </div>
                         </div>
-                      );
-                    })}
 
-                    {/* Total */}
-                    {(() => {
-                      const totR = ordersFiltered.reduce((s,o)=>{const items=o.items||[];return s+items.reduce((ss,i)=>ss+(i.price||0)*(i.qty||1),0);},0);
-                      const totC = ordersFiltered.reduce((s,o)=>{const items=o.items||[];return s+items.reduce((ss,i)=>ss+resolveModalCost(i).cost*(i.qty||1),0);},0);
-                      const totCh = ordersFiltered.length * chelt_po;
-                      const totP = totR - totC - totCh;
-                      return (
-                        <div style={{display:'grid',gridTemplateColumns:'90px 1fr 80px 80px 80px 80px',gap:0,padding:'10px 14px',background:'rgba(255,255,255,.03)',borderTop:'2px solid #1e2a35'}}>
-                          <div style={{fontSize:11,fontWeight:800,color:'#e2e8f0'}}>TOTAL</div>
-                          <div style={{paddingLeft:8,fontSize:10,color:'#475569'}}>{ordersFiltered.length} comenzi</div>
-                          <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(totR)}</div>
-                          <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(totC)}</div>
-                          <div style={{textAlign:'right',fontSize:12,fontWeight:800,color:'#f59e0b',fontFamily:'monospace'}}>{fmt(totCh)}</div>
-                          <div style={{textAlign:'right',fontSize:13,fontWeight:900,color:totP>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{totP>=0?'+':''}{fmt(totP)}</div>
+                        {/* Products */}
+                        <div style={{padding:'6px 12px 4px'}}>
+                          {items.map((item,ii) => {
+                            const g = resolveGroup(item);
+                            const {cost:ic, src} = resolveModalCost(item);
+                            const isEditingItem = modalTempCost[g.key] !== undefined;
+                            const qty = item.qty||1;
+                            return (
+                              <div key={ii} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 0',borderBottom:ii<items.length-1?'1px solid rgba(255,255,255,.03)':'none'}}>
+                                <span style={{fontFamily:'monospace',fontSize:9,background:'rgba(249,115,22,.08)',color:'#f97316',padding:'1px 4px',borderRadius:3,flexShrink:0}}>{g.sku||g.key.slice(0,8)}</span>
+                                <span style={{fontSize:10,color:'#64748b',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={item.name}>{item.name}</span>
+                                {qty>1&&<span style={{fontSize:9,color:'#334155',flexShrink:0}}>×{qty}</span>}
+                                {isEditingItem ? (
+                                  <div style={{display:'flex',alignItems:'center',gap:3,flexShrink:0}}>
+                                    <input type="number" step="0.01" autoFocus
+                                      value={modalTempCost[g.key]??ic}
+                                      onChange={e=>setModalTempCost(prev=>({...prev,[g.key]:e.target.value}))}
+                                      onKeyDown={e=>{
+                                        if(e.key==='Enter'){saveModalCost(g.sku||g.key,modalTempCost[g.key],g.name);setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}
+                                        if(e.key==='Escape'){setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}
+                                      }}
+                                      style={{width:52,background:'rgba(16,185,129,.12)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:4,padding:'2px 4px',fontSize:10,fontFamily:'monospace',outline:'none',textAlign:'right'}}/>
+                                    <button onClick={()=>{saveModalCost(g.sku||g.key,modalTempCost[g.key],g.name);setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}} style={{background:'#10b981',border:'none',color:'white',borderRadius:4,padding:'2px 6px',fontSize:9,fontWeight:800,cursor:'pointer'}}>✓</button>
+                                    <button onClick={()=>setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;})} style={{background:'transparent',border:'1px solid #243040',color:'#475569',borderRadius:4,padding:'2px 4px',fontSize:9,cursor:'pointer'}}>✕</button>
+                                  </div>
+                                ) : (
+                                  <span onClick={()=>setModalTempCost(prev=>({...prev,[g.key]:ic||''}))}
+                                    style={{fontSize:9,fontWeight:800,flexShrink:0,cursor:'pointer',padding:'2px 6px',borderRadius:3,userSelect:'none',
+                                      color:ic>0?'#10b981':'white',
+                                      background:ic>0?'rgba(16,185,129,.1)':'#ef4444',
+                                      border:`1px solid ${ic>0?'rgba(16,185,129,.25)':'#dc2626'}`}}>
+                                    {ic>0?fmt(ic):'✏️?'}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })()}
-                  </div>
+
+                        {/* Footer P&L */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',background:'rgba(0,0,0,.2)',borderTop:'1px solid rgba(255,255,255,.04)',padding:'6px 12px',gap:4}}>
+                          {[
+                            {l:'Vânzări',  v:fmt(rev),       c:'#f97316'},
+                            {l:'Cost',     v:fmt(cg),        c:'#f43f5e'},
+                            {l:'Chelt.',   v:fmt(ch),        c:'#f59e0b'},
+                            {l:`${rev>0?(prf/rev*100).toFixed(0):0}% profit`, v:(prf>=0?'+':'')+fmt(prf), c:prfClr, bold:true},
+                          ].map(({l,v,c,bold})=>(
+                            <div key={l} style={{textAlign:'center'}}>
+                              <div style={{fontSize:bold?11:10,fontWeight:bold?800:600,color:c,fontFamily:'monospace'}}>{v}</div>
+                              <div style={{fontSize:8,color:'#334155',marginTop:1}}>{l}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Total comenzi */}
+                  {(() => {
+                    const totR = ordersFiltered.reduce((s,o)=>{return s+(o.items||[]).reduce((ss,i)=>ss+(i.price||0)*(i.qty||1),0);},0);
+                    const totC = ordersFiltered.reduce((s,o)=>{return s+(o.items||[]).reduce((ss,i)=>ss+resolveModalCost(i).cost*(i.qty||1),0);},0);
+                    const totCh = ordersFiltered.length * chelt_po;
+                    const totP = totR - totC - totCh;
+                    return (
+                      <div style={{background:'rgba(16,185,129,.05)',border:'1px solid rgba(16,185,129,.15)',borderRadius:12,padding:'12px 14px',marginTop:4}}>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                          <div>
+                            <div style={{fontSize:10,color:'#475569',marginBottom:2}}>{ordersFiltered.length} comenzi · vânzări</div>
+                            <div style={{fontSize:16,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(totR)} RON</div>
+                          </div>
+                          <div style={{textAlign:'right'}}>
+                            <div style={{fontSize:10,color:'#475569',marginBottom:2}}>Profit net total</div>
+                            <div style={{fontSize:16,fontWeight:800,color:totP>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{totP>=0?'+':''}{fmt(totP)} RON</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>
