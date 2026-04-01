@@ -167,17 +167,41 @@ function getSdAwbMap() {
   try { const s = localStorage.getItem('sd_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
 }
 function getFinalStatus(o, glsAwbMap, sdAwbMap) {
+  // 1. AWB map override (GLS/SameDay cu tracking real)
   if (o.courier === 'gls') {
     const awb = (o.trackingNo || '').trim();
     if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
-    return o.ts;
   }
   if (o.courier === 'sameday') {
     const awb = (o.trackingNo || '').trim();
     if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
-    return o.ts !== 'pending' ? o.ts : null;
   }
-  return o.ts;
+
+  // 2. ts explicit setat (din dashboard tracking)
+  if (o.ts && o.ts !== 'pending') return o.ts;
+
+  // 3. Detectare din campurile Shopify
+  const fin  = (o.financial  || o.financial_status  || '').toLowerCase();
+  const ful  = (o.fulfillment|| o.fulfillment_status || '').toLowerCase();
+  const tags = (o.tags || '').toLowerCase();
+  const shipStatuses = (o.fulfillments || []).map(f =>
+    (f.shipment_status || f.tracking_status || '').toLowerCase()
+  );
+
+  // Retur / refuz
+  const RETUR_STATUSES = ['returned','failure','failed_attempt','return_in_progress','failed_delivery','cancelled'];
+  const isRetur = shipStatuses.some(s => RETUR_STATUSES.includes(s))
+    || fin === 'refunded' || fin === 'partially_refunded'
+    || tags.includes('retur') || tags.includes('refuz')
+    || ful === 'restocked';
+  if (isRetur) return 'retur';
+
+  // Livrat
+  const isLivrat = ful === 'fulfilled'
+    || shipStatuses.some(s => ['delivered','out_for_delivery'].includes(s));
+  if (isLivrat) return 'livrat';
+
+  return o.ts || 'pending';
 }
 
 function getLivrateInPeriod(allOrders, preset, customFrom, customTo) {
@@ -202,8 +226,16 @@ function getReturInPeriod(allOrders, preset, customFrom, customTo) {
   return allOrders.filter(o => {
     const created = new Date(o.createdAt || o.created_at || '');
     if (created < fromD || created > toD) return false;
+    // getFinalStatus cu logica extinsa detecteaza retur din orice camp
     return getFinalStatus(o, glsMap, sdMap) === 'retur';
   });
+}
+
+// Aplica ts corect la toate comenzile dupa ce sunt incarcate
+function recomputeStatuses(orders) {
+  const glsMap = getGlsAwbMap();
+  const sdMap  = getSdAwbMap();
+  return orders.map(o => ({ ...o, ts: getFinalStatus(o, glsMap, sdMap) }));
 }
 
 const TVA_RATE = 0.21;
@@ -498,11 +530,14 @@ export default function ProfitPage() {
     if (sord) {
       try {
         const p = JSON.parse(sord);
-        const withOv = applyTrackingOverrides(p);
+        const withOv = recomputeStatuses(applyTrackingOverrides(p));
         const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
+        const retur   = getReturInPeriod(withOv, preset, customFrom, customTo);
         setAllShopifyOrders(withOv);
         if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
-      } catch {}
+        // Debug: log ce s-a gasit
+        console.log('[ProfitPage] Livrate:', livrate.length, 'Retur:', retur.length, 'Total:', withOv.length);
+      } catch(e) { console.error('[ProfitPage] Load error:', e); }
     }
     fetch(COSTS_JSON_URL)
       .then(r => r.ok ? r.json() : null)
@@ -526,9 +561,9 @@ export default function ProfitPage() {
     if (!sord) return;
     try {
       const p = JSON.parse(sord);
-      const withOv = applyTrackingOverrides(p);
+      const withOv = recomputeStatuses(applyTrackingOverrides(p));
       const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
-      if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
+      if (livrate.length > 0) { setShopifyOrders(livrate); setAllShopifyOrders(withOv); setShopifyDone(true); }
       else { setShopifyOrders([]); setShopifyDone(false); }
     } catch {}
   }, [preset, customFrom, customTo]);
@@ -550,17 +585,26 @@ export default function ProfitPage() {
         const courier = trackingCompany.includes('sameday') || trackingCompany.includes('same day') ? 'sameday'
                       : trackingCompany.includes('gls') || trackingCompany.includes('mygls') ? 'gls'
                       : trackingCompany ? 'other' : 'unknown';
-        return {
+        const fulfillmentsClean = (o.fulfillments || []).map(f => ({
+          tracking_company: f.tracking_company || '',
+          tracking_number:  f.tracking_number  || '',
+          shipment_status:  f.shipment_status  || '',
+          tracking_status:  f.tracking_status  || '',
+          status:           f.status           || '',
+        }));
+        const mapped = {
           id: o.id, name: o.name,
           total: parseFloat(o.total_price) || 0,
-          financial: o.financial_status,
-          fulfillment: o.fulfillment_status,
-          fulfillments: o.fulfillments || [],
-          courier,
+          financial: o.financial_status, financial_status: o.financial_status,
+          fulfillment: o.fulfillment_status, fulfillment_status: o.fulfillment_status,
+          fulfillments: fulfillmentsClean,
+          courier, trackingNo: fulfillmentData?.tracking_number || '',
           items: (o.line_items || []).map(i => ({ name: i.name, sku: i.sku||'', variantId: String(i.variant_id||''), qty: i.quantity||1, price: parseFloat(i.price)||0 })),
-          createdAt: o.created_at,
-          tags: o.tags||'',
+          createdAt: o.created_at, tags: o.tags||'',
         };
+        const glsM = getGlsAwbMap(); const sdM = getSdAwbMap();
+        mapped.ts = getFinalStatus(mapped, glsM, sdM);
+        return mapped;
       });
       const withOv = applyTrackingOverrides(processed);
       const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
@@ -1782,15 +1826,23 @@ export default function ProfitPage() {
                         Fără cost {noCostCount > 0 && <span style={{color:'#f59e0b',fontWeight:700}}>({noCostCount})</span>}
                       </label>
                     </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
+                    {/* Verificare: comenzile din Analiza = comenzile din Sumar */}
+                    {totalOrdersInAnalysis !== totalOrders && (
+                      <div style={{background:'rgba(244,63,94,.08)',border:'1px solid rgba(244,63,94,.2)',borderRadius:8,padding:'7px 12px',marginBottom:8,fontSize:11,color:'#f43f5e'}}>
+                        ⚠️ Analiză: {totalOrdersInAnalysis} comenzi unice vs {totalOrders} în Sumar — unele comenzi pot lipsi din cauza produselor fără SKU asociat
+                      </div>
+                    )}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6}}>
                       {[
-                        {label:'Profit total', val:fmt(totalProfitProd)+' RON', color:'#10b981'},
-                        {label:'Vânzări', val:fmt(totalRevProd)+' RON', color:'#f97316'},
-                        {label:'Buc vândute', val:totalQtyProd, color:'#3b82f6'},
-                      ].map(({label,val,color}) => (
+                        {label:'Comenzi unice', val:totalOrdersInAnalysis, color:'#f97316', sub:`din ${totalOrders} în sumar`},
+                        {label:'Profit total',   val:fmt(totalProfitProd)+' RON', color:'#10b981', sub:`${totalRevProd>0?(totalProfitProd/totalRevProd*100).toFixed(1):0}% marjă`},
+                        {label:'Vânzări',        val:fmt(totalRevProd)+' RON', color:'#f97316', sub:'din comenzile livrate'},
+                        {label:'Buc vândute',    val:totalQtyProd, color:'#3b82f6', sub:'total produse'},
+                      ].map(({label,val,color,sub}) => (
                         <div key={label} style={{background:`rgba(0,0,0,.3)`,borderRadius:8,padding:'8px 10px',textAlign:'center',border:`1px solid ${color}22`}}>
-                          <div style={{fontSize:16,fontWeight:800,color}}>{val}</div>
-                          <div style={{fontSize:10,color:'var(--c-text4)'}}>{label}</div>
+                          <div style={{fontSize:15,fontWeight:800,color}}>{val}</div>
+                          <div style={{fontSize:10,color:'var(--c-text4)',marginTop:1}}>{label}</div>
+                          <div style={{fontSize:9,color:'#334155',marginTop:1}}>{sub}</div>
                         </div>
                       ))}
                     </div>
