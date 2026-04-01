@@ -204,6 +204,8 @@ export default function Dashboard() {
   const [glsFiles, setGlsFiles]   = useState(() => { try { return JSON.parse(ls.get('gls_files') || '[]'); } catch { return []; } });
   const [courierFilter, setCourierFilter] = useState('toate');
   const [showTranzitPanel, setShowTranzitPanel] = useState(false);
+  const [showLivrateModal, setShowLivrateModal] = useState(false);
+  const [showReturModal, setShowReturModal]   = useState(false);
   const [liveTrackingData, setLiveTrackingData] = useState({}); // { orderId: {statusCode, desc, location, lastUpdate, loading} }
 
   const fetchLiveTracking = async (orders) => {
@@ -1056,18 +1058,23 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             <div className="stitle">Sumar {rangeLabel}</div>
             <div className="kgrid">
               {kpis.map((k,i) => (
-                <div key={i} className="kpi" style={{'--kc':k.color}}
+                <div key={i} className="kpi" style={{'--kc':k.color,cursor:(i===1||i===2||i===3)?'pointer':'default'}}
                   onClick={i===2?()=>{
                     setShowTranzitPanel(v=>{
                       if(!v) setTimeout(()=>fetchLiveTracking(tranzitOrders),100);
                       return !v;
                     });
-                  }:undefined}
-                  title={i===2?'Click pentru detalii tranzit':undefined}
-                  css={i===2?{cursor:'pointer'}:{}}>
+                  }:i===1?()=>setShowLivrateModal(true)
+                   :i===3?()=>setShowReturModal(true)
+                   :undefined}
+                  title={i===2?'Click pentru detalii tranzit':i===1?'Click pentru lista livrărilor':i===3?'Click pentru lista retururilor':undefined}>
                   <span className="ke">{k.e}</span>
                   <div className="kv">{k.v}</div>
-                  <div className="kl">{k.lbl}{i===2&&<span style={{fontSize:9,marginLeft:4,opacity:.6}}>▼</span>}</div>
+                  <div className="kl">
+                    {k.lbl}
+                    {i===2&&<span style={{fontSize:9,marginLeft:4,opacity:.6}}>▼</span>}
+                    {(i===1||i===3)&&<span style={{fontSize:8,marginLeft:4,opacity:.5}}>↗</span>}
+                  </div>
                   <div className="kbar"><div className="kfill" style={{width:k.p+'%'}}></div></div>
                   <div className="kp">{k.p}%</div>
                 </div>
@@ -1644,8 +1651,156 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
           </div>
         </div>
       )}
+
+      {/* ══ MODAL LIVRATE ══ */}
+      {showLivrateModal && (
+        <div style={{position:'fixed',inset:0,zIndex:998,display:'flex',flexDirection:'column',background:'#07090e'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',borderBottom:'1px solid rgba(255,255,255,.07)',background:'rgba(7,9,14,.98)',backdropFilter:'blur(20px)',flexShrink:0}}>
+            <button onClick={()=>setShowLivrateModal(false)}
+              style={{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.1)',color:'#94a3b8',borderRadius:8,padding:'6px 12px',fontSize:12,fontWeight:700,cursor:'pointer'}}>
+              ← Înapoi
+            </button>
+            <div style={{flex:1}}>
+              <div style={{fontSize:14,fontWeight:800,color:'#10b981'}}>✅ Comenzi livrate</div>
+              <div style={{fontSize:10,color:'#475569',marginTop:1}}>{livrateOrders.length} comenzi · {rangeLabel}</div>
+            </div>
+            <div style={{fontSize:12,fontWeight:700,color:'#10b981',fontFamily:'monospace'}}>{fmt(sI)} RON</div>
+          </div>
+          <div style={{flex:1,overflowY:'auto',padding:'0 0 60px'}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,padding:'12px 16px 8px'}}>
+              {[
+                {l:'Total livrate',v:livrateOrders.length,c:'#10b981'},
+                {l:'Valoare COD',v:fmt(sICOD)+' RON',c:'#f97316'},
+                {l:'Valoare card',v:fmt(sIPaid)+' RON',c:'#3b82f6'},
+              ].map(({l,v,c})=>(
+                <div key={l} style={{background:'#0d1520',border:`1px solid ${c}22`,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                  <div style={{fontSize:14,fontWeight:800,color:c}}>{v}</div>
+                  <div style={{fontSize:9,color:'#475569',marginTop:2,textTransform:'uppercase',letterSpacing:.5}}>{l}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{margin:'0 16px',background:'#0a0f1a',border:'1px solid #1a2535',borderRadius:12,overflow:'hidden'}}>
+              <div style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 70px',gap:0,padding:'7px 14px',borderBottom:'1px solid #1a2535',background:'rgba(255,255,255,.02)'}}>
+                {['Comandă','Client','Produse','Total','Livrat'].map(h=>(
+                  <div key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700}}>{h}</div>
+                ))}
+              </div>
+              {livrateOrders.length === 0 ? (
+                <div style={{padding:24,textAlign:'center',color:'#334155',fontSize:13}}>Nicio comandă livrată în această perioadă.</div>
+              ) : livrateOrders.map(o => (
+                <div key={o.id} style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 70px',gap:0,padding:'10px 14px',borderBottom:'1px solid #0d1520',alignItems:'center'}}
+                  onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.02)'}
+                  onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{o.name}</div>
+                    <div style={{fontSize:9,color:'#334155',marginTop:1}}>
+                      {o.courier==='gls'?'🚚 GLS':o.courier==='sameday'?'⚡ SD':'📦'}
+                      {isOnlinePayment(o)&&<span style={{marginLeft:4,color:'#3b82f6',fontWeight:700}}>CARD</span>}
+                    </div>
+                  </div>
+                  <div style={{fontSize:11,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>{o.client}</div>
+                  <div style={{fontSize:10,color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>{o.prodShort}</div>
+                  <div style={{fontSize:12,fontWeight:700,color:'#10b981',fontFamily:'monospace'}}>{fmt(o.total)}</div>
+                  <div style={{fontSize:10,color:'#475569'}}>{(o.fulfilledAt||'').slice(0,10).split('-').reverse().join('.')}</div>
+                </div>
+              ))}
+              <div style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 70px',gap:0,padding:'10px 14px',background:'rgba(16,185,129,.04)',borderTop:'2px solid rgba(16,185,129,.15)'}}>
+                <div style={{fontSize:11,fontWeight:800,color:'#e2e8f0',gridColumn:'1/4'}}>TOTAL {livrateOrders.length} comenzi</div>
+                <div style={{fontSize:13,fontWeight:900,color:'#10b981',fontFamily:'monospace'}}>{fmt(sI)}</div>
+                <div/>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ MODAL RETUR ══ */}
+      {showReturModal && (()=>{
+        const returOrders = [
+          ...orders.filter(o => getFinalStatus(o) === 'retur'),
+          ...retururiExtra,
+        ];
+        const seen = new Set();
+        const returDedup = returOrders.filter(o => { if(seen.has(o.id)) return false; seen.add(o.id); return true; });
+        const glsReturOrdersModal = glsDone ? glsOrders.filter(o => {
+          const glsSt = getGlsStatusFinal(o);
+          return glsSt === 'retur' && !seen.has(o.id);
+        }) : [];
+        const allRetur = [...returDedup, ...glsReturOrdersModal];
+        const totalRetur = allRetur.reduce((s,o)=>s+o.total,0);
+        return (
+          <div style={{position:'fixed',inset:0,zIndex:998,display:'flex',flexDirection:'column',background:'#07090e'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',borderBottom:'1px solid rgba(255,255,255,.07)',background:'rgba(7,9,14,.98)',backdropFilter:'blur(20px)',flexShrink:0}}>
+              <button onClick={()=>setShowReturModal(false)}
+                style={{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.1)',color:'#94a3b8',borderRadius:8,padding:'6px 12px',fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                ← Înapoi
+              </button>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:800,color:'#f43f5e'}}>↩️ Comenzi returnate</div>
+                <div style={{fontSize:10,color:'#475569',marginTop:1}}>{allRetur.length} comenzi · {rangeLabel}</div>
+              </div>
+              <div style={{fontSize:12,fontWeight:700,color:'#f43f5e',fontFamily:'monospace'}}>-{fmt(totalRetur)} RON</div>
+            </div>
+            <div style={{flex:1,overflowY:'auto',padding:'0 0 60px'}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,padding:'12px 16px 8px'}}>
+                {[
+                  {l:'Total retur',v:allRetur.length,c:'#f43f5e'},
+                  {l:'Valoare pierdută',v:fmt(totalRetur)+' RON',c:'#f43f5e'},
+                  {l:'Din GLS Excel',v:glsReturOrdersModal.length,c:'#f59e0b'},
+                ].map(({l,v,c})=>(
+                  <div key={l} style={{background:'#0d1520',border:`1px solid ${c}22`,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                    <div style={{fontSize:14,fontWeight:800,color:c}}>{v}</div>
+                    <div style={{fontSize:9,color:'#475569',marginTop:2,textTransform:'uppercase',letterSpacing:.5}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{margin:'0 16px',background:'#0a0f1a',border:'1px solid #1a2535',borderRadius:12,overflow:'hidden'}}>
+                <div style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 90px',gap:0,padding:'7px 14px',borderBottom:'1px solid #1a2535',background:'rgba(255,255,255,.02)'}}>
+                  {['Comandă','Client','Produse','Total','Sursă'].map(h=>(
+                    <div key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700}}>{h}</div>
+                  ))}
+                </div>
+                {allRetur.length === 0 ? (
+                  <div style={{padding:24,textAlign:'center',color:'#334155',fontSize:13}}>Nicio comandă returnată în această perioadă.</div>
+                ) : allRetur.map(o => {
+                  const isGlsEx = glsReturOrdersModal.some(g=>g.id===o.id);
+                  const isExtraPeriod = retururiExtra.some(r=>r.id===o.id);
+                  return (
+                    <div key={o.id} style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 90px',gap:0,padding:'10px 14px',borderBottom:'1px solid #0d1520',alignItems:'center'}}
+                      onMouseEnter={e=>e.currentTarget.style.background='rgba(244,63,94,.03)'}
+                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <div>
+                        <div style={{fontSize:11,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{o.name}</div>
+                        <div style={{fontSize:9,color:'#334155',marginTop:1}}>{o.courier==='gls'?'🚚 GLS':o.courier==='sameday'?'⚡ SD':'📦'}</div>
+                      </div>
+                      <div style={{fontSize:11,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>{o.client}</div>
+                      <div style={{fontSize:10,color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>{o.prodShort}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(o.total)}</div>
+                      <div style={{fontSize:10}}>
+                        {isGlsEx
+                          ? <span style={{color:'#f59e0b',fontWeight:700,fontSize:9,background:'rgba(245,158,11,.1)',padding:'2px 5px',borderRadius:3}}>GLS Excel</span>
+                          : isExtraPeriod
+                          ? <span style={{color:'#a855f7',fontWeight:700,fontSize:9,background:'rgba(168,85,247,.1)',padding:'2px 5px',borderRadius:3}}>Altă per.</span>
+                          : <span style={{color:'#f43f5e',fontWeight:700,fontSize:9,background:'rgba(244,63,94,.1)',padding:'2px 5px',borderRadius:3}}>Retur</span>}
+                        <div style={{color:'#334155',fontSize:9,marginTop:2}}>{(o.createdAt||'').slice(0,10).split('-').reverse().join('.')}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 90px',gap:0,padding:'10px 14px',background:'rgba(244,63,94,.04)',borderTop:'2px solid rgba(244,63,94,.15)'}}>
+                  <div style={{fontSize:11,fontWeight:800,color:'#e2e8f0',gridColumn:'1/4'}}>TOTAL {allRetur.length} retururi</div>
+                  <div style={{fontSize:13,fontWeight:900,color:'#f43f5e',fontFamily:'monospace'}}>-{fmt(totalRetur)}</div>
+                  <div/>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
     </>
   );
 }
+
 
 
