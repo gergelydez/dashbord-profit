@@ -34,6 +34,8 @@ const DEFAULT_PRODUCT_COSTS = [
   { id: 'PRST',          sku: 'PRST',           pattern: 'etichete autoadezive',       excludes: [], name: 'Etichete autoadezive',                 cost: 34.12,  updated: '30.03.2026' },
   { id: 'WARMER',        sku: 'WARMER',         pattern: 'fierbator',                  excludes: [], name: 'Fierbator apa-lapte',                  cost: 232.77, updated: '30.03.2026' },
   { id: 'DM56',          sku: 'DM56',           pattern: 'glamx delta max',            excludes: [], name: 'GLAMX DELTA MAX DM56',                 cost: 154.80, updated: '30.03.2026' },
+  { id: 'DM56b',         sku: 'DM56',           pattern: 'glamx delta max - militar',  excludes: [], name: 'GLAMX DELTA MAX DM56 Militar',          cost: 154.80, updated: '30.03.2026' },
+  { id: 'DM56c',         sku: 'DM56',           pattern: 'glamx delta max - negru',    excludes: [], name: 'GLAMX DELTA MAX DM56 Negru',            cost: 154.80, updated: '30.03.2026' },
   { id: 'HUSA1',         sku: 'HUSA1',          pattern: 'husa protectie',             excludes: [], name: 'Husa protectie scaune auto',           cost: 42.54,  updated: '30.03.2026' },
   { id: 'SMSWCSV1',      sku: 'SMSWCSV1',       pattern: 'intrerupator cap scara',     excludes: [], name: 'INTRERUPATOR CAP SCARA V1',            cost: 70.21,  updated: '30.03.2026' },
   { id: 'SMSWV4',        sku: 'SMSWV4',         pattern: 'intrerupator smart v4',      excludes: [], name: 'INTRERUPATOR SMART V4',                cost: 62.26,  updated: '30.03.2026' },
@@ -45,6 +47,7 @@ const DEFAULT_PRODUCT_COSTS = [
   { id: 'SMC2',          sku: 'SMC2',           pattern: 'priza dubla',                excludes: [], name: 'PRIZA DUBLA',                          cost: 42.84,  updated: '30.03.2026' },
   { id: 'PRINTSERVER',   sku: 'PRINTSERVER',    pattern: 'printer server',             excludes: [], name: 'Printer Server',                       cost: 151.64, updated: '30.03.2026' },
   { id: 'DM76',          sku: 'DM76',           pattern: 'dm76',                       excludes: [], name: 'SMARTWATCH DELTA MAX GOLD',            cost: 162.42, updated: '30.03.2026' },
+  { id: 'DM76b',         sku: 'DM76',           pattern: 'delta max gold',             excludes: [], name: 'SMARTWATCH DELTA MAX GOLD',            cost: 162.42, updated: '30.03.2026' },
   { id: 'WS-1-B',        sku: 'WS-1-B',         pattern: 'ws-1',                       excludes: [], name: 'SMARTWATCH WS-1',                      cost: 63.76,  updated: '30.03.2026' },
   { id: 'SET2',          sku: 'SET2',           pattern: 'set bijuterii femei',        excludes: [], name: 'Set bijuterii femei',                  cost: 23.77,  updated: '30.03.2026' },
   { id: 'SET1',          sku: 'SET1',           pattern: 'set cadou barbati',          excludes: [], name: 'Set cadou barbati',                    cost: 72.96,  updated: '30.03.2026' },
@@ -670,65 +673,68 @@ export default function ProfitPage() {
   const returnedCount = returnedOrders.length;
 
   const resolveCost = useCallback((item) => {
-    const nameKey = (item.name||'').toLowerCase().trim();
-    // Normalizează SKU: elimină sufixe de variantă (ex: DM56-METAL → DM56, DM56/FOLIE → DM56)
-    const rawSku = (item.sku||'').trim();
-    const skuKey = rawSku.toLowerCase();
+    const nameRaw = (item.name||'').trim();
+    const nameKey = nameRaw.toLowerCase();
+    const rawSku  = (item.sku||'').trim();
+    const skuKey  = rawSku.toLowerCase();
     const variantId = String(item.variantId||'');
 
+    const getCostVal = (s) => typeof s.cost==='number' ? s.cost : parseFloat(s.cost)||0;
+
     // 1. Override manual
-    const overrideName = costSource[item.name] || costSource[rawSku];
-    if (overrideName === 'manual' || (!overrideName && (manualCosts[item.name] !== undefined && manualCosts[item.name] !== ''))) {
-      return { cost: parseFloat(manualCosts[item.name])||0, src: 'manual' };
-    }
+    if (manualCosts[nameRaw] !== undefined && manualCosts[nameRaw] !== '')
+      return { cost: parseFloat(manualCosts[nameRaw])||0, src: 'manual' };
 
     // 2. SmartBill productCosts
-    if (overrideName === 'smartbill' || (!overrideName && productCosts[nameKey])) {
+    if (productCosts[nameKey])
       return { cost: productCosts[nameKey]||0, src: 'smartbill' };
-    }
 
     // 3. Shopify variant/sku costs
     const shopifyCost = (variantId ? shopifyVariantCosts[variantId] : null)
       || (skuKey ? shopifySkuCosts[skuKey] : null)
       || shopifyCosts[nameKey];
-    if (overrideName === 'shopify' || (!overrideName && shopifyCost)) {
-      return { cost: shopifyCost||0, src: 'shopify' };
+    if (shopifyCost) return { cost: shopifyCost, src: 'shopify' };
+
+    // 4. SKU exact match — PRIORITATE MAXIMĂ dacă SKU există
+    if (skuKey) {
+      const exact = stdCosts.find(s => (s.sku||s.id||'').toLowerCase() === skuKey);
+      if (exact) return { cost: getCostVal(exact), src: 'standard' };
     }
 
-    // 4. SKU exact match în stdCosts
+    // 5. SKU prefix/suffix match (DM56-METAL → DM56, DM56/FOLIE → DM56)
     if (skuKey) {
-      const exactSkuMatch = stdCosts.find(s => s.sku && s.sku.toLowerCase() === skuKey);
-      if (exactSkuMatch) return { cost: typeof exactSkuMatch.cost==='number' ? exactSkuMatch.cost : parseFloat(exactSkuMatch.cost)||0, src: 'standard' };
-    }
-
-    // 5. SKU prefix match — DM56-METAL matchează DM56
-    if (skuKey) {
-      const prefixMatch = stdCosts.find(s => {
-        const base = (s.sku||s.id||'').toLowerCase();
-        return base && (skuKey === base || skuKey.startsWith(base + '-') || skuKey.startsWith(base + '/') || skuKey.startsWith(base + '_'));
+      const prefix = stdCosts.find(s => {
+        const b = (s.sku||s.id||'').toLowerCase();
+        return b.length >= 2 && (skuKey === b || skuKey.startsWith(b+'-') || skuKey.startsWith(b+'/') || skuKey.startsWith(b+'_') || skuKey.endsWith('-'+b) || skuKey.endsWith('/'+b));
       });
-      if (prefixMatch) return { cost: typeof prefixMatch.cost==='number' ? prefixMatch.cost : parseFloat(prefixMatch.cost)||0, src: 'standard' };
+      if (prefix) return { cost: getCostVal(prefix), src: 'standard' };
     }
 
-    // 6. Pattern match pe NUMELE produsului (funcționează și fără SKU)
-    // Sortăm după lungimea pattern-ului desc — pattern mai specific câștigă
-    const sortedByPatLen = [...stdCosts].sort((a,b) => (b.pattern||'').length - (a.pattern||'').length);
-    for (const std of sortedByPatLen) {
+    // 6. Pattern match pe NUME (sortat desc dupa lungime — mai specific castiga)
+    const byPatLen = [...stdCosts].sort((a,b) => (b.pattern||'').length - (a.pattern||'').length);
+    for (const std of byPatLen) {
       const pat = (std.pattern||'').toLowerCase().trim();
-      if (!pat) continue;
+      if (!pat || pat.length < 3) continue;
       if (nameKey.includes(pat)) {
         const excluded = (std.excludes||[]).some(ex => nameKey.includes(ex.toLowerCase()));
-        if (!excluded) return { cost: typeof std.cost==='number' ? std.cost : parseFloat(std.cost)||0, src: 'standard' };
+        if (!excluded) return { cost: getCostVal(std), src: 'standard' };
       }
     }
 
-    // 7. Pattern match pe SKU string (ex: SKU contine "dm56" → matchează pattern "glamx delta max")
-    if (skuKey) {
-      for (const std of sortedByPatLen) {
-        const stdSkuLower = (std.sku||std.id||'').toLowerCase();
-        if (stdSkuLower && skuKey.includes(stdSkuLower)) {
-          return { cost: typeof std.cost==='number' ? std.cost : parseFloat(std.cost)||0, src: 'standard' };
-        }
+    // 7. SKU-ul din stdCosts apare in NUMELE produsului
+    for (const std of byPatLen) {
+      const stdSku = (std.sku||std.id||'').toLowerCase();
+      if (stdSku.length >= 2 && nameKey.includes(stdSku)) {
+        return { cost: getCostVal(std), src: 'standard' };
+      }
+    }
+
+    // 8. Fuzzy: toate cuvintele cheie din pattern apar in nume
+    for (const std of byPatLen) {
+      const words = (std.pattern||'').toLowerCase().split(/\s+/).filter(w=>w.length>=4);
+      if (words.length >= 2 && words.every(w => nameKey.includes(w))) {
+        const excluded = (std.excludes||[]).some(ex => nameKey.includes(ex.toLowerCase()));
+        if (!excluded) return { cost: getCostVal(std), src: 'standard' };
       }
     }
 
@@ -1651,31 +1657,49 @@ export default function ProfitPage() {
 
           // Grupăm pe SKU — dacă SKU e gol, determinăm grupul din stdCosts după pattern pe nume
           // Astfel toate variantele (cu/fără SKU) ajung în același grup
+          // resolveGroupKey: aceeasi logica unificata ca resolveCost
           const resolveGroupKey = (item) => {
-            const rawSku = (item.sku||'').trim();
-            if (rawSku) {
-              // Caută SKU de bază în stdCosts (prefix match)
-              const skuLow = rawSku.toLowerCase();
-              const baseEntry = stdCosts.find(s => {
-                const base = (s.sku||s.id||'').toLowerCase();
-                return base && (skuLow === base || skuLow.startsWith(base+'-') || skuLow.startsWith(base+'/') || skuLow.startsWith(base+'_'));
+            const nameRaw = (item.name||'').trim();
+            const nameKey = nameRaw.toLowerCase();
+            const rawSku  = (item.sku||'').trim();
+            const skuKey  = rawSku.toLowerCase();
+            const byPatLen = [...stdCosts].sort((a,b)=>(b.pattern||'').length-(a.pattern||'').length);
+
+            // 1. SKU exact
+            if (skuKey) {
+              const exact = stdCosts.find(s=>(s.sku||s.id||'').toLowerCase()===skuKey);
+              if (exact) return { groupKey:(exact.sku||exact.id).toUpperCase(), displayName:exact.name, canonicalSku:exact.sku||exact.id };
+            }
+            // 2. SKU prefix/suffix
+            if (skuKey) {
+              const prefix = stdCosts.find(s=>{
+                const b=(s.sku||s.id||'').toLowerCase();
+                return b.length>=2&&(skuKey===b||skuKey.startsWith(b+'-')||skuKey.startsWith(b+'/')||skuKey.startsWith(b+'_')||skuKey.endsWith('-'+b)||skuKey.endsWith('/'+b));
               });
-              // Returnează SKU-ul canonical din stdCosts dacă există, altfel SKU-ul brut
-              return { groupKey: (baseEntry?.sku || baseEntry?.id || rawSku).toUpperCase(), displayName: baseEntry?.name || item.name || rawSku, canonicalSku: baseEntry?.sku || baseEntry?.id || rawSku };
+              if (prefix) return { groupKey:(prefix.sku||prefix.id).toUpperCase(), displayName:prefix.name, canonicalSku:prefix.sku||prefix.id };
             }
-            // Fără SKU — caută după pattern în nume
-            const nameLow = (item.name||'').toLowerCase().trim();
-            const sortedByPatLen = [...stdCosts].sort((a,b) => (b.pattern||'').length - (a.pattern||'').length);
-            for (const std of sortedByPatLen) {
-              const pat = (std.pattern||'').toLowerCase().trim();
-              if (!pat) continue;
-              if (nameLow.includes(pat)) {
-                const excluded = (std.excludes||[]).some(ex => nameLow.includes(ex.toLowerCase()));
-                if (!excluded) return { groupKey: (std.sku||std.id).toUpperCase(), displayName: std.name, canonicalSku: std.sku||std.id };
-              }
+            // 3. Pattern match pe nume
+            for (const std of byPatLen) {
+              const pat=(std.pattern||'').toLowerCase().trim();
+              if (!pat||pat.length<3) continue;
+              if (nameKey.includes(pat)&&!(std.excludes||[]).some(ex=>nameKey.includes(ex.toLowerCase())))
+                return { groupKey:(std.sku||std.id).toUpperCase(), displayName:std.name, canonicalSku:std.sku||std.id };
             }
-            // Fallback: grupare pe nume exact
-            return { groupKey: (item.name||'NECUNOSCUT').toUpperCase(), displayName: item.name||'Produs necunoscut', canonicalSku: '' };
+            // 4. SKU din stdCosts in numele produsului
+            for (const std of byPatLen) {
+              const sk=(std.sku||std.id||'').toLowerCase();
+              if (sk.length>=2&&nameKey.includes(sk))
+                return { groupKey:(std.sku||std.id).toUpperCase(), displayName:std.name, canonicalSku:std.sku||std.id };
+            }
+            // 5. Fuzzy words
+            for (const std of byPatLen) {
+              const words=(std.pattern||'').toLowerCase().split(/\s+/).filter(w=>w.length>=4);
+              if (words.length>=2&&words.every(w=>nameKey.includes(w))&&!(std.excludes||[]).some(ex=>nameKey.includes(ex.toLowerCase())))
+                return { groupKey:(std.sku||std.id).toUpperCase(), displayName:std.name, canonicalSku:std.sku||std.id };
+            }
+            // Fallback
+            const fk = rawSku ? rawSku.toUpperCase() : nameRaw.toUpperCase().slice(0,30);
+            return { groupKey:fk, displayName:nameRaw||'Necunoscut', canonicalSku:rawSku };
           };
 
           const skuMap = {};
@@ -2012,37 +2036,66 @@ export default function ProfitPage() {
         const chelt_po = tpo + mpo + fpo;
 
         // Helper: resolve cost per item (same logic as resolveCost but uses modalEditCost overrides first)
-        const resolveModalCost = (item) => {
-          const rawSku = (item.sku||'').trim();
-          const skuUp = rawSku.toUpperCase();
-          // Check modal override first
-          if (modalEditCost[skuUp] !== undefined) return { cost: parseFloat(modalEditCost[skuUp])||0, src: 'manual' };
-          // Check stdCosts override
-          const entry = stdCosts.find(s => (s.sku||s.id||'').toUpperCase() === skuUp);
-          if (entry && entry.cost > 0) return { cost: typeof entry.cost==='number'?entry.cost:parseFloat(entry.cost)||0, src: 'standard' };
-          // Fall through to full resolveCost
-          return resolveCost(item);
+        // resolveGroup: determina grupul SKU canonic pentru un item
+        // Foloseste aceeasi logica ca resolveCost: SKU exact → prefix → pattern name → SKU in name → fuzzy
+        const resolveGroup = (item) => {
+          const nameRaw = (item.name||'').trim();
+          const nameKey = nameRaw.toLowerCase();
+          const rawSku  = (item.sku||'').trim();
+          const skuKey  = rawSku.toLowerCase();
+          const byPatLen = [...stdCosts].sort((a,b)=>(b.pattern||'').length-(a.pattern||'').length);
+
+          // 1. SKU exact match
+          if (skuKey) {
+            const exact = stdCosts.find(s => (s.sku||s.id||'').toLowerCase() === skuKey);
+            if (exact) return { key:(exact.sku||exact.id).toUpperCase(), name:exact.name, sku:exact.sku||exact.id };
+          }
+
+          // 2. SKU prefix/suffix match
+          if (skuKey) {
+            const prefix = stdCosts.find(s => {
+              const b = (s.sku||s.id||'').toLowerCase();
+              return b.length>=2 && (skuKey===b || skuKey.startsWith(b+'-') || skuKey.startsWith(b+'/') || skuKey.startsWith(b+'_') || skuKey.endsWith('-'+b) || skuKey.endsWith('/'+b));
+            });
+            if (prefix) return { key:(prefix.sku||prefix.id).toUpperCase(), name:prefix.name, sku:prefix.sku||prefix.id };
+          }
+
+          // 3. Pattern match pe nume
+          for (const s of byPatLen) {
+            const p = (s.pattern||'').toLowerCase().trim();
+            if (!p || p.length<3) continue;
+            if (nameKey.includes(p) && !(s.excludes||[]).some(ex=>nameKey.includes(ex.toLowerCase())))
+              return { key:(s.sku||s.id).toUpperCase(), name:s.name, sku:s.sku||s.id };
+          }
+
+          // 4. SKU din stdCosts apare in numele produsului
+          for (const s of byPatLen) {
+            const sk = (s.sku||s.id||'').toLowerCase();
+            if (sk.length>=2 && nameKey.includes(sk))
+              return { key:(s.sku||s.id).toUpperCase(), name:s.name, sku:s.sku||s.id };
+          }
+
+          // 5. Fuzzy words
+          for (const s of byPatLen) {
+            const words = (s.pattern||'').toLowerCase().split(/\s+/).filter(w=>w.length>=4);
+            if (words.length>=2 && words.every(w=>nameKey.includes(w)) && !(s.excludes||[]).some(ex=>nameKey.includes(ex.toLowerCase())))
+              return { key:(s.sku||s.id).toUpperCase(), name:s.name, sku:s.sku||s.id };
+          }
+
+          // Fallback: grup pe SKU brut sau pe nume
+          const fallbackKey = rawSku ? rawSku.toUpperCase() : nameRaw.toUpperCase().slice(0,30);
+          return { key:fallbackKey, name:nameRaw||'Necunoscut', sku:rawSku };
         };
 
-        // Build SKU groups
-        const resolveGroup = (item) => {
-          const rawSku = (item.sku||'').trim();
-          if (rawSku) {
-            const skuLow = rawSku.toLowerCase();
-            const base = stdCosts.find(s => {
-              const b = (s.sku||s.id||'').toLowerCase();
-              return b && (skuLow === b || skuLow.startsWith(b+'-') || skuLow.startsWith(b+'/') || skuLow.startsWith(b+'_'));
-            });
-            return { key: (base?.sku||base?.id||rawSku).toUpperCase(), name: base?.name||item.name||rawSku, sku: base?.sku||base?.id||rawSku };
-          }
-          const nl = (item.name||'').toLowerCase();
-          const sorted = [...stdCosts].sort((a,b)=>(b.pattern||'').length-(a.pattern||'').length);
-          for (const s of sorted) {
-            const p = (s.pattern||'').toLowerCase();
-            if (p && nl.includes(p) && !(s.excludes||[]).some(ex=>nl.includes(ex.toLowerCase())))
-              return { key: (s.sku||s.id).toUpperCase(), name: s.name, sku: s.sku||s.id };
-          }
-          return { key: (item.name||'NECUNOSCUT').toUpperCase(), name: item.name||'Necunoscut', sku: '' };
+        // resolveModalCost: modalEditCost override > stdCosts > resolveCost complet
+        const resolveModalCost = (item) => {
+          // Gasim grupul canonic pentru a obtine SKU-ul
+          const g = resolveGroup(item);
+          const skuUp = g.key;
+          // Override din modal
+          if (modalEditCost[skuUp] !== undefined) return { cost: parseFloat(modalEditCost[skuUp])||0, src: 'manual' };
+          // resolveCost complet (SKU exact > prefix > pattern > fuzzy)
+          return resolveCost(item);
         };
 
         const skuMap = {};
@@ -2291,12 +2344,36 @@ export default function ProfitPage() {
                                 const g = resolveGroup(item);
                                 const {cost:ic, src} = resolveModalCost(item);
                                 const srcClr={standard:'#10b981',shopify:'#3b82f6',manual:'#f59e0b',none:'#f43f5e'};
+                                const isEditingItem = modalTempCost[g.key] !== undefined;
                                 return (
-                                  <div key={ii} style={{display:'flex',alignItems:'center',gap:5,marginBottom:ii<items.length-1?4:0}}>
+                                  <div key={ii} style={{display:'flex',alignItems:'center',gap:5,marginBottom:ii<items.length-1?4:0,flexWrap:'nowrap'}}>
                                     <span style={{fontFamily:'monospace',fontSize:9,background:'rgba(249,115,22,.08)',color:'#f97316',padding:'1px 4px',borderRadius:3,flexShrink:0}}>{g.sku||g.key.slice(0,8)}</span>
                                     <span style={{fontSize:10,color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}} title={item.name}>{item.name}</span>
                                     {item.qty>1&&<span style={{fontSize:9,color:'#334155',flexShrink:0}}>×{item.qty}</span>}
-                                    <span style={{fontSize:9,color:ic>0?srcClr[src]:'#f59e0b',fontWeight:700,flexShrink:0}}>{ic>0?fmt(ic)+'R':'?'}</span>
+                                    {isEditingItem ? (
+                                      <div style={{display:'flex',alignItems:'center',gap:3,flexShrink:0}}>
+                                        <input type="number" step="0.01" autoFocus
+                                          value={modalTempCost[g.key]??ic}
+                                          onChange={e=>setModalTempCost(prev=>({...prev,[g.key]:e.target.value}))}
+                                          onKeyDown={e=>{
+                                            if(e.key==='Enter'){saveModalCost(g.sku||g.key,modalTempCost[g.key],g.name);setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}
+                                            if(e.key==='Escape'){setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}
+                                          }}
+                                          style={{width:55,background:'rgba(16,185,129,.12)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:4,padding:'2px 4px',fontSize:10,fontFamily:'monospace',outline:'none',textAlign:'right'}}/>
+                                        <button onClick={()=>{saveModalCost(g.sku||g.key,modalTempCost[g.key],g.name);setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;});}} style={{background:'#10b981',border:'none',color:'white',borderRadius:4,padding:'2px 5px',fontSize:9,fontWeight:800,cursor:'pointer'}}>✓</button>
+                                        <button onClick={()=>setModalTempCost(prev=>{const n={...prev};delete n[g.key];return n;})} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:4,padding:'2px 4px',fontSize:9,cursor:'pointer'}}>✕</button>
+                                      </div>
+                                    ) : (
+                                      <span
+                                        onClick={()=>setModalTempCost(prev=>({...prev,[g.key]:ic||''}))}
+                                        title={ic>0?`Cost: ${fmt(ic)} RON — click pentru editare`:'Fără cost — click pentru a adăuga'}
+                                        style={{fontSize:9,color:ic>0?srcClr[src]:'white',fontWeight:800,flexShrink:0,cursor:'pointer',
+                                          background:ic>0?'rgba(16,185,129,.1)':'#ef4444',
+                                          border:`1px solid ${ic>0?'rgba(16,185,129,.3)':'#dc2626'}`,
+                                          padding:'1px 5px',borderRadius:3,userSelect:'none'}}>
+                                        {ic>0?fmt(ic)+'R':'✏️ ?'}
+                                      </span>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -2348,3 +2425,4 @@ export default function ProfitPage() {
     </>
   );
 }
+
