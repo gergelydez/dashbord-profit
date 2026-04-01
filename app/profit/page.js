@@ -231,11 +231,42 @@ function getReturInPeriod(allOrders, preset, customFrom, customTo) {
   });
 }
 
-// Aplica ts corect la toate comenzile dupa ce sunt incarcate
+// Aplica ts corect la toate comenzile — PRIORITATE: gx_track_ov > GLS Excel > SameDay Excel > Shopify
 function recomputeStatuses(orders) {
   const glsMap = getGlsAwbMap();
   const sdMap  = getSdAwbMap();
-  return orders.map(o => ({ ...o, ts: getFinalStatus(o, glsMap, sdMap) }));
+  let ovMap = {};
+  try { const s = typeof window!=='undefined'?localStorage.getItem('gx_track_ov'):null; ovMap = s?JSON.parse(s):{}; } catch {}
+
+  return orders.map(o => {
+    // 1. Override explicit din tracking (GLS API live / manual) — SURSA CEA MAI PRECISĂ
+    const ov = ovMap[o.id];
+    if (ov && ov.ts && ov.ts !== 'pending') {
+      return { ...o, ts: ov.ts,
+        trackingStatus: ov.statusRaw || o.trackingStatus,
+        trackingLastUpdate: ov.lastUpdate || o.trackingLastUpdate,
+        trackingLocation: ov.location || o.trackingLocation,
+      };
+    }
+
+    // 2. GLS Excel AWB map
+    if (o.courier === 'gls') {
+      const awb = (o.trackingNo || '').trim();
+      if (awb && glsMap[awb]) return { ...o, ts: glsMap[awb] };
+    }
+
+    // 3. SameDay AWB map
+    if (o.courier === 'sameday') {
+      const awb = (o.trackingNo || '').trim();
+      if (awb && sdMap[awb]) return { ...o, ts: sdMap[awb] };
+    }
+
+    // 4. ts deja setat corect (din Shopify procOrder)
+    if (o.ts && o.ts !== 'pending') return o;
+
+    // 5. Derivă din Shopify fields
+    return { ...o, ts: getFinalStatus(o, glsMap, sdMap) };
+  });
 }
 
 const TVA_RATE = 0.21;
