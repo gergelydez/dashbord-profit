@@ -1110,6 +1110,20 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 90:'Returnare inițiată', 92:'Livrat (semnătură)', 93:'Livrat (foto)',
                 97:'Procesare', 99:'În tranzit',
               };
+              const SD_CODES = {
+                1:'Expediere înregistrată', 2:'Preluat de curier', 3:'Ajuns în depozit',
+                4:'Preluat de curier', 5:'Livrat', 6:'Tentativă eșuată', 7:'Spre depozit central',
+                8:'Retur inițiat', 9:'Livrat (confirmat)', 10:'În livrare azi',
+                11:'Retur spre expeditor', 12:'Retur finalizat', 13:'Tentativă eșuată',
+                14:'Destinatar absent', 15:'Refuzat', 16:'Adresă incorectă',
+                17:'Reprogramat', 18:'Zonă neacoperită', 19:'Avariat',
+                20:'Pierdut', 21:'Retur confirmat', 22:'Retur la expeditor',
+                23:'Curier alocat ridicare', 24:'Reîncercare livrare', 25:'Redirecționat',
+                26:'Ajuns depozit local', 27:'Procesat depozit', 28:'Stocat',
+                30:'Livrat la vecin', 33:'În livrare — curier în drum',
+                34:'În livrare azi', 35:'Ieșit pentru livrare',
+                84:'Ajuns depozit central', 85:'Plecat spre livrare',
+              };
               const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
 
               return (
@@ -1126,7 +1140,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   {tranzitOrders.map(o => {
                     const live = liveTrackingData[o.id];
                     const code = live?.statusCode ? parseInt(live.statusCode) : null;
-                    const codeDesc = code ? (GLS_CODES[code] || live?.desc || `Cod ${code}`) : null;
+                    const COURIER_CODES = o.courier === 'sameday' ? SD_CODES : GLS_CODES;
+                    const codeDesc = code ? (COURIER_CODES[code] || live?.desc || live?.statusDescription || `Cod ${code}`) : (live?.desc || live?.statusDescription || null);
                     const color = statusColor(live?.glsStatus);
                     return (
                       <div key={o.id} style={{padding:'9px 0',borderBottom:'1px solid rgba(255,255,255,.05)'}}>
@@ -1158,7 +1173,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     );
                   })}
                   <div style={{fontSize:9,color:'#334155',marginTop:8,textAlign:'center'}}>
-                    4=Livrare azi · 5=Livrat · 10=Scanat depot · 23/40=Retur · 32=Ieșit livrare
+                    GLS: 4=Livrare azi · 5=Livrat · 32=Ieșit livrare · 23/40=Retur &nbsp;|&nbsp; Sameday: 33/34=În livrare · 5/9=Livrat · 84=Depozit central · 21/22=Retur
                   </div>
                 </div>
               );
