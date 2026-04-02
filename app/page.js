@@ -677,9 +677,17 @@ export default function Dashboard() {
 
   // ── TRACKING LIVE GLS / Sameday ──
   const refreshTracking = async (silent = false) => {
-    const activeOrders = allOrders.filter(o =>
-      ['incurs','outfor','pending'].includes(o.ts) && o.trackingNo
-    );
+    const now = new Date();
+    const activeOrders = allOrders.filter(o => {
+      if (!o.trackingNo) return false;
+      if (['incurs','outfor','pending'].includes(o.ts)) return true;
+      // Sameday: reverificăm 'retur' din ultimele 30 zile — Shopify poate fi greșit
+      if (o.ts === 'retur' && o.courier === 'sameday' && o.createdAt) {
+        const daysSince = (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
+        return daysSince <= 30;
+      }
+      return false;
+    });
     console.log('[TRACKING] Comenzi active cu AWB:', activeOrders.length,
       activeOrders.slice(0,3).map(o => ({id:o.id, awb:o.trackingNo, ts:o.ts, courier:o.courier}))
     );
@@ -1801,6 +1809,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
+
 
 
 
