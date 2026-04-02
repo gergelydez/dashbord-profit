@@ -241,6 +241,7 @@ export default function Dashboard() {
   const [sbCredsOpen, setSbCredsOpen] = useState(false);
   const [sbUseStock, setSbUseStock]         = useState(() => { try { return ls.get('sb_use_stock') === 'true'; } catch { return false; } });
   const [sbWarehouse, setSbWarehouse]       = useState(() => { try { return ls.get('sb_warehouse') || ''; } catch { return ''; } });
+  const [sbPaySeries, setSbPaySeries]       = useState(() => { try { return ls.get('sb_pay_series') || ''; } catch { return ''; } });
   const [sbWarehouseList, setSbWarehouseList] = useState([]);
   const [onlinePaymentIds, setOnlinePaymentIds] = useState(() => {
     try { return JSON.parse(ls.get('online_payment_ids') || '[]'); } catch { return []; }
@@ -608,6 +609,7 @@ export default function Dashboard() {
         body: JSON.stringify({
           email: sbEmail, token: sbToken, cif: sbCif,
           seriesName: order._seriesOverride || sbInvSeries || undefined,
+          paymentSeries: sbPaySeries || undefined,
           shopifyDomain: ls.get('gx_d') || '',
           shopifyToken:  ls.get('gx_t') || '',
           order: {
@@ -1578,6 +1580,13 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 }
               </div>
             )}
+            {/* Serie chitanță — pentru încasare automată comenzi plătite */}
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+              <span style={{fontSize:11,color:'#94a3b8',minWidth:90}}>Serie chitanță</span>
+              <input value={sbPaySeries} placeholder="ex: CHT (opțional)"
+                onChange={e=>{setSbPaySeries(e.target.value);ls.set('sb_pay_series',e.target.value);}}
+                style={{flex:1,background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'4px 8px',borderRadius:6,fontSize:11,outline:'none'}} />
+            </div>
             <div style={{background:'#080c10',borderRadius:8,padding:'10px 12px',marginBottom:16,fontSize:11,color:'#94a3b8',lineHeight:1.7}}>
               <strong style={{color:'#e8edf2'}}>Client:</strong> {invoiceModal.order.client}<br/>
               {invoiceModal.order.oras&&<><strong style={{color:'#e8edf2'}}>Oraș:</strong> {invoiceModal.order.oras}<br/></>}
