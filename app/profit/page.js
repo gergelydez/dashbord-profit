@@ -167,20 +167,25 @@ function getSdAwbMap() {
   try { const s = localStorage.getItem('sd_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
 }
 function getFinalStatus(o, glsAwbMap, sdAwbMap) {
-  // 1. AWB map override (GLS/SameDay cu tracking real)
+  // 1. AWB map override — sursa cea mai precisă
   if (o.courier === 'gls') {
     const awb = (o.trackingNo || '').trim();
     if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
   }
   if (o.courier === 'sameday') {
     const awb = (o.trackingNo || '').trim();
+    // SameDay: folosim DOAR AWB map sau ts deja setat — nu derivăm din Shopify fields
+    // Shopify nu știe statusul real SameDay; fără AWB map = în tranzit
     if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
+    // SameDay fără confirmare în AWB map — păstrăm ts existent, nu presupunem retur
+    if (o.ts && o.ts !== 'pending') return o.ts;
+    return 'incurs'; // SameDay fără AWB confirmat = în tranzit, nu retur
   }
 
-  // 2. ts explicit setat (din dashboard tracking)
+  // 2. ts explicit setat și valid
   if (o.ts && o.ts !== 'pending') return o.ts;
 
-  // 3. Detectare din campurile Shopify
+  // 3. Detectare din câmpurile Shopify (doar pentru GLS/alte curiere — nu SameDay)
   const fin  = (o.financial  || o.financial_status  || '').toLowerCase();
   const ful  = (o.fulfillment|| o.fulfillment_status || '').toLowerCase();
   const tags = (o.tags || '').toLowerCase();
@@ -188,18 +193,21 @@ function getFinalStatus(o, glsAwbMap, sdAwbMap) {
     (f.shipment_status || f.tracking_status || '').toLowerCase()
   );
 
-  // Retur / refuz
-  const RETUR_STATUSES = ['returned','failure','failed_attempt','return_in_progress','failed_delivery','cancelled'];
+  // Retur confirmat — doar statusuri clare, nu 'cancelled' care poate fi altceva
+  const RETUR_STATUSES = ['returned','failure','failed_attempt','return_in_progress','failed_delivery'];
   const isRetur = shipStatuses.some(s => RETUR_STATUSES.includes(s))
-    || fin === 'refunded' || fin === 'partially_refunded'
-    || tags.includes('retur') || tags.includes('refuz')
-    || ful === 'restocked';
+    || fin === 'refunded'
+    || tags.includes('retur') || tags.includes('refuz');
   if (isRetur) return 'retur';
 
   // Livrat
-  const isLivrat = ful === 'fulfilled'
-    || shipStatuses.some(s => ['delivered','out_for_delivery'].includes(s));
+  const isLivrat = shipStatuses.some(s => ['delivered'].includes(s))
+    || (ful === 'fulfilled' && shipStatuses.length > 0);
   if (isLivrat) return 'livrat';
+
+  // În tranzit
+  if (shipStatuses.some(s => ['in_transit','confirmed','out_for_delivery','label_printed'].includes(s)))
+    return 'incurs';
 
   return o.ts || 'pending';
 }
@@ -259,12 +267,15 @@ function recomputeStatuses(orders) {
     if (o.courier === 'sameday') {
       const awb = (o.trackingNo || '').trim();
       if (awb && sdMap[awb]) return { ...o, ts: sdMap[awb] };
+      // SameDay fara confirmare AWB: nu presupunem retur, lasam ts existent sau incurs
+      if (o.ts && o.ts !== 'pending') return o;
+      return { ...o, ts: 'incurs' }; // SameDay in tranzit pana la confirmare
     }
 
     // 4. ts deja setat corect (din Shopify procOrder)
     if (o.ts && o.ts !== 'pending') return o;
 
-    // 5. Derivă din Shopify fields
+    // 5. Deriva din Shopify fields (GLS sau alte curiere)
     return { ...o, ts: getFinalStatus(o, glsMap, sdMap) };
   });
 }
@@ -1843,6 +1854,8 @@ export default function ProfitPage() {
           const totalRevProd    = sorted.reduce((s,p) => s+p.revenue, 0);
           const totalProfitProd = sorted.reduce((s,p) => s+p.profit, 0);
           const totalQtyProd    = sorted.reduce((s,p) => s+p.qty, 0);
+          const uniqueOrderIdsInAnalysis = new Set(sorted.flatMap(p => p.orders.map(o => o.id)));
+          const totalOrdersInAnalysis = uniqueOrderIdsInAnalysis.size;
 
           return (
             <>
