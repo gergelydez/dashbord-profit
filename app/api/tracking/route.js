@@ -158,15 +158,68 @@ async function getSamedayToken() {
 function mapSamedayStatus(statusId) {
   const id = parseInt(statusId);
   // LIVRAT
-  if ([5, 9].includes(id)) return 'delivered';
-  // LA CURIER / ÎN LIVRARE AZI
-  if ([4, 10].includes(id)) return 'out_for_delivery';
-  // RETUR confirmat (nu simplu "returnat" din Shopify)
-  if ([8, 11, 12].includes(id)) return 'returned';
+  if ([5, 9, 30].includes(id)) return 'delivered';
+  // LA CURIER / ÎN LIVRARE (statusId 33 = curier urmează să livreze, 4 = preluat de curier)
+  if ([4, 10, 33, 34, 35].includes(id)) return 'out_for_delivery';
+  // RETUR CONFIRMAT — doar când e explicit retur finalizat
+  if ([21, 22].includes(id)) return 'returned';
   // TENTATIVĂ EȘUATĂ
-  if ([6, 7].includes(id)) return 'failed_attempt';
-  // ÎN TRANZIT (toate celelalte stări active: preluat, hub, sortare, etc.)
+  if ([6, 13, 14, 15, 16, 17, 18, 19, 20].includes(id)) return 'failed_attempt';
+  // ÎN TRANZIT — toate celelalte (1,7,8,11,23,24,25,26,27,84 etc.)
   return 'in_transit';
+}
+
+// Parsează răspuns XML sau JSON de la Sameday
+function parseSamedayResponse(text) {
+  // Încearcă JSON primul
+  try {
+    const j = JSON.parse(text);
+    const history = j.awbHistory || j.history || [];
+    const last = history[0];
+    if (last) return {
+      statusId: last.statusId,
+      statusLabel: last.statusLabel || last.statusDescription || '',
+      statusDate: last.statusDate || last.date || '',
+      county: last.county || last.city || '',
+    };
+  } catch {}
+
+  // Parsare XML — API-ul Sameday returnează XML în multe cazuri
+  try {
+    // Extragem primul <entry> din <awbHistory> (cel mai recent status)
+    const awbHistoryMatch = text.match(/<awbHistory>([\s\S]*?)<\/awbHistory>/);
+    if (!awbHistoryMatch) return null;
+    const firstEntry = awbHistoryMatch[1].match(/<entry>([\s\S]*?)<\/entry>/);
+    if (!firstEntry) return null;
+    const entryXml = firstEntry[1];
+
+    const getXmlVal = (xml, tag) => {
+      const m = xml.match(new RegExp(`<${tag}>[^<]*<!\[CDATA\[([^\]]*)]]\/[^<]*>\|\/?\ *<${tag}>([^<]*)<\/${tag}>`));
+      if (m) return (m[1] || m[2] || '').trim();
+      const m2 = xml.match(new RegExp(`<${tag}><!\[CDATA\[([\s\S]*?)\]\]><\/${tag}>`));
+      return m2 ? m2[1].trim() : '';
+    };
+
+    // Extragem statusId — primul tag simplu (nu CDATA)
+    const statusIdMatch = entryXml.match(/<statusId>\s*(\d+)\s*<\/statusId>/);
+    const statusId = statusIdMatch ? statusIdMatch[1] : '';
+
+    // Status text — primul <status> din entry
+    const statusMatch = entryXml.match(/<status>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/status>/);
+    const statusLabel = statusMatch ? statusMatch[1].trim() : '';
+
+    const dateMatch = entryXml.match(/<statusDate>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/statusDate>/);
+    const statusDate = dateMatch ? dateMatch[1].trim() : '';
+
+    const countyMatch = entryXml.match(/<county>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/county>/);
+    const county = countyMatch ? countyMatch[1].trim() : '';
+
+    if (!statusId) return null;
+    return { statusId, statusLabel, statusDate, county };
+  } catch(e) {
+    console.log('[SAMEDAY] XML parse error:', e.message);
+    return null;
+  }
 }
 
 async function trackSameday(awb) {
@@ -175,58 +228,57 @@ async function trackSameday(awb) {
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
 
   try {
-    const token = await getSamedayToken();
-
-    // Endpoint autentificat — returnează istoricul complet al coletului
-    const res = await fetch(`${SD_BASE}/api/client/awb/${awb.trim()}/awb-history`, {
-      headers: {
-        'X-AUTH-TOKEN': token,
-        'Accept': 'application/json',
-      },
+    // Încercăm ÎNTÂI endpoint-ul public (nu necesită autentificare, funcționează sigur)
+    const pubRes = await fetch(`${SD_BASE}/api/public/awb/${awb.trim()}/awb-history`, {
+      headers: { 'Accept': 'application/json, text/xml, */*' },
       signal: AbortSignal.timeout(10000),
       cache: 'no-store',
     });
 
-    if (!res.ok) {
-      // Fallback: endpoint alternativ
-      const res2 = await fetch(`${SD_BASE}/api/awb/${awb.trim()}/status`, {
-        headers: { 'X-AUTH-TOKEN': token, 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(10000),
-        cache: 'no-store',
-      });
-      if (!res2.ok) {
-        console.log('[SAMEDAY] Ambele endpoint-uri au eșuat pentru AWB:', awb, res.status, res2.status);
-        return null;
+    if (pubRes.ok) {
+      const text = await pubRes.text();
+      console.log('[SAMEDAY] Public response for', awb, ':', text.slice(0, 200));
+      const parsed = parseSamedayResponse(text);
+      if (parsed && parsed.statusId) {
+        const result = {
+          status: mapSamedayStatus(parsed.statusId),
+          statusRaw: parsed.statusLabel || String(parsed.statusId),
+          statusDescription: parsed.statusLabel || '',
+          lastUpdate: parsed.statusDate || '',
+          location: parsed.county || '',
+        };
+        trackingCache.set(cacheKey, { data: result, ts: Date.now() });
+        return result;
       }
-      const d2 = await res2.json();
-      const result2 = {
-        status: mapSamedayStatus(d2.statusId || d2.status || ''),
-        statusRaw: d2.statusLabel || d2.statusDescription || String(d2.statusId || ''),
-        lastUpdate: d2.statusDate || d2.date || '',
-        location: d2.county || d2.location || '',
-      };
-      trackingCache.set(cacheKey, { data: result2, ts: Date.now() });
-      return result2;
     }
 
-    const data = await res.json();
-    console.log('[SAMEDAY] Response for', awb, ':', JSON.stringify(data).slice(0, 300));
+    // Fallback: API autentificat
+    const token = await getSamedayToken();
+    const authRes = await fetch(`${SD_BASE}/api/client/awb/${awb.trim()}/awb-history`, {
+      headers: { 'X-AUTH-TOKEN': token, 'Accept': 'application/json, text/xml, */*' },
+      signal: AbortSignal.timeout(10000),
+      cache: 'no-store',
+    });
 
-    // Ultimul status = primul din awbHistory (cel mai recent)
-    const history = data.awbHistory || data.history || [];
-    const last = history[0];
-    if (!last) return null;
+    if (!authRes.ok) {
+      console.log('[SAMEDAY] Auth endpoint failed:', authRes.status, 'AWB:', awb);
+      return null;
+    }
 
-    const result = {
-      status: mapSamedayStatus(last.statusId || last.status || ''),
-      statusRaw: last.statusLabel || last.statusDescription || String(last.statusId || ''),
-      statusDescription: last.statusLabel || last.statusDescription || '',
-      lastUpdate: last.statusDate || last.date || '',
-      location: last.county || last.city || last.location || '',
+    const text2 = await authRes.text();
+    const parsed2 = parseSamedayResponse(text2);
+    if (!parsed2 || !parsed2.statusId) return null;
+
+    const result2 = {
+      status: mapSamedayStatus(parsed2.statusId),
+      statusRaw: parsed2.statusLabel || String(parsed2.statusId),
+      statusDescription: parsed2.statusLabel || '',
+      lastUpdate: parsed2.statusDate || '',
+      location: parsed2.county || '',
     };
 
-    trackingCache.set(cacheKey, { data: result, ts: Date.now() });
-    return result;
+    trackingCache.set(cacheKey, { data: result2, ts: Date.now() });
+    return result2;
 
   } catch(e) {
     console.log('[SAMEDAY] Exception:', e.message, 'AWB:', awb);
