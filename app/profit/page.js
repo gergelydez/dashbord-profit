@@ -837,22 +837,36 @@ export default function ProfitPage() {
   const glsEffective = glsDone ? glsCost : glsCount * transportPerParcel;
   const sdEffective  = sdCount * sdTransportPerParcel;
   const effectiveTransportCost = glsEffective + sdEffective;
-  const refusedTransportCost = returnedCount * costPerParcel;
 
   const metaNum = parseFloat(metaCost)||0;
   const tikTokNum = parseFloat(tikTokCost)||0;
   const googleNum = parseFloat(googleCost)||0;
   const otherMktNum = parseFloat(otherMktCost)||0;
-  const cpaTotal = useCPA ? (parseFloat(cpaValue)||0) * totalOrders : 0;
+
+  // ── LOGICA CORECTĂ MARKETING + RETURURI ──────────────────────────────
+  // Marketingul acopera TOATE comenzile expediate (livrate + returnate).
+  // Nu scadem CPA pentru retururi separat — e deja in costul total marketing.
+  // La retururi scadem DOAR transportul de retur (coletul fizic inapoi).
+  //
+  // Exemplu: 74 livrate + 5 returnate = 79 expediate
+  //   Marketing 5.000 RON / 79 = 63.29 RON CPA real/expediat
+  //   Retur cost = 5 × transport (doar colet retur)
+  // ─────────────────────────────────────────────────────────────────────
+  const totalExpediate = totalOrders + returnedCount;
+
+  const cpaTotal = useCPA ? (parseFloat(cpaValue)||0) * totalExpediate : 0;
   const manualMarketingTotal = metaNum + tikTokNum + googleNum + otherMktNum;
   const totalMarketing = useCPA ? cpaTotal : manualMarketingTotal;
   const roasMarketing = totalMarketing > 0 ? totalRevenue / totalMarketing : 0;
 
-  const effectiveCPA = (!useCPA && totalOrders > 0 && totalMarketing > 0)
-    ? totalMarketing / totalOrders
+  // CPA efectiv = marketing / toate comenzile expediate
+  const effectiveCPA = totalExpediate > 0 && totalMarketing > 0
+    ? totalMarketing / totalExpediate
     : (parseFloat(cpaValue) || 0);
-  const refusedCpaCost = returnedCount * effectiveCPA;
-  const totalRefusedCost = refusedTransportCost + refusedCpaCost;
+
+  // Retururi = DOAR transport retur (marketing deja inclus in totalMarketing)
+  const refusedTransportCost = returnedCount * costPerParcel;
+  const totalRefusedCost = refusedTransportCost;
 
   const shopifyFixAmount = parseFloat(fixedCosts.find(c => c.name.toLowerCase().includes('shopify'))?.amount||'0')||0;
   const tvaBase = (tvaOnMeta && !useCPA ? metaNum : 0) + (tvaOnShopify ? shopifyFixAmount : 0);
@@ -1108,8 +1122,8 @@ export default function ProfitPage() {
               {[
                 {emoji:'📦',val:fmtK(cogs),label:'Cost produse',sub:cogs>0?`${totalRevenue>0?Math.round(cogs/totalRevenue*100):0}% venituri`:'Necompletat',accent:'#3b82f6'},
                 {emoji:'🚚',val:fmtK(effectiveTransportCost),label:'Transport',sub:shopifyDone?`GLS ${glsCount}×${fmt(costPerParcel,0)} + SD ${sdCount}×${sdTransportPerParcel}`:`Est. ${fmt(transportPerParcel,2)} RON/col`,accent:'#f59e0b'},
-                {emoji:'📣',val:fmtK(totalMarketing),label:'Marketing',sub:useCPA?`CPA ${cpaValue} RON · ROAS ${roasMarketing.toFixed(1)}x`:`ROAS ${roasMarketing.toFixed(1)}x`,accent:'#a855f7'},
-                {emoji:'↩️',val:returnedCount>0?fmtK(totalRefusedCost):'0',label:'Colete refuzate',sub:returnedCount>0?`${returnedCount} retur · transport+CPA`:'Detectate automat din Shopify',accent:returnedCount>0?'#f43f5e':'#64748b'},
+                {emoji:'📣',val:fmtK(totalMarketing),label:'Marketing',sub:useCPA?`CPA ${fmt(effectiveCPA,0)} RON/exp · ${totalExpediate} exp · ROAS ${roasMarketing.toFixed(1)}x`:`ROAS ${roasMarketing.toFixed(1)}x · CPA ${fmt(effectiveCPA,0)} RON`,accent:'#a855f7'},
+                {emoji:'↩️',val:returnedCount>0?fmtK(totalRefusedCost):'0',label:'Colete refuzate',sub:returnedCount>0?`${returnedCount} retur · doar transport retur`:'Detectate automat din Shopify',accent:returnedCount>0?'#f43f5e':'#64748b'},
                 {emoji:'🧾',val:fmt(totalTVA,0),label:'TVA de plată',sub:'Meta+Shopify · 21%',accent:'#f59e0b'},
                 {emoji:'🔧',val:fmtK(totalFixed+totalOther),label:'Costuri fixe',sub:`${fixedCosts.length} categorii`,accent:'#64748b'},
               ].map((k,i) => (
@@ -1132,10 +1146,10 @@ export default function ProfitPage() {
                   {sdCount>0&&<span style={{fontSize:9,opacity:.6,marginLeft:4}}>({fmt(glsEffective)}+{fmt(sdEffective)})</span>}
                 </span>
               </div>
-              <div className="pf-pl-row"><span className="pf-pl-label">📣 Marketing {useCPA?`(CPA ${cpaValue} RON)`:''}</span><span className="pf-pl-val neg-c">-{fmt(totalMarketing)} RON</span></div>
+              <div className="pf-pl-row"><span className="pf-pl-label">📣 Marketing {useCPA?`(CPA ${fmt(effectiveCPA,0)} RON × ${totalExpediate} exp.)`:''}</span><span className="pf-pl-val neg-c">-{fmt(totalMarketing)} RON</span></div>
               {returnedCount > 0 && (
                 <div className="pf-pl-row returned-row">
-                  <span className="pf-pl-label">↩️ Retur {returnedCount} colete (transport retur + CPA {fmt(effectiveCPA,0)} RON)</span>
+                  <span className="pf-pl-label">↩️ Transport retur {returnedCount} colete · CPA inclus în marketing</span>
                   <span className="pf-pl-val neg-c">-{fmt(totalRefusedCost)} RON</span>
                 </div>
               )}
@@ -1163,9 +1177,11 @@ export default function ProfitPage() {
                 <div className="pf-card" style={{borderColor:'rgba(244,63,94,.2)'}}>
                   <div style={{fontSize:12,color:'var(--c-text3)',lineHeight:1.8}}>
                     <div>📦 Colete refuzate/returnate: <strong style={{color:'var(--c-red)'}}>{returnedCount}</strong></div>
-                    <div>🚚 Cost transport retur: <strong style={{color:'var(--c-red)'}}>{returnedCount} × {fmt(costPerParcel,2)} = {fmt(refusedTransportCost)} RON</strong></div>
-                    <div>📣 CPA pierdut ({useCPA?`fix ${cpaValue}`:`efectiv ${fmt(effectiveCPA,0)}`} RON): <strong style={{color:'var(--c-red)'}}>{returnedCount} × {fmt(effectiveCPA,0)} = {fmt(refusedCpaCost)} RON</strong></div>
-                    <div style={{borderTop:'1px solid rgba(244,63,94,.15)',marginTop:6,paddingTop:6,fontWeight:700}}>Total pierdut din refuzuri: <strong style={{color:'var(--c-red)'}}>{fmt(totalRefusedCost)} RON</strong></div>
+                    <div>🚚 Transport retur: <strong style={{color:'var(--c-red)'}}>{returnedCount} × {fmt(costPerParcel,2)} = {fmt(refusedTransportCost)} RON</strong></div>
+                    <div style={{fontSize:11,color:'#475569',marginTop:2,padding:'6px 8px',background:'rgba(255,255,255,.03)',borderRadius:6,lineHeight:1.6}}>
+                      💡 CPA-ul pentru aceste comenzi <strong>nu se scade separat</strong> — marketingul ({fmt(totalMarketing)} RON) este împărțit la toate <strong>{totalExpediate} comenzi expediate</strong> (livrate + returnate), deci CPA efectiv este {fmt(effectiveCPA)} RON/comandă.
+                    </div>
+                    <div style={{borderTop:'1px solid rgba(244,63,94,.15)',marginTop:6,paddingTop:6,fontWeight:700}}>Cost net retururi (doar transport): <strong style={{color:'var(--c-red)'}}>{fmt(totalRefusedCost)} RON</strong></div>
                   </div>
                   <div style={{marginTop:10}}>
                     {returnedOrders.slice(0,5).map(o => (
@@ -1245,7 +1261,8 @@ export default function ProfitPage() {
                   <label className="pf-label">CPA — Cost per Achiziție (RON)</label>
                   <input className="pf-input" type="number" step="1" value={cpaValue} onChange={e=>setCpaValue(e.target.value)} />
                   <div style={{marginTop:8,padding:'8px 10px',background:'rgba(168,85,247,.06)',border:'1px solid rgba(168,85,247,.15)',borderRadius:8,fontSize:11,color:'var(--c-text3)',lineHeight:1.7}}>
-                    <div>{cpaValue} RON × {totalOrders} comenzi = <strong style={{color:'#a855f7'}}>{fmt(cpaTotal)} RON</strong></div>
+                    <div>{cpaValue} RON × {totalExpediate} expediate ({totalOrders} livrate + {returnedCount} retur) = <strong style={{color:'#a855f7'}}>{fmt(cpaTotal)} RON</strong></div>
+                    <div style={{fontSize:10,color:'#64748b',marginTop:2}}>CPA real: <strong style={{color:'#a855f7'}}>{fmt(effectiveCPA)} RON/comandă expediată</strong></div>
                     {totalMarketing>0&&totalRevenue>0&&<div>ROAS: <strong style={{color:'#a855f7'}}>{roasMarketing.toFixed(2)}x</strong></div>}
                   </div>
                 </>
@@ -2094,7 +2111,7 @@ export default function ProfitPage() {
                 {label:'Transport SameDay',val:fmt(sdEffective)+' RON',c:'var(--c-yellow)'},
                 {label:'Transport total',val:fmt(effectiveTransportCost)+' RON',c:'var(--c-orange)'},
                 {label:'Marketing',val:fmt(totalMarketing)+' RON',c:'#a855f7'},
-                {label:'Colete refuzate (transport+CPA)',val:fmt(totalRefusedCost)+' RON',c:'var(--c-red)'},
+                {label:'Colete refuzate (doar transport retur)',val:fmt(totalRefusedCost)+' RON',c:'var(--c-red)'},
                 {label:'Costuri fixe + variabile',val:fmt(totalFixed+totalOther)+' RON',c:'var(--c-text3)'},
                 {label:'Profit net (fără TVA)',val:(netProfitBeforeTVA>=0?'+':'')+fmt(netProfitBeforeTVA)+' RON',c:netProfitBeforeTVA>=0?'var(--c-green)':'var(--c-red)'},
                 {label:'TVA de plată (21%)',val:fmt(totalTVA)+' RON',c:'var(--c-yellow)'},
