@@ -598,6 +598,8 @@ export default function ProfitPage() {
 
   useEffect(() => {
     if (!preset) return;
+    // Custom: nu aplica dacă nu sunt ambele date completate
+    if (preset === 'custom' && (!customFrom || !customTo)) return;
     const g = (key) => localStorage.getItem(key);
     const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
     if (!sord) return;
@@ -605,8 +607,9 @@ export default function ProfitPage() {
       const p = JSON.parse(sord);
       const withOv = recomputeStatuses(applyTrackingOverrides(p));
       const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
-      if (livrate.length > 0) { setShopifyOrders(livrate); setAllShopifyOrders(withOv); setShopifyDone(true); }
-      else { setShopifyOrders([]); setShopifyDone(false); }
+      setAllShopifyOrders(withOv);
+      setShopifyOrders(livrate);
+      setShopifyDone(livrate.length > 0);
     } catch {}
   }, [preset, customFrom, customTo]);
 
@@ -651,7 +654,8 @@ export default function ProfitPage() {
       const withOv = applyTrackingOverrides(processed);
       const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
       setAllShopifyOrders(withOv);
-      setShopifyOrders(livrate.length > 0 ? livrate : processed);
+      // Afișăm DOAR livrările — nu toată lista brută
+      setShopifyOrders(livrate);
       setShopifyDone(true);
       localStorage.setItem('gx_orders_profit', JSON.stringify(processed));
       try {
@@ -1043,13 +1047,15 @@ export default function ProfitPage() {
         </div>
 
         {/* PRESET BUTTONS */}
-        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:6}}>
           {[
             {id:'month',     l:'Luna aceasta'},
             {id:'last_month',l:'Luna trecută'},
             {id:'last_30',   l:'30 zile'},
             {id:'last_7',    l:'7 zile'},
             {id:'last_90',   l:'90 zile'},
+            {id:'year',      l:'Anul acesta'},
+            {id:'custom',    l:'📅 Custom'},
           ].map(p=>(
             <button key={p.id} onClick={()=>setPreset(p.id)}
               style={{padding:'7px 12px',borderRadius:20,border:'1px solid',fontSize:11,fontWeight:700,cursor:'pointer',transition:'all .15s',
@@ -1060,6 +1066,30 @@ export default function ProfitPage() {
             </button>
           ))}
         </div>
+        {/* CUSTOM DATE RANGE */}
+        {preset === 'custom' && (
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+            <span style={{fontSize:11,color:'var(--c-text4)'}}>De la:</span>
+            <input type="date" value={customFrom}
+              onChange={e=>setCustomFrom(e.target.value)}
+              style={{background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'5px 8px',borderRadius:7,fontSize:11,outline:'none'}} />
+            <span style={{fontSize:11,color:'var(--c-text4)'}}>Până la:</span>
+            <input type="date" value={customTo}
+              onChange={e=>setCustomTo(e.target.value)}
+              style={{background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'5px 8px',borderRadius:7,fontSize:11,outline:'none'}} />
+            <button
+              onClick={()=>{
+                if(customFrom && customTo) {
+                  // Forțăm re-render cu valorile noi
+                  setPreset('custom');
+                }
+              }}
+              disabled={!customFrom || !customTo}
+              style={{background:'#f97316',color:'white',border:'none',borderRadius:7,padding:'5px 14px',fontSize:11,fontWeight:700,cursor:'pointer',opacity:(!customFrom||!customTo)?.5:1}}>
+              Aplică
+            </button>
+          </div>
+        )}
 
         {/* NAV */}
         <div className="pf-navlinks">
@@ -2538,4 +2568,5 @@ export default function ProfitPage() {
     </>
   );
 }
+
 
