@@ -115,34 +115,123 @@ async function trackGLS(awb) {
   }
 }
 
-// Sameday tracking
-const SAMEDAY_STATUS_MAP = {
-  '1':'in_transit','2':'in_transit','3':'in_transit',
-  '4':'out_for_delivery','5':'delivered','6':'failed_attempt',
-  '7':'returned','8':'returned','10':'in_transit',
-  '11':'failure','24':'out_for_delivery','25':'in_transit',
-};
+// ── SAMEDAY TRACKING (autentificat cu credențiale client) ──
+const SD_BASE = 'https://api.sameday.ro';
+const SD_USER = process.env.SAMEDAY_USERNAME;
+const SD_PASS = process.env.SAMEDAY_PASSWORD;
+
+// Token cache — valid 12h, reîmprospătat automat
+let sdTokenCache = { token: null, expiresAt: 0 };
+
+async function getSamedayToken() {
+  if (sdTokenCache.token && Date.now() < sdTokenCache.expiresAt) {
+    return sdTokenCache.token;
+  }
+  if (!SD_USER || !SD_PASS) throw new Error('Lipsesc SAMEDAY_USERNAME / SAMEDAY_PASSWORD în env vars');
+
+  const res = await fetch(`${SD_BASE}/api/authenticate`, {
+    method: 'POST',
+    headers: {
+      'X-AUTH-USERNAME': SD_USER,
+      'X-AUTH-PASSWORD': SD_PASS,
+      'Content-Type': 'application/json',
+    },
+    signal: AbortSignal.timeout(10000),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Sameday auth ${res.status}: ${txt.slice(0, 100)}`);
+  }
+
+  const data = await res.json();
+  sdTokenCache = {
+    token: data.token,
+    expiresAt: Date.now() + 11 * 60 * 60 * 1000, // 11h (token valid 12h)
+  };
+  return data.token;
+}
+
+// Mapare statusuri Sameday (statusId din API-ul autentificat)
+// Sursa: documentație Sameday + testare live
+function mapSamedayStatus(statusId) {
+  const id = parseInt(statusId);
+  // LIVRAT
+  if ([5, 9].includes(id)) return 'delivered';
+  // LA CURIER / ÎN LIVRARE AZI
+  if ([4, 10].includes(id)) return 'out_for_delivery';
+  // RETUR confirmat (nu simplu "returnat" din Shopify)
+  if ([8, 11, 12].includes(id)) return 'returned';
+  // TENTATIVĂ EȘUATĂ
+  if ([6, 7].includes(id)) return 'failed_attempt';
+  // ÎN TRANZIT (toate celelalte stări active: preluat, hub, sortare, etc.)
+  return 'in_transit';
+}
 
 async function trackSameday(awb) {
   const cacheKey = `sd_${awb}`;
   const cached = trackingCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+
   try {
-    const res = await fetch(`https://api.sameday.ro/api/public/awb/${awb}/awb-history`,
-      { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return null;
+    const token = await getSamedayToken();
+
+    // Endpoint autentificat — returnează istoricul complet al coletului
+    const res = await fetch(`${SD_BASE}/api/client/awb/${awb.trim()}/awb-history`, {
+      headers: {
+        'X-AUTH-TOKEN': token,
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      // Fallback: endpoint alternativ
+      const res2 = await fetch(`${SD_BASE}/api/awb/${awb.trim()}/status`, {
+        headers: { 'X-AUTH-TOKEN': token, 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(10000),
+        cache: 'no-store',
+      });
+      if (!res2.ok) {
+        console.log('[SAMEDAY] Ambele endpoint-uri au eșuat pentru AWB:', awb, res.status, res2.status);
+        return null;
+      }
+      const d2 = await res2.json();
+      const result2 = {
+        status: mapSamedayStatus(d2.statusId || d2.status || ''),
+        statusRaw: d2.statusLabel || d2.statusDescription || String(d2.statusId || ''),
+        lastUpdate: d2.statusDate || d2.date || '',
+        location: d2.county || d2.location || '',
+      };
+      trackingCache.set(cacheKey, { data: result2, ts: Date.now() });
+      return result2;
+    }
+
     const data = await res.json();
-    const last = (data.awbHistory||[])[0];
+    console.log('[SAMEDAY] Response for', awb, ':', JSON.stringify(data).slice(0, 300));
+
+    // Ultimul status = primul din awbHistory (cel mai recent)
+    const history = data.awbHistory || data.history || [];
+    const last = history[0];
     if (!last) return null;
+
     const result = {
-      status: SAMEDAY_STATUS_MAP[String(last.statusId||'')] || 'in_transit',
-      statusRaw: last.statusLabel || '',
-      lastUpdate: last.statusDate || '',
-      location: last.county || '',
+      status: mapSamedayStatus(last.statusId || last.status || ''),
+      statusRaw: last.statusLabel || last.statusDescription || String(last.statusId || ''),
+      statusDescription: last.statusLabel || last.statusDescription || '',
+      lastUpdate: last.statusDate || last.date || '',
+      location: last.county || last.city || last.location || '',
     };
+
     trackingCache.set(cacheKey, { data: result, ts: Date.now() });
     return result;
-  } catch { return null; }
+
+  } catch(e) {
+    console.log('[SAMEDAY] Exception:', e.message, 'AWB:', awb);
+    return null;
+  }
 }
 
 // GET: single AWB sau debug
