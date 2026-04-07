@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 
 // ── Credențiale din Vercel Environment Variables ──────────────────────────
 // GLS_USERNAME, GLS_PASSWORD, GLS_CLIENT_NUMBER — setate în Vercel Dashboard
-const ENV_GLS_USER   = process.env.GLS_USERNAME    || '';
-const ENV_GLS_PASS   = process.env.GLS_PASSWORD    || '';
-const ENV_GLS_CLIENT = process.env.GLS_CLIENT_NUMBER || '553003585';
+const ENV_GLS_USER   = process.env.GLS_USERNAME   || process.env.GLS_APP_ID      || '';
+const ENV_GLS_PASS   = process.env.GLS_PASSWORD   || process.env.GLS_API_SECRET  || process.env.GLS_API_KEY || '';
+const ENV_GLS_CLIENT = process.env.GLS_CLIENT_NUMBER || process.env.GLS_APP_ID || '553003585';
 
 const GLS_WSDL = 'https://online.gls-romania.ro/webservices/soap_server.php?wsdl&ver=18.09.12.01';
 
@@ -165,12 +165,14 @@ export async function GET(request) {
   if (searchParams.get('action')==='services') {
     return NextResponse.json({ ok:true, services:GLS_SERVICES }, { headers:cors() });
   }
-  // Test conexiune folosind env vars
+  // Returnăm config fără să apelăm GLS API
   return NextResponse.json({
     ok: !!(ENV_GLS_USER && ENV_GLS_PASS),
     configured: !!(ENV_GLS_USER && ENV_GLS_PASS),
     clientNumber: ENV_GLS_CLIENT,
-    message: ENV_GLS_USER ? 'GLS configurat din Vercel env vars.' : 'GLS_USERNAME lipsă din Vercel env vars.',
+    message: ENV_GLS_USER
+      ? `GLS configurat din Vercel env vars. Client: ${ENV_GLS_CLIENT}`
+      : 'GLS_USERNAME sau GLS_APP_ID lipsesc din Vercel env vars.',
     services: GLS_SERVICES,
-  }, { headers:cors() });
+  }, { headers: cors() });
 }
