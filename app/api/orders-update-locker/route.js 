@@ -1,0 +1,66 @@
+import { NextResponse } from 'next/server';
+
+function corsHeaders() {
+  return { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'*' };
+}
+export async function OPTIONS() {
+  return new NextResponse(null, { status:200, headers:corsHeaders() });
+}
+
+// Actualizează order note_attributes în Shopify când clientul alege un locker
+export async function POST(request) {
+  try {
+    const body = await request.json();
+    const { orderId, lockerId, lockerName, lockerAddr, carrier, shopifyDomain, shopifyToken } = body;
+
+    // Credențiale din env sau din request
+    const domain = shopifyDomain || process.env.SHOPIFY_DOMAIN;
+    const token  = shopifyToken  || process.env.SHOPIFY_TOKEN;
+
+    if (!domain || !token || !orderId) {
+      return NextResponse.json({ error: 'Missing params' }, { status: 400, headers: corsHeaders() });
+    }
+
+    // Fetch current order to preserve existing attributes
+    const getRes = await fetch(
+      `https://${domain}/admin/api/2024-01/orders/${orderId}.json?fields=note_attributes,tags,note`,
+      { headers: { 'X-Shopify-Access-Token': token }, cache: 'no-store' }
+    );
+    if (!getRes.ok) return NextResponse.json({ error: `Shopify GET ${getRes.status}` }, { status: getRes.status, headers: corsHeaders() });
+
+    const orderData = await getRes.json();
+    const existing = (orderData.order?.note_attributes || []).filter(a => {
+      const n = (a.name || '').toLowerCase();
+      return !['locker_id','locker_name','locker_address','locker_carrier'].includes(n);
+    });
+
+    // Adaugă atributele locker-ului
+    const newAttrs = [
+      ...existing,
+      { name: 'locker_id',      value: String(lockerId || '') },
+      { name: 'locker_name',    value: String(lockerName || '') },
+      { name: 'locker_address', value: String(lockerAddr || '') },
+      { name: 'locker_carrier', value: String(carrier || 'sameday').toUpperCase() },
+    ];
+
+    // Tags
+    const tags = (orderData.order?.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+    if (!tags.includes('locker-selected')) tags.push('locker-selected');
+
+    const updateRes = await fetch(
+      `https://${domain}/admin/api/2024-01/orders/${orderId}.json`,
+      {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: { id: orderId, note_attributes: newAttrs, tags: tags.join(', ') } }),
+        cache: 'no-store',
+      }
+    );
+
+    if (!updateRes.ok) return NextResponse.json({ error: `Shopify PUT ${updateRes.status}` }, { status: updateRes.status, headers: corsHeaders() });
+
+    return NextResponse.json({ ok: true, lockerId, lockerName, carrier }, { headers: corsHeaders() });
+  } catch(e) {
+    return NextResponse.json({ error: e.message }, { status: 500, headers: corsHeaders() });
+  }
+}
