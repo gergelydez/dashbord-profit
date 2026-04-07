@@ -434,81 +434,73 @@ export default function FulfillmentPage() {
     const user   = glsUser   || '';
     const pass   = glsPass   || '';
     const client = glsClient || '553003585';
-    if(!user||!pass) {
+    if (!user || !pass) {
       setGlsStatus('error'); setGlsStatusMsg('✗ Completează username și parola GLS.');
-      toast('Completează credențialele GLS.','error'); return;
+      toast('Completează credențialele GLS.', 'error'); return;
     }
     try {
-      const res = await fetch('/api/gls',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:'test_connection',username:user,password:pass,clientNumber:client}),
+      const res = await fetch('/api/gls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'test_connection', username: user, password: pass, clientNumber: client }),
       });
-      // Verificăm că răspunsul e JSON, nu HTML 404
-      const ct = res.headers.get('content-type')||'';
-      if(!ct.includes('json')) {
-        setGlsStatus('error');
-        setGlsStatusMsg('✗ Ruta /api/gls nu e pe Vercel. Urcă app/api/gls/route.js și redeploy.');
-        toast('GLS: fișierul route.js lipsește de pe Vercel!','error'); return;
-      }
-      const data = await res.json();
-      if(data.ok||data.configured) {
+      let data;
+      try { data = await res.json(); }
+      catch { data = { ok: false, error: `Server error ${res.status} — verifică Vercel logs` }; }
+      if (data.ok || data.configured) {
         setGlsStatus('ok'); setGlsEnvOk(true);
-        if(data.clientNumber) setGlsClient(data.clientNumber);
-        setGlsStatusMsg(`✓ ${data.message||'GLS conectat!'}`);
-        toast('GLS conectat cu succes!','success');
+        if (data.clientNumber) setGlsClient(data.clientNumber);
+        setGlsStatusMsg('✓ ' + (data.message || 'GLS conectat!'));
+        toast('GLS conectat!', 'success');
       } else {
         setGlsStatus('error');
-        setGlsStatusMsg('✗ '+(data.error||data.message||'Credențiale GLS invalide'));
-        toast('GLS eroare: '+(data.error||data.message||'credențiale invalide'),'error');
+        setGlsStatusMsg('✗ ' + (data.error || data.message || 'Credențiale invalide'));
+        toast('GLS: ' + (data.error || data.message || 'eroare'), 'error');
       }
-    } catch(e) {
+    } catch (e) {
       setGlsStatus('error');
-      setGlsStatusMsg('✗ Eroare rețea: '+e.message);
-      toast('GLS eroare: '+e.message,'error');
+      setGlsStatusMsg('✗ ' + e.message);
+      toast('GLS eroare: ' + e.message, 'error');
     }
   };
 
   const testSdConnection = async () => {
     setSdStatus('testing'); setSdStatusMsg('');
-    const user = sdUser||'';
-    const pass = sdPass||'';
-    if(!user||!pass) {
+    const user = sdUser || '';
+    const pass = sdPass || '';
+    if (!user || !pass) {
       setSdStatus('error'); setSdStatusMsg('✗ Completează username și parola Sameday.');
-      toast('Completează credențialele Sameday.','error'); return;
+      toast('Completează credențialele Sameday.', 'error'); return;
     }
     try {
-      const res = await fetch('/api/sameday-awb',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:'test_connection',username:user,password:pass}),
+      const res = await fetch('/api/sameday-awb', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'test_connection', username: user, password: pass }),
       });
-      const ct = res.headers.get('content-type')||'';
-      if(!ct.includes('json')) {
-        setSdStatus('error');
-        setSdStatusMsg('✗ Ruta /api/sameday-awb nu e pe Vercel. Urcă fișierul și redeploy.');
-        toast('Sameday: fișierul route.js lipsește de pe Vercel!','error'); return;
-      }
-      const data = await res.json();
-      if(data.ok) {
+      let data;
+      try { data = await res.json(); }
+      catch { data = { ok: false, error: `Server error ${res.status} — verifică Vercel logs` }; }
+      if (data.ok) {
         setSdStatus('ok'); setSdEnvOk(true);
-        const pts=data.pickupPoints||[]; const svcs=data.services||[];
-        if(pts.length) {
-          setSdConfig({pickupPoints:pts,services:svcs});
-          if(!sdPickup&&pts[0]) setSdPickup(String(pts[0].id));
-          if(!sdService&&svcs[0]) setSdService(String(svcs[0].id));
+        const pts = data.pickupPoints || [];
+        const svcs = data.services || [];
+        if (pts.length) {
+          setSdConfig({ pickupPoints: pts, services: svcs });
+          if (!sdPickup && pts[0]) setSdPickup(String(pts[0].id));
+          if (!sdService && svcs[0]) setSdService(String(svcs[0].id));
         }
         setSdStatusMsg(`✓ Sameday conectat! ${pts.length} pickup points, ${svcs.length} servicii`);
-        toast(`Sameday conectat! ${pts.length} pickup points.`,'success');
+        toast(`Sameday conectat! ${pts.length} pickup points.`, 'success');
       } else {
         setSdStatus('error');
-        setSdStatusMsg('✗ '+(data.error||'Credențiale Sameday invalide'));
-        toast('Sameday eroare: '+(data.error||'credențiale invalide'),'error');
+        setSdStatusMsg('✗ ' + (data.error || 'Credențiale Sameday invalide'));
+        toast('Sameday: ' + (data.error || 'credențiale invalide'), 'error');
       }
-    } catch(e) {
+    } catch (e) {
       setSdStatus('error');
-      setSdStatusMsg('✗ Eroare rețea: '+e.message);
-      toast('Sameday eroare: '+e.message,'error');
+      setSdStatusMsg('✗ ' + e.message);
+      toast('Sameday eroare: ' + e.message, 'error');
     }
   };
   // ── Generare AWB ───────────────────────────────────────────────────────
@@ -943,17 +935,31 @@ export default function FulfillmentPage() {
               )}
 
               {addrModal.suggestion&&(
-                <div style={{background:'rgba(16,185,129,.07)',border:'1px solid rgba(16,185,129,.25)',borderRadius:10,padding:'10px 14px'}}>
-                  <div style={{fontSize:10,color:'#10b981',fontWeight:700,marginBottom:5}}>
-                    The address [{addrModal.editAddr.city}, {addrModal.editAddr.address||'?'}] matches the ZIP code [{addrModal.suggestion.postcode}]. Internal.
+                <div style={{
+                  background: addrModal.suggestion.zipMismatch ? 'rgba(245,158,11,.07)' : 'rgba(16,185,129,.07)',
+                  border: `1px solid ${addrModal.suggestion.zipMismatch ? 'rgba(245,158,11,.3)' : 'rgba(16,185,129,.25)'}`,
+                  borderRadius:10, padding:'10px 14px',
+                }}>
+                  <div style={{fontSize:10,color: addrModal.suggestion.zipMismatch?'#f59e0b':'#10b981',fontWeight:700,marginBottom:6}}>
+                    {addrModal.suggestion.zipMessage || `Adresa verificată · ZIP: ${addrModal.suggestion.postcode}`}
                   </div>
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <span style={{fontSize:12,color:'#94a3b8',flex:1}}>
-                      📍 {addrModal.suggestion.city}{addrModal.suggestion.county?', '+addrModal.suggestion.county:''}{addrModal.suggestion.formattedAddress?', '+addrModal.suggestion.formattedAddress:''}
-                      {addrModal.suggestion.postcode&&<strong style={{color:'#10b981'}}> · {addrModal.suggestion.postcode}</strong>}
-                    </span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,color:'#94a3b8'}}>
+                        📍 {addrModal.suggestion.city}{addrModal.suggestion.county?', '+addrModal.suggestion.county:''}
+                        {addrModal.suggestion.formattedAddress?', '+addrModal.suggestion.formattedAddress:''}
+                      </div>
+                      {addrModal.suggestion.postcode&&(
+                        <div style={{fontSize:13,fontWeight:800,color: addrModal.suggestion.zipMismatch?'#f59e0b':'#10b981',marginTop:3,fontFamily:'monospace'}}>
+                          ZIP: {addrModal.suggestion.postcode}
+                          {addrModal.suggestion.zipMismatch&&<span style={{fontSize:10,color:'#94a3b8',fontWeight:400,marginLeft:6}}>
+                            (actual: {addrModal.editAddr.zip||'lipsă'})
+                          </span>}
+                        </div>
+                      )}
+                    </div>
                     <button onClick={applyAddrSuggestion}
-                      style={{background:'#10b981',color:'white',border:'none',borderRadius:6,padding:'5px 16px',fontSize:11,fontWeight:700,cursor:'pointer',flexShrink:0}}>
+                      style={{background:'#10b981',color:'white',border:'none',borderRadius:6,padding:'6px 18px',fontSize:12,fontWeight:700,cursor:'pointer',flexShrink:0}}>
                       fix
                     </button>
                   </div>
