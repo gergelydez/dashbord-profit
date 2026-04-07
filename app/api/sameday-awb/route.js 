@@ -1,189 +1,175 @@
 import { NextResponse } from 'next/server';
 
-const ENV_SD_USER = process.env.SAMEDAY_USERNAME || '';
-const ENV_SD_PASS = process.env.SAMEDAY_PASSWORD || '';
-const SD_BASE = 'https://api.sameday.ro';
+const ENV_USER = process.env.SAMEDAY_USERNAME || '';
+const ENV_PASS = process.env.SAMEDAY_PASSWORD || '';
+const SD_BASE  = 'https://api.sameday.ro';
 
-function cors() {
-  return {
-    'Access-Control-Allow-Origin':'*',
-    'Access-Control-Allow-Methods':'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers':'*'
-  };
-}
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  'Access-Control-Allow-Headers': '*',
+};
+
 export async function OPTIONS() {
-  return new NextResponse(null,{status:200,headers:cors()});
+  return new NextResponse(null, { status: 200, headers: CORS });
 }
 
-async function sdAuth(user,pass) {
-  const res = await fetch(`${SD_BASE}/api/authenticate`,{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-AUTH-TOKEN':''},
-    body:JSON.stringify({username:user,password:pass}),
-    cache:'no-store',
+async function sdAuth(user, pass) {
+  const res = await fetch(`${SD_BASE}/api/authenticate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-AUTH-TOKEN': '' },
+    body: JSON.stringify({ username: user, password: pass }),
+    cache: 'no-store',
   });
   const text = await res.text();
   let data;
-  try { data=JSON.parse(text); } catch { throw new Error(`Sameday auth răspuns invalid: ${text.slice(0,100)}`); }
-  if(!res.ok) throw new Error(data?.message||data?.error||`Auth ${res.status}: ${text.slice(0,150)}`);
-  const token = data.token||data.Token;
-  if(!token) throw new Error('Token lipsă în răspunsul Sameday');
+  try { data = JSON.parse(text); } catch {
+    throw new Error(`Auth raspuns invalid (${res.status}): ${text.slice(0, 100)}`);
+  }
+  if (!res.ok) throw new Error(data?.message || data?.error || `Auth ${res.status}`);
+  const token = data.token || data.Token;
+  if (!token) throw new Error('Token lipsa in raspuns Sameday');
   return token;
 }
 
-async function sdPickupPoints(token) {
-  const res = await fetch(`${SD_BASE}/api/client/pickup-points`,{
-    headers:{'X-AUTH-TOKEN':token,'Accept':'application/json'},cache:'no-store',
-  });
-  if(!res.ok) return [];
-  const d = await res.json();
-  return d.data||d||[];
-}
-
-async function sdServices(token) {
-  const res = await fetch(`${SD_BASE}/api/client/services`,{
-    headers:{'X-AUTH-TOKEN':token,'Accept':'application/json'},cache:'no-store',
-  });
-  if(!res.ok) return [];
-  const d = await res.json();
-  return d.data||d.services||[];
-}
-
 export async function GET() {
-  // Verificare rapidă fără să apeleze Sameday dacă nu avem env vars
-  if(!ENV_SD_USER||!ENV_SD_PASS) {
-    return NextResponse.json({ok:false,configured:false,
-      message:'SAMEDAY_USERNAME sau SAMEDAY_PASSWORD lipsesc din Vercel env vars.'
-    },{headers:cors()});
-  }
-  // Avem env vars — testăm
-  try {
-    const token = await sdAuth(ENV_SD_USER,ENV_SD_PASS);
-    const [pts,svcs] = await Promise.all([sdPickupPoints(token),sdServices(token)]);
+  if (!ENV_USER || !ENV_PASS) {
     return NextResponse.json({
-      ok:true,configured:true,
-      message:'Sameday conectat din Vercel env vars!',
-      pickupPoints:pts.map(p=>({id:p.id||p.pickupPointId,name:p.name||p.alias,city:p.city?.name||p.city||''})),
-      services:svcs.map(s=>({id:s.id||s.serviceId,name:s.name,code:s.code||'',
-        isLocker:(s.name||'').toLowerCase().includes('locker')||(s.code||'').toLowerCase().includes('ln')})),
-    },{headers:cors()});
-  } catch(e) {
-    return NextResponse.json({ok:false,configured:false,error:e.message},{status:500,headers:cors()});
+      ok: false,
+      configured: false,
+      message: 'SAMEDAY_USERNAME sau SAMEDAY_PASSWORD lipsesc din Vercel env vars.',
+    }, { headers: CORS });
+  }
+  try {
+    const token = await sdAuth(ENV_USER, ENV_PASS);
+    const [ptsRes, svcsRes] = await Promise.all([
+      fetch(`${SD_BASE}/api/client/pickup-points`, { headers: { 'X-AUTH-TOKEN': token }, cache: 'no-store' }),
+      fetch(`${SD_BASE}/api/client/services`,      { headers: { 'X-AUTH-TOKEN': token }, cache: 'no-store' }),
+    ]);
+    const pts  = ((await ptsRes.json()).data  || []).map(p => ({ id: p.id || p.pickupPointId, name: p.name || p.alias, city: p.city?.name || p.city || '' }));
+    const svcs = ((await svcsRes.json()).data || []).map(s => ({ id: s.id || s.serviceId, name: s.name, code: s.code || '', isLocker: (s.name||'').toLowerCase().includes('locker') }));
+    return NextResponse.json({ ok: true, configured: true, pickupPoints: pts, services: svcs }, { headers: CORS });
+  } catch (e) {
+    return NextResponse.json({ ok: false, configured: false, error: e.message }, { status: 500, headers: CORS });
   }
 }
 
-export async function POST(request) {
+export async function POST(req) {
   try {
-    const body = await request.json();
+    const body = await req.json();
+    const user = body.username || ENV_USER || '';
+    const pass = body.password || ENV_PASS || '';
 
-    // ── TEST CONEXIUNE ─────────────────────────────────────────────────
-    if(body.action==='test_connection'||body.action==='get_config') {
-      const u = body.username||ENV_SD_USER||'';
-      const p = body.password||ENV_SD_PASS||'';
-      if(!u||!p) return NextResponse.json({ok:false,error:'Completează username și parola Sameday.'},{headers:cors()});
+    if (!user || !pass) {
+      return NextResponse.json({ ok: false, error: 'Completeaza username si parola Sameday.' }, { headers: CORS });
+    }
+
+    const token = await sdAuth(user, pass);
+
+    // TEST CONEXIUNE
+    if (body.action === 'test_connection' || body.action === 'get_config') {
+      const [ptsRes, svcsRes] = await Promise.all([
+        fetch(`${SD_BASE}/api/client/pickup-points`, { headers: { 'X-AUTH-TOKEN': token, 'Accept': 'application/json' }, cache: 'no-store' }),
+        fetch(`${SD_BASE}/api/client/services`,      { headers: { 'X-AUTH-TOKEN': token, 'Accept': 'application/json' }, cache: 'no-store' }),
+      ]);
+      const pts  = ((await ptsRes.json()).data  || []).map(p => ({ id: p.id || p.pickupPointId, name: p.name || p.alias, city: p.city?.name || p.city || '' }));
+      const svcs = ((await svcsRes.json()).data || []).map(s => ({ id: s.id || s.serviceId, name: s.name, code: s.code || '', isLocker: (s.name||'').toLowerCase().includes('locker') }));
+      return NextResponse.json({ ok: true, configured: true, pickupPoints: pts, services: svcs }, { headers: CORS });
+    }
+
+    // LOCKERE
+    if (body.action === 'get_lockers') {
       try {
-        const token = await sdAuth(u,p);
-        const [pts,svcs] = await Promise.all([sdPickupPoints(token),sdServices(token)]);
-        return NextResponse.json({
-          ok:true,configured:true,
-          pickupPoints:pts.map(p=>({id:p.id||p.pickupPointId,name:p.name||p.alias,city:p.city?.name||p.city||''})),
-          services:svcs.map(s=>({id:s.id||s.serviceId,name:s.name,code:s.code||'',
-            isLocker:(s.name||'').toLowerCase().includes('locker')||(s.code||'').toLowerCase().includes('ln')})),
-        },{headers:cors()});
-      } catch(e) {
-        return NextResponse.json({ok:false,error:e.message},{status:500,headers:cors()});
+        const params = body.county ? `?county=${encodeURIComponent(body.county)}&page=1&perPage=200` : '?page=1&perPage=200';
+        const res = await fetch(`${SD_BASE}/api/client/lockers${params}`, { headers: { 'X-AUTH-TOKEN': token, 'Accept': 'application/json' }, cache: 'no-store' });
+        const d = await res.json();
+        const lockers = (d.data || d.lockers || []).map(l => ({
+          id: l.id || l.lockerId,
+          name: l.name || l.alias || `easybox #${l.id}`,
+          address: l.address || '',
+          city: l.city?.name || l.city || '',
+          county: l.county?.name || l.county || '',
+        }));
+        return NextResponse.json({ ok: true, lockers }, { headers: CORS });
+      } catch {
+        return NextResponse.json({ ok: true, lockers: [] }, { headers: CORS });
       }
     }
 
-    // ── LOCKERE ────────────────────────────────────────────────────────
-    if(body.action==='get_lockers') {
-      const u=body.username||ENV_SD_USER;const p=body.password||ENV_SD_PASS;
-      if(!u||!p) return NextResponse.json({error:'Credențiale lipsă'},{status:400,headers:cors()});
-      const token=await sdAuth(u,p);
-      try {
-        const params=body.county?`?county=${encodeURIComponent(body.county)}&page=1&perPage=200`:'?page=1&perPage=200';
-        const res=await fetch(`${SD_BASE}/api/client/lockers${params}`,{
-          headers:{'X-AUTH-TOKEN':token,'Accept':'application/json'},cache:'no-store',
-        });
-        const d=await res.json();
-        const lockers=(d.data||d.lockers||[]).map(l=>({
-          id:l.id||l.lockerId,name:l.name||l.alias||`easybox #${l.id}`,
-          address:l.address||'',city:l.city?.name||l.city||'',county:l.county?.name||l.county||'',
-        }));
-        return NextResponse.json({ok:true,lockers},{headers:cors()});
-      } catch { return NextResponse.json({ok:true,lockers:[]},{headers:cors()}); }
-    }
-
-    // ── GENERARE AWB ───────────────────────────────────────────────────
+    // GENERARE AWB
     const {
-      username:bUser,password:bPass,
-      pickupPointId,serviceId,senderEasyboxId,
-      recipientName,phone,email,address,city,county,zip,
-      weight,parcels,content,isCOD,total,orderName,orderId,
-      openPackage,saturdayDelivery,thermo,repaymentTransport,
-      observations,insuredValue,manualAwb,
+      pickupPointId, serviceId, senderEasyboxId,
+      recipientName, phone, email, address, city, county, zip,
+      weight, parcels, content, isCOD, total, orderName, orderId,
+      openPackage, saturdayDelivery, thermo, repaymentTransport,
+      observations, insuredValue, manualAwb,
     } = body;
 
-    if(manualAwb) return NextResponse.json({ok:true,awb:manualAwb,mode:'manual'},{headers:cors()});
+    if (manualAwb) {
+      return NextResponse.json({ ok: true, awb: manualAwb, mode: 'manual' }, { headers: CORS });
+    }
 
-    const username=ENV_SD_USER||bUser||'';
-    const password=ENV_SD_PASS||bPass||'';
-    if(!username||!password) return NextResponse.json({
-      error:'Credențiale Sameday lipsă. Adaugă SAMEDAY_USERNAME și SAMEDAY_PASSWORD în Vercel.'
-    },{status:400,headers:cors()});
+    let ppId  = pickupPointId;
+    let svcId = serviceId;
+    if (!ppId) {
+      const r = await fetch(`${SD_BASE}/api/client/pickup-points`, { headers: { 'X-AUTH-TOKEN': token } });
+      ppId = ((await r.json()).data || [])[0]?.id;
+    }
+    if (!svcId) {
+      const r = await fetch(`${SD_BASE}/api/client/services`, { headers: { 'X-AUTH-TOKEN': token } });
+      svcId = ((await r.json()).data || [])[0]?.id;
+    }
 
-    const token=await sdAuth(username,password);
-    let ppId=pickupPointId;
-    let svcId=serviceId;
-    if(!ppId) { const pts=await sdPickupPoints(token); ppId=pts[0]?.id||pts[0]?.pickupPointId; }
-    if(!svcId) { const svcs=await sdServices(token); svcId=svcs[0]?.id||svcs[0]?.serviceId; }
-
-    const awbBody={
-      awbPayment:isCOD?1:0,
-      cashOnDelivery:isCOD?parseFloat(total)||0:0,
-      cashOnDeliveryReturns:0,
-      insuredValue:parseFloat(insuredValue)||0,
-      packageType:0,
-      packageNumber:parseInt(parcels)||1,
-      packageWeight:parseFloat(weight)||1,
-      observations:(observations||content||`Comanda ${orderName}`).slice(0,255),
-      reference:(orderName||'').slice(0,50),
+    const awbBody = {
+      awbPayment:          isCOD ? 1 : 0,
+      cashOnDelivery:      isCOD ? parseFloat(total) || 0 : 0,
+      cashOnDeliveryReturns: 0,
+      insuredValue:        parseFloat(insuredValue) || 0,
+      packageType:         0,
+      packageNumber:       parseInt(parcels) || 1,
+      packageWeight:       parseFloat(weight) || 1,
+      observations:        (observations || content || `Comanda ${orderName}`).slice(0, 255),
+      reference:           (orderName || '').slice(0, 50),
       recipientName,
-      recipientPhone:(phone||'').replace(/\D/g,'').slice(-10),
-      recipientEmail:email||'',
-      recipientAddress:address,
-      recipientCity:city,
-      recipientCounty:county||'',
-      recipientPostalCode:zip||'',
-      pickupPoint:parseInt(ppId),
-      service_id:parseInt(svcId),
-      openPackage:openPackage?1:0,
-      repaymentTransport:repaymentTransport?1:0,
-      saturday_delivery:saturdayDelivery?1:0,
-      thermo:thermo?1:0,
-      ...(senderEasyboxId?{lockerId:parseInt(senderEasyboxId)}:{}),
+      recipientPhone:      (phone || '').replace(/\D/g, '').slice(-10),
+      recipientEmail:      email || '',
+      recipientAddress:    address,
+      recipientCity:       city,
+      recipientCounty:     county || '',
+      recipientPostalCode: zip || '',
+      pickupPoint:         parseInt(ppId),
+      service_id:          parseInt(svcId),
+      openPackage:         openPackage ? 1 : 0,
+      repaymentTransport:  repaymentTransport ? 1 : 0,
+      saturday_delivery:   saturdayDelivery ? 1 : 0,
+      thermo:              thermo ? 1 : 0,
+      ...(senderEasyboxId ? { lockerId: parseInt(senderEasyboxId) } : {}),
     };
 
-    const res=await fetch(`${SD_BASE}/api/awb`,{
-      method:'POST',
-      headers:{'X-AUTH-TOKEN':token,'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify(awbBody),cache:'no-store',
+    const awbRes = await fetch(`${SD_BASE}/api/awb`, {
+      method: 'POST',
+      headers: { 'X-AUTH-TOKEN': token, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(awbBody),
+      cache: 'no-store',
     });
-    const raw=await res.text();
+    const raw = await awbRes.text();
     let data;
-    try{data=JSON.parse(raw);}catch{data={raw:raw.slice(0,300)};}
-    if(!res.ok) {
-      const msg=data.message||data.error||(data.errors?JSON.stringify(data.errors).slice(0,200):'')||raw.slice(0,200);
-      throw new Error(`Sameday ${res.status}: ${msg}`);
+    try { data = JSON.parse(raw); } catch {
+      throw new Error(`Raspuns invalid: ${raw.slice(0, 200)}`);
     }
-    return NextResponse.json({
-      ok:true,
-      awb:data.awbNumber||data.AWBNumber||data.awb||data.data?.awbNumber,
-      parcelIds:data.parcelNumbers||[],
-      orderId,orderName,
-    },{headers:cors()});
+    if (!awbRes.ok) {
+      throw new Error(data.message || data.error || JSON.stringify(data).slice(0, 200));
+    }
 
-  } catch(e) {
-    return NextResponse.json({error:e.message},{status:500,headers:cors()});
+    return NextResponse.json({
+      ok: true,
+      awb: data.awbNumber || data.AWBNumber || data.awb || data.data?.awbNumber,
+      parcelIds: data.parcelNumbers || [],
+      orderId,
+      orderName,
+    }, { headers: CORS });
+
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: e.message }, { status: 500, headers: CORS });
   }
 }
