@@ -898,6 +898,31 @@ export default function ProfitPage() {
   const marginAfter = totalRevenue > 0 ? (netProfitAfterTVA / totalRevenue) * 100 : 0;
   const isEstimated = !glsDone || useCPA;
 
+  // ── ESTIMARE ÎNCASĂRI TRANZIT (cu rată retur 5% COD) ──────────────────
+  const RETUR_RATE = 0.05;
+  const tranzitOrders = allShopifyOrders.filter(o => ['incurs','outfor'].includes(o.ts));
+  const tranzitCOD    = tranzitOrders.filter(o => {
+    const gw = (o.gateway||'').toLowerCase();
+    return !['shopify_payments','stripe','paypal'].some(g => gw.includes(g));
+  });
+  const tranzitCard   = tranzitOrders.filter(o => {
+    const gw = (o.gateway||'').toLowerCase();
+    return ['shopify_payments','stripe','paypal'].some(g => gw.includes(g));
+  });
+  const tranzitTotalVal  = tranzitOrders.reduce((a,o) => a+o.total, 0);
+  const tranzitCODVal    = tranzitCOD.reduce((a,o) => a+o.total, 0);
+  const tranzitCardVal   = tranzitCard.reduce((a,o) => a+o.total, 0);
+  const tranzitEstCOD    = tranzitCODVal  * (1 - RETUR_RATE);
+  const tranzitEstTotal  = tranzitEstCOD  + tranzitCardVal;
+  const tranzitEstRetur  = tranzitCODVal  * RETUR_RATE;
+  // Profit estimat tranzit = încasări estimate - COGS estimat - transport estimat
+  const tranzitCOGS      = tranzitOrders.reduce((total, order) =>
+    total + (order.items||[]).reduce((s, item) => s + (resolveCost(item).cost * (item.qty||1)), 0), 0);
+  const tranzitTransport = tranzitOrders.length * costPerParcel;
+  const tranzitNetEst    = tranzitEstTotal - tranzitCOGS - tranzitTransport;
+  const tranzitGLS       = tranzitOrders.filter(o => o.courier==='gls'||!o.courier||o.courier==='unknown');
+  const tranzitSD        = tranzitOrders.filter(o => o.courier==='sameday');
+
   const addFixed = () => setFixedCosts(p => [...p, { id: Date.now(), name: '', amount: '', currency: 'RON', perOrder: false, perOrderAmt: '' }]);
   const updateFixed = (id, field, val) => setFixedCosts(p => p.map(c => c.id === id ? { ...c, [field]: val } : c));
   const removeFixed = (id) => setFixedCosts(p => p.filter(c => c.id !== id));
@@ -1212,6 +1237,122 @@ export default function ProfitPage() {
                 <span className="pf-pl-val" style={{fontWeight:900,fontSize:13,color:netProfitAfterTVA>=0?'var(--c-green)':'var(--c-red)'}}>{netProfitAfterTVA>=0?'+':''}{fmt(netProfitAfterTVA)} RON</span>
               </div>
             </div>
+
+            {/* ══ ESTIMARE PROFIT & ÎNCASĂRI TRANZIT ══════════════════════════ */}
+            {tranzitOrders.length > 0 && (
+              <div style={{background:'rgba(59,130,246,.05)',border:'1px solid rgba(59,130,246,.2)',borderRadius:12,padding:'14px 16px',marginBottom:14}}>
+                {/* Header */}
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:18}}>📦</span>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:700,color:'#3b82f6',textTransform:'uppercase',letterSpacing:.8}}>
+                        Estimare profit — {tranzitOrders.length} colete în tranzit
+                      </div>
+                      <div style={{fontSize:10,color:'var(--c-text4)',marginTop:1}}>
+                        Rată retur {(RETUR_RATE*100).toFixed(0)}% aplicată pe COD · Cardul este deja încasat
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontSize:10,color:'var(--c-text4)'}}>Valoare brută</div>
+                    <div style={{fontSize:16,fontWeight:800,color:'var(--c-text)',fontFamily:'monospace'}}>{fmt(tranzitTotalVal)} RON</div>
+                  </div>
+                </div>
+
+                {/* 4 KPI-uri */}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
+                  <div style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8,padding:'10px 12px'}}>
+                    <div style={{fontSize:9,color:'#10b981',textTransform:'uppercase',letterSpacing:.8,fontWeight:700,marginBottom:4}}>✓ Estimat de încasat</div>
+                    <div style={{fontSize:17,fontWeight:800,color:'#10b981',fontFamily:'monospace'}}>{fmt(tranzitEstTotal)} RON</div>
+                    <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4,lineHeight:1.5}}>
+                      COD: {fmt(tranzitEstCOD)} RON<br/>
+                      Card (încasat): {fmt(tranzitCardVal)} RON
+                    </div>
+                  </div>
+                  <div style={{background:'rgba(244,63,94,.08)',border:'1px solid rgba(244,63,94,.2)',borderRadius:8,padding:'10px 12px'}}>
+                    <div style={{fontSize:9,color:'#f43f5e',textTransform:'uppercase',letterSpacing:.8,fontWeight:700,marginBottom:4}}>↩ Retur estimat 5% COD</div>
+                    <div style={{fontSize:17,fontWeight:800,color:'#f43f5e',fontFamily:'monospace'}}>-{fmt(tranzitEstRetur)} RON</div>
+                    <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4,lineHeight:1.5}}>
+                      ~{Math.round(tranzitCOD.length*RETUR_RATE)} comenzi din {tranzitCOD.length} COD<br/>
+                      {tranzitCard.length} card (fără risc retur COD)
+                    </div>
+                  </div>
+                  <div style={{background:'rgba(249,115,22,.08)',border:'1px solid rgba(249,115,22,.2)',borderRadius:8,padding:'10px 12px'}}>
+                    <div style={{fontSize:9,color:'#f97316',textTransform:'uppercase',letterSpacing:.8,fontWeight:700,marginBottom:4}}>📦 Cost produse estimat</div>
+                    <div style={{fontSize:17,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>-{fmt(tranzitCOGS)} RON</div>
+                    <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4,lineHeight:1.5}}>
+                      Transport: -{fmt(tranzitTransport)} RON<br/>
+                      ({tranzitOrders.length} × {fmt(costPerParcel,2)} RON/colet)
+                    </div>
+                  </div>
+                  <div style={{background:tranzitNetEst>=0?'rgba(16,185,129,.08)':'rgba(244,63,94,.08)',border:`1px solid ${tranzitNetEst>=0?'rgba(16,185,129,.25)':'rgba(244,63,94,.25)'}`,borderRadius:8,padding:'10px 12px'}}>
+                    <div style={{fontSize:9,color:tranzitNetEst>=0?'#10b981':'#f43f5e',textTransform:'uppercase',letterSpacing:.8,fontWeight:700,marginBottom:4}}>🚀 Profit net estimat</div>
+                    <div style={{fontSize:17,fontWeight:800,color:tranzitNetEst>=0?'#10b981':'#f43f5e',fontFamily:'monospace'}}>{tranzitNetEst>=0?'+':''}{fmt(tranzitNetEst)} RON</div>
+                    <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4,lineHeight:1.5}}>
+                      Marjă: {tranzitEstTotal>0?((tranzitNetEst/tranzitEstTotal)*100).toFixed(1):0}%<br/>
+                      după COGS + transport + {(RETUR_RATE*100).toFixed(0)}% retur
+                    </div>
+                  </div>
+                </div>
+
+                {/* GLS vs Sameday */}
+                {(tranzitGLS.length>0||tranzitSD.length>0)&&(
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+                    {tranzitGLS.length>0&&(
+                      <div style={{background:'rgba(249,115,22,.05)',border:'1px solid rgba(249,115,22,.15)',borderRadius:8,padding:'8px 12px'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                          <span style={{fontSize:10,color:'#f97316',fontWeight:700}}>📦 GLS</span>
+                          <span style={{fontSize:10,color:'var(--c-text4)'}}>{tranzitGLS.length} colete</span>
+                        </div>
+                        <div style={{fontSize:13,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(tranzitGLS.reduce((a,o)=>a+o.total,0))} RON</div>
+                        <div style={{fontSize:9,color:'var(--c-text4)',marginTop:2}}>
+                          est. {fmt(tranzitGLS.filter(o=>{const gw=(o.gateway||'').toLowerCase();return!['shopify_payments','stripe','paypal'].some(g=>gw.includes(g));}).reduce((a,o)=>a+o.total,0)*(1-RETUR_RATE)+tranzitGLS.filter(o=>{const gw=(o.gateway||'').toLowerCase();return['shopify_payments','stripe','paypal'].some(g=>gw.includes(g));}).reduce((a,o)=>a+o.total,0))} RON
+                        </div>
+                      </div>
+                    )}
+                    {tranzitSD.length>0&&(
+                      <div style={{background:'rgba(59,130,246,.05)',border:'1px solid rgba(59,130,246,.15)',borderRadius:8,padding:'8px 12px'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                          <span style={{fontSize:10,color:'#3b82f6',fontWeight:700}}>🚀 Sameday</span>
+                          <span style={{fontSize:10,color:'var(--c-text4)'}}>{tranzitSD.length} colete</span>
+                        </div>
+                        <div style={{fontSize:13,fontWeight:800,color:'#3b82f6',fontFamily:'monospace'}}>{fmt(tranzitSD.reduce((a,o)=>a+o.total,0))} RON</div>
+                        <div style={{fontSize:9,color:'var(--c-text4)',marginTop:2}}>
+                          est. {fmt(tranzitSD.filter(o=>{const gw=(o.gateway||'').toLowerCase();return!['shopify_payments','stripe','paypal'].some(g=>gw.includes(g));}).reduce((a,o)=>a+o.total,0)*(1-RETUR_RATE)+tranzitSD.filter(o=>{const gw=(o.gateway||'').toLowerCase();return['shopify_payments','stripe','paypal'].some(g=>gw.includes(g));}).reduce((a,o)=>a+o.total,0))} RON
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Lista expandabilă */}
+                <details>
+                  <summary style={{fontSize:11,color:'var(--c-text4)',cursor:'pointer',userSelect:'none',listStyle:'none',display:'flex',alignItems:'center',gap:4}}>
+                    <span>▶</span> Vezi comenzile în tranzit ({tranzitOrders.length})
+                  </summary>
+                  <div style={{marginTop:8,display:'flex',flexDirection:'column',gap:2,maxHeight:260,overflowY:'auto'}}>
+                    {tranzitOrders.map(o=>{
+                      const isCODo = tranzitCOD.some(c=>c.id===o.id);
+                      const cogso = (o.items||[]).reduce((s,i)=>s+(resolveCost(i).cost*(i.qty||1)),0);
+                      const profEst = o.total*(isCODo?1-RETUR_RATE:1) - cogso - costPerParcel;
+                      return (
+                        <div key={o.id} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)',fontSize:11}}>
+                          <span style={{color:'var(--c-orange)',fontFamily:'monospace',fontWeight:700,minWidth:55}}>{o.name}</span>
+                          <span style={{color:'var(--c-text3)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.client}</span>
+                          <span style={{fontSize:9,color:o.ts==='outfor'?'#a855f7':'#3b82f6',fontWeight:700,whiteSpace:'nowrap'}}>
+                            {o.ts==='outfor'?'📬 La curier':'🚚 Tranzit'}
+                          </span>
+                          <span style={{color:isCODo?'#f97316':'#3b82f6',fontFamily:'monospace',fontSize:10,fontWeight:700,minWidth:65,textAlign:'right'}}>{fmt(o.total)}</span>
+                          <span style={{color:profEst>=0?'#10b981':'#f43f5e',fontFamily:'monospace',fontSize:10,minWidth:60,textAlign:'right'}}>{profEst>=0?'+':''}{fmt(profEst)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              </div>
+            )}
+
             {returnedCount > 0 && (
               <>
                 <div className="pf-stitle">Colete refuzate/returnate — detectate automat</div>
