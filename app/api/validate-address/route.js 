@@ -1,22 +1,20 @@
 import { NextResponse } from 'next/server';
 
-function cors() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST,OPTIONS',
-    'Access-Control-Allow-Headers': '*',
-  };
-}
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST,OPTIONS',
+  'Access-Control-Allow-Headers': '*',
+};
+
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 200, headers: cors() });
+  return new NextResponse(null, { status: 200, headers: CORS });
 }
 
-// Caută adresa în Nominatim și returnează cel mai bun rezultat
-async function nominatimSearch(query, countryCode = 'ro') {
+async function nominatim(query) {
   try {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=3&countrycodes=${countryCode}&addressdetails=1`;
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=3&countrycodes=ro&addressdetails=1`;
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ShipBridge-Glamx/1.0 contact@glamxonline.ro' },
+      headers: { 'User-Agent': 'ShipBridge/1.0' },
       cache: 'no-store',
       signal: AbortSignal.timeout(5000),
     });
@@ -25,146 +23,122 @@ async function nominatimSearch(query, countryCode = 'ro') {
   } catch { return []; }
 }
 
-// Caută codul poștal direct pentru un oraș + județ
-async function searchZipForCity(city, county) {
-  try {
-    const q = [city, county, 'Romania'].filter(Boolean).join(', ');
-    const results = await nominatimSearch(q);
-    for (const r of results) {
-      if (r.address?.postcode) return r.address.postcode;
-    }
-    return null;
-  } catch { return null; }
-}
-
-function formatAddress(addr) {
-  const road = addr.road || addr.pedestrian || addr.path || addr.street || '';
-  const houseNo = addr.house_number || '';
-  const city = addr.city || addr.town || addr.village || addr.municipality || addr.suburb || '';
-  const county = addr.county || addr.state_district || addr.state || '';
-  const postcode = addr.postcode || '';
-  return { road, houseNo, city, county, postcode,
-    formattedAddress: road && houseNo ? `${road} nr. ${houseNo}` : road || '',
-  };
-}
-
 export async function POST(request) {
   try {
-    const { name, address, city, county, zip, phone, email, skipEmpty } = await request.json();
+    const { name, address, city, county, zip, phone, skipEmpty } = await request.json();
     const issues = [];
 
-    // ── Validări ────────────────────────────────────────────────────────
-    // Adresă — prioritate maximă
-    const hasAddress = address && address.trim().length >= 3;
-    const hasNumber  = hasAddress && /\d/.test(address);
-    if (!hasAddress)
-      issues.push({ field: 'address', msg: 'Adresa stradală lipsește', priority: 'high' });
-    else if (!hasNumber)
-      issues.push({ field: 'address', msg: 'Adresa nu conține număr stradal', priority: 'high' });
-
-    // ZIP — prioritate mare
-    const hasZip = zip && /^\d{6}$/.test(zip.replace(/\s/g, ''));
-    if (zip && !hasZip)
-      issues.push({ field: 'zip', msg: 'Codul poștal trebuie să aibă 6 cifre', priority: 'high' });
-    else if (!zip)
-      issues.push({ field: 'zip', msg: 'Cod poștal lipsă', priority: 'high' });
-
-    // Oraș
-    if (!city || city.trim().length < 2)
-      issues.push({ field: 'city', msg: 'Orașul lipsește', priority: 'medium' });
-
-    // Telefon — mai permisiv
-    if (!skipEmpty || phone) {
-      const digits = (phone || '').replace(/\D/g, '');
-      if (digits.length > 0 && digits.length < 9)
-        issues.push({ field: 'phone', msg: 'Telefon prea scurt (minim 9 cifre)', priority: 'low' });
+    // Adresa — prioritate mare
+    if (!address || address.trim().length < 3) {
+      issues.push({ field: 'address', msg: 'Adresa stradala lipseste sau e prea scurta' });
+    } else if (!/\d/.test(address)) {
+      issues.push({ field: 'address', msg: 'Adresa nu contine numar stradal' });
     }
 
-    // Nume — doar avertizare
-    if (!skipEmpty && (!name || name.trim().length < 3))
-      issues.push({ field: 'name', msg: 'Numele destinatarului lipsește', priority: 'low' });
+    // ZIP
+    const zipClean = (zip || '').replace(/\s/g, '');
+    if (zipClean && !/^\d{6}$/.test(zipClean)) {
+      issues.push({ field: 'zip', msg: 'Codul postal trebuie sa aiba 6 cifre' });
+    }
+    if (!zipClean) {
+      issues.push({ field: 'zip', msg: 'Cod postal lipsa' });
+    }
 
-    // ── Căutare Nominatim ────────────────────────────────────────────────
-    let suggestion = null;
+    // Oras
+    if (!city || city.trim().length < 2) {
+      issues.push({ field: 'city', msg: 'Orasul lipseste' });
+    }
 
-    // Strategie 1: Caută adresa completă
-    if (hasAddress && city) {
-      const q1 = [address, city, county, 'Romania'].filter(Boolean).join(', ');
-      const r1 = await nominatimSearch(q1);
-
-      if (r1.length > 0) {
-        const best = r1[0];
-        const fmt = formatAddress(best.address || {});
-
-        // Dacă Nominatim a găsit cod poștal diferit de ce avem sau lipsă
-        const nominatimZip = fmt.postcode;
-        const zipMismatch  = nominatimZip && zip && nominatimZip !== zip.replace(/\s/g, '');
-        const zipMissing   = nominatimZip && !zip;
-
-        if (nominatimZip) {
-          const suggCity   = fmt.city   || city;
-          const suggCounty = fmt.county || county || '';
-          const suggAddr   = fmt.formattedAddress || address;
-
-          suggestion = {
-            displayName:      best.display_name,
-            formattedAddress: suggAddr,
-            road:             fmt.road,
-            houseNumber:      fmt.houseNo,
-            city:             suggCity,
-            county:           suggCounty,
-            postcode:         nominatimZip,
-            lat:              parseFloat(best.lat),
-            lon:              parseFloat(best.lon),
-            zipMismatch,
-            zipMissing,
-            // Mesaj specific pentru cod poștal
-            zipMessage: zipMismatch
-              ? `Codul poștal ${zip} nu corespunde adresei — codul corect este ${nominatimZip}`
-              : zipMissing
-                ? `Cod poștal găsit pentru această adresă: ${nominatimZip}`
-                : `Adresă verificată · ZIP: ${nominatimZip}`,
-          };
-
-          // Adaugă issue specific pentru zip mismatch
-          if (zipMismatch) {
-            // Înlocuiește eroarea generică de zip cu una mai specifică
-            const zipIssueIdx = issues.findIndex(i => i.field === 'zip');
-            const specificMsg = { field: 'zip', msg: `Cod poștal incorect — corect: ${nominatimZip}`, priority: 'high' };
-            if (zipIssueIdx >= 0) issues[zipIssueIdx] = specificMsg;
-            else issues.push(specificMsg);
-          }
-        }
+    // Telefon — permisiv
+    if (!skipEmpty || phone) {
+      const digits = (phone || '').replace(/\D/g, '');
+      if (digits.length > 0 && digits.length < 9) {
+        issues.push({ field: 'phone', msg: 'Telefon prea scurt (minim 9 cifre)' });
       }
     }
 
-    // Strategie 2: Dacă n-am găsit zip din adresă, caută doar după oraș
-    if (!suggestion?.postcode && city) {
-      const zipFromCity = await searchZipForCity(city, county);
-      if (zipFromCity) {
-        suggestion = suggestion || {};
-        suggestion.postcode     = zipFromCity;
-        suggestion.city         = city;
-        suggestion.county       = county || '';
-        suggestion.formattedAddress = address || '';
-        suggestion.zipMessage   = !zip
-          ? `Cod poștal găsit pentru ${city}: ${zipFromCity}`
-          : zip !== zipFromCity
-            ? `Codul corect pentru ${city} este ${zipFromCity}`
-            : `ZIP ${zipFromCity} confirmat`;
-        suggestion.zipMismatch  = !!(zip && zip !== zipFromCity);
-        suggestion.zipMissing   = !zip;
+    // Nume — doar daca nu e skipEmpty
+    if (!skipEmpty && (!name || name.trim().length < 3)) {
+      issues.push({ field: 'name', msg: 'Numele destinatarului lipseste' });
+    }
+
+    // ── NOMINATIM — cauta ZIP corect ──────────────────────────────────
+    let suggestion = null;
+
+    // Cauta cu adresa completa
+    if (city) {
+      const q = [address, city, county, 'Romania'].filter(Boolean).join(', ');
+      const results = await nominatim(q);
+
+      if (results.length > 0) {
+        const r = results[0];
+        const a = r.address || {};
+        const road    = a.road || a.pedestrian || a.path || '';
+        const houseNo = a.house_number || '';
+        const sCity   = a.city || a.town || a.village || a.municipality || city;
+        const sCounty = a.county || a.state_district || county || '';
+        const sZip    = a.postcode || '';
+
+        if (sZip) {
+          const zipMismatch = !!(zipClean && zipClean !== sZip);
+          const zipMissing  = !zipClean;
+
+          suggestion = {
+            formattedAddress: road && houseNo ? `${road} nr. ${houseNo}` : road || address || '',
+            road, houseNumber: houseNo,
+            city: sCity, county: sCounty, postcode: sZip,
+            lat: parseFloat(r.lat), lon: parseFloat(r.lon),
+            zipMismatch, zipMissing,
+            zipMessage: zipMismatch
+              ? `Cod postal incorect — corect este ${sZip} (actual: ${zipClean})`
+              : zipMissing
+                ? `Cod postal gasit pentru aceasta adresa: ${sZip}`
+                : `Adresa verificata · ZIP: ${sZip}`,
+          };
+
+          // Actualizeaza eroarea de ZIP cu una mai specifica
+          if (zipMismatch) {
+            const idx = issues.findIndex(i => i.field === 'zip');
+            const msg = { field: 'zip', msg: `Cod postal incorect — corect: ${sZip}` };
+            if (idx >= 0) issues[idx] = msg;
+            else issues.push(msg);
+          } else if (zipMissing) {
+            const idx = issues.findIndex(i => i.field === 'zip');
+            const msg = { field: 'zip', msg: `Cod postal lipsa — gasit: ${sZip}` };
+            if (idx >= 0) issues[idx] = msg;
+          }
+        }
+      }
+
+      // Fallback: cauta doar orasul daca nu am gasit zip din adresa
+      if (!suggestion?.postcode) {
+        const q2 = [city, county, 'Romania'].filter(Boolean).join(', ');
+        const r2 = await nominatim(q2);
+        if (r2.length > 0 && r2[0].address?.postcode) {
+          const sZip = r2[0].address.postcode;
+          const zipMismatch = !!(zipClean && zipClean !== sZip);
+          suggestion = {
+            formattedAddress: address || '',
+            city, county: county || '',
+            postcode: sZip, zipMismatch, zipMissing: !zipClean,
+            zipMessage: zipMismatch
+              ? `Cod postal incorect — corect pentru ${city}: ${sZip}`
+              : !zipClean
+                ? `Cod postal pentru ${city}: ${sZip}`
+                : `ZIP ${sZip} confirmat`,
+          };
+        }
       }
     }
 
     return NextResponse.json({
       ok: true,
-      valid: issues.filter(i => i.priority === 'high').length === 0,
+      valid: issues.filter(i => i.field === 'address' || i.field === 'zip').length === 0,
       issues,
       suggestion,
-    }, { headers: cors() });
+    }, { headers: CORS });
 
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500, headers: cors() });
+    return NextResponse.json({ error: e.message }, { status: 500, headers: CORS });
   }
 }
