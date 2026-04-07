@@ -120,6 +120,25 @@ export async function POST(request) {
   try {
     const body = await request.json();
 
+    // Test conexiune cu credențiale trimise manual (când env vars lipsesc)
+    if (body.action === 'test_connection') {
+      const u = body.username || ENV_SD_USER;
+      const p = body.password || ENV_SD_PASS;
+      if (!u||!p) return NextResponse.json({ error:'Credențiale lipsă' }, { status:400, headers:cors() });
+      try {
+        const token = await sdAuth(u, p);
+        const [pts, svcs] = await Promise.all([sdPickupPoints(token), sdServices(token)]);
+        return NextResponse.json({
+          ok: true, configured: true,
+          pickupPoints: pts.map(p=>({ id:p.id||p.pickupPointId, name:p.name||p.alias, city:p.city?.name||p.city||'' })),
+          services: svcs.map(s=>({ id:s.id||s.serviceId, name:s.name, code:s.code||'',
+            isLocker:(s.name||'').toLowerCase().includes('locker')||(s.code||'').toLowerCase().includes('ln') })),
+        }, { headers:cors() });
+      } catch(e) {
+        return NextResponse.json({ ok:false, error:e.message }, { status:500, headers:cors() });
+      }
+    }
+
     // Config check
     if (body.action === 'get_config') {
       return NextResponse.json({
@@ -212,28 +231,29 @@ export async function POST(request) {
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
-  const county = searchParams.get('county')||'';
 
-  // Test conexiune cu env vars
+  // Dacă nu avem env vars — returnăm imediat fără să apelăm Sameday
+  if (!ENV_SD_USER || !ENV_SD_PASS) {
+    return NextResponse.json({
+      ok: false,
+      configured: false,
+      message: 'SAMEDAY_USERNAME sau SAMEDAY_PASSWORD lipsesc din Vercel env vars.',
+    }, { headers: cors() });
+  }
+
+  // Avem env vars — testăm conexiunea
   try {
-    if (!ENV_SD_USER||!ENV_SD_PASS) {
-      return NextResponse.json({
-        ok:false,
-        configured:false,
-        message:'SAMEDAY_USERNAME sau SAMEDAY_PASSWORD lipsesc din Vercel env vars.',
-      }, { headers:cors() });
-    }
     const token = await sdAuth(ENV_SD_USER, ENV_SD_PASS);
     const [pts, svcs] = await Promise.all([sdPickupPoints(token), sdServices(token)]);
     return NextResponse.json({
-      ok:true, configured:true,
-      message:'Sameday conectat din Vercel env vars!',
-      pickupPoints:pts.map(p=>({ id:p.id||p.pickupPointId, name:p.name||p.alias, city:p.city?.name||p.city||'' })),
-      services:svcs.map(s=>({ id:s.id||s.serviceId, name:s.name, code:s.code||'',
-        isLocker:(s.name||'').toLowerCase().includes('locker')||(s.code||'').toLowerCase().includes('ln') })),
-      options:SD_AWB_OPTIONS,
-    }, { headers:cors() });
+      ok: true, configured: true,
+      message: 'Sameday conectat din Vercel env vars!',
+      pickupPoints: pts.map(p => ({ id: p.id||p.pickupPointId, name: p.name||p.alias, city: p.city?.name||p.city||'' })),
+      services: svcs.map(s => ({ id: s.id||s.serviceId, name: s.name, code: s.code||'',
+        isLocker: (s.name||'').toLowerCase().includes('locker')||(s.code||'').toLowerCase().includes('ln') })),
+      options: SD_AWB_OPTIONS,
+    }, { headers: cors() });
   } catch(e) {
-    return NextResponse.json({ error:e.message, configured:false }, { status:500, headers:cors() });
+    return NextResponse.json({ error: e.message, configured: false }, { status: 500, headers: cors() });
   }
 }
