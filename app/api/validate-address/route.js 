@@ -1,0 +1,83 @@
+import { NextResponse } from 'next/server';
+
+function cors() {
+  return { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'*' };
+}
+export async function OPTIONS() {
+  return new NextResponse(null, { status:200, headers:cors() });
+}
+
+// Validare + sugestie adresă România via Google Maps / Nominatim
+export async function POST(request) {
+  try {
+    const { name, address, city, county, zip, phone, email } = await request.json();
+    const issues = [];
+
+    // ── Validări de bază ──────────────────────────────────────────────
+    if (!name || name.trim().length < 3)
+      issues.push({ field:'name', msg:'Numele este prea scurt sau lipsește' });
+
+    if (!address || address.trim().length < 5)
+      issues.push({ field:'address', msg:'Adresa stradală este incompletă' });
+    else if (!/\d/.test(address))
+      issues.push({ field:'address', msg:'Adresa nu conține număr stradal' });
+
+    if (!city || city.trim().length < 2)
+      issues.push({ field:'city', msg:'Orașul lipsește' });
+
+    if (!phone || phone.replace(/\D/g,'').length < 10)
+      issues.push({ field:'phone', msg:'Numărul de telefon este invalid (minim 10 cifre)' });
+    else if (!/^(\+40|0)[0-9]{9}$/.test(phone.replace(/\s/g,'')))
+      issues.push({ field:'phone', msg:'Format telefon RO invalid (ex: 07XXXXXXXX)' });
+
+    if (zip && !/^\d{6}$/.test(zip.replace(/\s/g,'')))
+      issues.push({ field:'zip', msg:'Codul poștal trebuie să aibă 6 cifre (România)' });
+
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      issues.push({ field:'email', msg:'Adresa de email este invalidă' });
+
+    // ── Sugestie adresă via Nominatim (OpenStreetMap) ─────────────────
+    // Gratuit, fără API key, acoperă România complet
+    let suggestion = null;
+    if (address && city) {
+      try {
+        const q = encodeURIComponent(`${address}, ${city}, ${county||''}, Romania`);
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=ro&addressdetails=1`,
+          { headers:{ 'User-Agent':'ShipBridge-Dashboard/1.0' }, cache:'no-store' }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data.length > 0) {
+            const r = data[0];
+            const a = r.address || {};
+            suggestion = {
+              displayName: r.display_name,
+              road:        a.road || a.pedestrian || '',
+              houseNumber: a.house_number || '',
+              city:        a.city || a.town || a.village || a.municipality || city,
+              county:      a.county || a.state || county || '',
+              postcode:    a.postcode || zip || '',
+              lat:         parseFloat(r.lat),
+              lon:         parseFloat(r.lon),
+              confidence:  parseFloat(r.importance || 0).toFixed(2),
+            };
+            // Adresă sugerată formatată
+            suggestion.formattedAddress =
+              [suggestion.road, suggestion.houseNumber].filter(Boolean).join(' Nr ') ||
+              address;
+          }
+        }
+      } catch { /* ignorăm erori nominatim */ }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      valid: issues.length === 0,
+      issues,
+      suggestion,
+    }, { headers: cors() });
+  } catch(e) {
+    return NextResponse.json({ error: e.message }, { status:500, headers:cors() });
+  }
+}
