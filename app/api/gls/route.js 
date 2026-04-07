@@ -1,0 +1,128 @@
+import { NextResponse } from 'next/server';
+
+const GLS_WSDL = 'https://online.gls-romania.ro/webservices/soap_server.php?wsdl&ver=18.09.12.01';
+
+export const GLS_SERVICES = {
+  SM1: { code:'SM1', label:'SMS notificare livrare',      desc:'SMS trimis destinatarului la livrare',               param:'phone',  icon:'📱', group:'notificari' },
+  SM2: { code:'SM2', label:'SMS + Email livrare',          desc:'SMS și email notificare destinatar',                  param:'email',  icon:'📧', group:'notificari' },
+  FDS: { code:'FDS', label:'FlexDelivery Email',           desc:'Destinatarul alege ora/locul livrării via email',     param:'email',  icon:'🕐', group:'flex' },
+  FSS: { code:'FSS', label:'FlexDelivery SMS',             desc:'Destinatarul alege ora/locul livrării via SMS',       param:'phone',  icon:'💬', group:'flex' },
+  SAT: { code:'SAT', label:'Livrare Sâmbătă',              desc:'Livrare garantată sâmbătă',                          param:null,     icon:'📅', group:'livrare' },
+  T12: { code:'T12', label:'Livrare înainte de 12:00',     desc:'Garantat livrat dimineața',                           param:null,     icon:'⏰', group:'livrare' },
+  SBS: { code:'SBS', label:'Livrare la Shop/ParcelLocker', desc:'Livrare la parcel shop GLS sau locker',              param:'shopId', icon:'🏪', group:'livrare' },
+  AOS: { code:'AOS', label:'Semnătură obligatorie',        desc:'Confirmare prin semnătură la livrare',               param:null,     icon:'✍️', group:'livrare' },
+  DPV: { code:'DPV', label:'Numai la adresă privată',      desc:'Livrat exclusiv la adresă, nu la vecin',             param:null,     icon:'🏠', group:'livrare' },
+  INS: { code:'INS', label:'Asigurare valoare declarată',  desc:'Asigurare pentru valoarea coletului',                param:'value',  icon:'🛡️', group:'extra' },
+  SDS: { code:'SDS', label:'Shop Return Service',          desc:'Return facilitat prin shop GLS',                     param:null,     icon:'↩️', group:'extra' },
+  EXW: { code:'EXW', label:'Ex Works — ridicare curier',   desc:'Coletul e ridicat de la adresa expeditorului',       param:null,     icon:'🚛', group:'extra' },
+};
+
+function corsHeaders() {
+  return { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'*' };
+}
+export async function OPTIONS() {
+  return new NextResponse(null, { status:200, headers:corsHeaders() });
+}
+
+function validateAddress(a) {
+  const issues = [];
+  if (!a.name || a.name.trim().length < 3) issues.push('Nume destinatar lipsă sau prea scurt');
+  if (!a.address || a.address.trim().length < 5) issues.push('Adresa stradală incompletă');
+  if (!a.address || !/\d/.test(a.address)) issues.push('Adresa nu conține număr stradal');
+  if (!a.city || a.city.trim().length < 2) issues.push('Orașul lipsește');
+  if (!a.phone || a.phone.replace(/\D/g,'').length < 10) issues.push('Telefon invalid (minim 10 cifre)');
+  if (a.zip && !/^\d{6}$/.test(a.zip.replace(/\s/g,''))) issues.push('Cod poștal invalid (6 cifre RO)');
+  return issues;
+}
+
+function buildSOAP({ username, password, clientNumber, parcel, services }) {
+  const now = new Date().toISOString();
+  const pickupDate = new Date().toISOString().slice(0,10);
+  let servicesXml = '';
+  for (const [code, value] of Object.entries(services || {})) {
+    if (value !== null && value !== false && value !== '') {
+      servicesXml += `<Service Code="${code}" Params="${value === true ? '' : String(value).replace(/"/g,'')}" />`;
+    }
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<DTU EmailAddress="${username}" Version="18.09.12.01" Created="${now}" RequestType="GlsApiRequest" MethodName="prepareLabels">
+  <Auth><Username>${username}</Username><Password>${password}</Password></Auth>
+  <Shipment SenderID="${clientNumber}" ExpSenderID="" PickupDate="${pickupDate}T00:00:00"
+    ClientRef="${(parcel.clientRef||'').replace(/"/g,'')}"
+    CODAmount="${parcel.codAmount||0}" CODCurr="${parcel.codCurr||'RON'}" CODRef="${(parcel.codRef||'').replace(/"/g,'')}"
+    PCount="${parcel.pcount||1}" Info="${(parcel.info||'').slice(0,100).replace(/"/g,'')}" CustomsVal="" CustomsCurr="">
+    <Address Name="${(parcel.consigName||'').replace(/"/g,'')}"
+      Address="${(parcel.consigAddress||'').replace(/"/g,'')}"
+      City="${(parcel.consigCity||'').replace(/"/g,'')}"
+      ZipCode="${parcel.consigZip||''}"
+      CountryCode="${parcel.consigCountry||'RO'}"
+      Contact="${(parcel.consigContact||parcel.consigName||'').replace(/"/g,'')}"
+      Phone="${(parcel.consigPhone||'').replace(/\D/g,'').slice(-10)}"
+      Email="${parcel.consigEmail||''}" />
+    <Services>${servicesXml}</Services>
+  </Shipment>
+</DTU>`;
+}
+
+function parseGLSResponse(xml) {
+  const awb = (xml.match(/PclNum="([^"]+)"/i)||[])[1] || null;
+  const pdf = (xml.match(/<[Pp]df[Dd]ata[^>]*>([A-Za-z0-9+/=\s]+)<\/[Pp]df[Dd]ata>/)||[])[1]?.replace(/\s/g,'') || null;
+  const error = (xml.match(/ErrorDescription="([^"]+)"/i)||xml.match(/<Error[^>]*>([^<]+)<\/Error>/i)||[])[1] || null;
+  const success = !!(awb || (!error && xml.includes('successfull="true"')));
+  return { awb, pdf, error, success };
+}
+
+export async function POST(request) {
+  try {
+    const body = await request.json();
+    if (body.action === 'get_services') return NextResponse.json({ ok:true, services:GLS_SERVICES }, { headers:corsHeaders() });
+    if (body.action === 'validate_address') {
+      const issues = validateAddress(body.address||{});
+      return NextResponse.json({ ok:true, valid:issues.length===0, issues }, { headers:corsHeaders() });
+    }
+
+    const { username, password, clientNumber, recipientName, phone, email, address, city, zip, country,
+      parcels, content, codAmount, codCurrency, orderName, orderId, selectedServices, manualAwb } = body;
+
+    if (manualAwb) return NextResponse.json({ ok:true, awb:manualAwb, mode:'manual' }, { headers:corsHeaders() });
+    if (!username||!password||!clientNumber) return NextResponse.json({ error:'Credențiale GLS incomplete.' }, { status:400, headers:corsHeaders() });
+
+    const addrIssues = validateAddress({ name:recipientName, address, city, zip, phone });
+    if (addrIssues.length) return NextResponse.json({ error:'Adresă invalidă: '+addrIssues.join('; '), addressIssues:addrIssues, requiresCorrection:true }, { status:422, headers:corsHeaders() });
+
+    const services = {};
+    for (const [code, value] of Object.entries(selectedServices||{})) {
+      if (value!==false && value!==null && value!=='') services[code] = value;
+    }
+
+    const soap = buildSOAP({ username, password, clientNumber, parcel: {
+      consigName:recipientName, consigAddress:address, consigCity:city,
+      consigZip:zip||'', consigCountry:country||'RO', consigContact:recipientName,
+      consigPhone:(phone||''), consigEmail:email||'',
+      codAmount:parseFloat(codAmount)||0, codCurr:codCurrency||'RON', codRef:orderName||'',
+      pcount:parseInt(parcels)||1, clientRef:orderName||'', info:content||`Comanda ${orderName}`,
+    }, services });
+
+    const res = await fetch(GLS_WSDL, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/xml; charset=UTF-8', 'SOAPAction':'prepareLabels' },
+      body:soap, cache:'no-store',
+    });
+    const xml = await res.text();
+    const parsed = parseGLSResponse(xml);
+    if (!parsed.success||!parsed.awb) return NextResponse.json({ error:parsed.error||`GLS SOAP eroare`, _raw:xml.slice(0,500) }, { status:500, headers:corsHeaders() });
+    return NextResponse.json({ ok:true, awb:parsed.awb, pdf:parsed.pdf, orderId, orderName, servicesApplied:Object.keys(services) }, { headers:corsHeaders() });
+  } catch(e) {
+    return NextResponse.json({ error:e.message, hint:'Verifică credențialele GLS.' }, { status:500, headers:corsHeaders() });
+  }
+}
+
+export async function GET(request) {
+  const { searchParams } = new URL(request.url);
+  if (searchParams.get('action')==='services') return NextResponse.json({ ok:true, services:GLS_SERVICES }, { headers:corsHeaders() });
+  const username = searchParams.get('username');
+  const password = searchParams.get('password');
+  const clientNumber = searchParams.get('clientNumber')||'0';
+  if (!username||!password) return NextResponse.json({ error:'Missing credentials' }, { status:400, headers:corsHeaders() });
+  return NextResponse.json({ ok:true, message:'Credențiale GLS primite. Testul real se face la prima generare AWB.', services:GLS_SERVICES }, { headers:corsHeaders() });
+}
