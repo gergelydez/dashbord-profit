@@ -1,0 +1,306 @@
+import { NextResponse } from 'next/server';
+
+const SD_BASE = 'https://api.sameday.ro';
+
+// Opțiunile suplimentare Sameday (la nivel de AWB)
+export const SD_AWB_OPTIONS = {
+  openPackage:        { label:'📂 Deschide coletul la livrare', desc:'Destinatarul poate verifica conținutul înainte de a accepta', field:'openPackage' },
+  saturdayDelivery:   { label:'📅 Livrare Sâmbătă',            desc:'Livrare garantată sâmbătă',                                  field:'saturday_delivery' },
+  thermo:             { label:'❄️ Transport frigorific',         desc:'Condiții speciale de temperatură',                           field:'thermo' },
+  repaymentTransport: { label:'💸 Ramburs transport',           desc:'Taxa de transport suportată de destinatar',                   field:'repaymentTransport' },
+};
+
+function corsHeaders() {
+  return { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'*' };
+}
+export async function OPTIONS() {
+  return new NextResponse(null, { status:200, headers:corsHeaders() });
+}
+
+function validateAddress(a) {
+  const issues = [];
+  if (!a.name||a.name.trim().length<3) issues.push('Nume destinatar lipsă sau prea scurt');
+  if (!a.address||a.address.trim().length<5) issues.push('Adresa stradală incompletă');
+  if (a.address && !/\d/.test(a.address)) issues.push('Adresa nu conține număr stradal');
+  if (!a.city||a.city.trim().length<2) issues.push('Orașul lipsește');
+  if (!a.phone||a.phone.replace(/\D/g,'').length<10) issues.push('Telefon invalid (minim 10 cifre)');
+  return issues;
+}
+
+async function sdAuth(username, password) {
+  const res = await fetch(`${SD_BASE}/api/authenticate`, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'X-AUTH-TOKEN':'' },
+    body:JSON.stringify({ username, password }),
+    cache:'no-store',
+  });
+  if (!res.ok) { const t = await res.text(); throw new Error(`Sameday Auth ${res.status}: ${t.slice(0,150)}`); }
+  const data = await res.json();
+  const token = data.token || data.Token;
+  if (!token) throw new Error('Sameday: token invalid în răspuns.');
+  return token;
+}
+
+async function sdPickupPoints(token) {
+  const res = await fetch(`${SD_BASE}/api/client/pickup-points`, {
+    headers:{ 'X-AUTH-TOKEN':token, 'Accept':'application/json' }, cache:'no-store',
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.data || [];
+}
+
+async function sdServices(token) {
+  const res = await fetch(`${SD_BASE}/api/client/services`, {
+    headers:{ 'X-AUTH-TOKEN':token, 'Accept':'application/json' }, cache:'no-store',
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.data || data.services || [];
+}
+
+// Fetch lista de lockere/easybox-uri disponibile
+async function sdLockers(token, county = '') {
+  try {
+    const params = county ? `?county=${encodeURIComponent(county)}&page=1&perPage=200` : '?page=1&perPage=200';
+    const res = await fetch(`${SD_BASE}/api/client/lockers${params}`, {
+      headers:{ 'X-AUTH-TOKEN':token, 'Accept':'application/json' }, cache:'no-store',
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.data || data.lockers || [];
+  } catch { return []; }
+}
+
+async function createSdAwb(token, pickupPointId, serviceId, parcelData) {
+  // Dacă e predare la easybox de către expeditor (Locker service):
+  // - serviceId trebuie să fie un serviciu de tip Locker (LN)
+  // - lockerId = ID-ul easybox-ului unde expeditorul duce coletul
+  // - recipientCity/County/Address = adresa destinatarului (unde vrea să ridice sau se livrează)
+  // Structura body conform documentației oficiale Sameday PHP SDK
+  const body = {
+    awbPayment: parcelData.isCOD ? 1 : 0,
+    cashOnDelivery: parcelData.isCOD ? (parseFloat(parcelData.total) || 0) : 0,
+    cashOnDeliveryReturns: 0,
+    insuredValue: parseFloat(parcelData.insuredValue) || 0,
+    packageType: parcelData.packageType || 0,         // 0=colet, 1=plic, 2=colet mare
+    packageNumber: parseInt(parcelData.parcels) || 1,
+    packageWeight: parseFloat(parcelData.weight) || 1,
+    observations: (parcelData.observations || parcelData.content || `Comanda ${parcelData.orderName}`).slice(0, 255),
+    reference: (parcelData.orderName || '').slice(0, 50),
+    // Date destinatar
+    recipientName: parcelData.recipientName,
+    recipientPhone: (parcelData.phone || '').replace(/\D/g, '').slice(-10),
+    recipientEmail: parcelData.email || '',
+    recipientAddress: parcelData.address,
+    recipientCity: parcelData.city,
+    recipientCounty: parcelData.county || '',
+    recipientPostalCode: parcelData.zip || '',
+    // Expeditor (pickup point cont Sameday)
+    pickupPoint: parseInt(pickupPointId),
+    service_id: parseInt(serviceId),
+    // Opțiuni suplimentare
+    openPackage: parcelData.openPackage ? 1 : 0,
+    repaymentTransport: parcelData.repaymentTransport ? 1 : 0,
+    saturday_delivery: parcelData.saturdayDelivery ? 1 : 0,
+    thermo: parcelData.thermo ? 1 : 0,
+    // PREDARE LA EASYBOX: lockerId = ID easybox unde expeditorul depune coletul
+    // Acest câmp e trimis doar dacă serviceId e de tip Locker (LN)
+    // și înseamnă "eu, expeditorul, predau coletul la acest easybox"
+    ...(parcelData.senderEasyboxId ? { lockerId: parseInt(parcelData.senderEasyboxId) } : {}),
+  };
+
+  const res = await fetch(`${SD_BASE}/api/awb`, {
+    method: 'POST',
+    headers: { 'X-AUTH-TOKEN': token, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+
+  const raw = await res.text();
+  let data;
+  try { data = JSON.parse(raw); } catch { data = { raw: raw.slice(0, 300) }; }
+
+  if (!res.ok) {
+    const msg = data.message || data.error
+      || (data.errors ? JSON.stringify(data.errors).slice(0, 300) : '')
+      || JSON.stringify(data).slice(0, 300);
+    throw new Error(`Sameday ${res.status}: ${msg}`);
+  }
+
+  const awbNum = data.awbNumber || data.AWBNumber || data.awb || data.data?.awbNumber;
+  return { awb: awbNum, parcelIds: data.parcelNumbers || [], raw: data };
+}
+
+// ── POST ──────────────────────────────────────────────────────────────────
+export async function POST(request) {
+  try {
+    const body = await request.json();
+
+    if (body.action === 'validate_address') {
+      const issues = validateAddress(body.address || {});
+      return NextResponse.json({ ok: true, valid: issues.length === 0, issues }, { headers: corsHeaders() });
+    }
+
+    // Fetch lockere pentru un județ
+    if (body.action === 'get_lockers') {
+      const token = await sdAuth(body.username, body.password);
+      const lockers = await sdLockers(token, body.county || '');
+      return NextResponse.json({
+        ok: true,
+        lockers: lockers.map(l => ({
+          id: l.id || l.lockerId,
+          name: l.name || l.alias || `easybox #${l.id}`,
+          address: l.address || '',
+          city: l.city?.name || l.city || '',
+          county: l.county?.name || l.county || '',
+        }))
+      }, { headers: corsHeaders() });
+    }
+
+    const {
+      username, password,
+      pickupPointId, serviceId,
+      // Date destinatar
+      recipientName, phone, email, address, city, county, zip,
+      // Colet
+      weight, parcels, content, isCOD, total,
+      orderName, orderId,
+      // Opțiuni AWB
+      openPackage, saturdayDelivery, thermo, repaymentTransport,
+      observations, insuredValue,
+      // PREDARE LA EASYBOX — ID-ul easybox-ului unde expeditorul duce fizic coletul
+      senderEasyboxId,
+      // AWB manual
+      manualAwb,
+    } = body;
+
+    if (manualAwb) {
+      return NextResponse.json({ ok: true, awb: manualAwb, mode: 'manual' }, { headers: corsHeaders() });
+    }
+
+    if (!username || !password) {
+      return NextResponse.json({ error: 'Credențiale Sameday lipsă.' }, { status: 400, headers: corsHeaders() });
+    }
+
+    // Validare adresă (se face indiferent de modul de predare)
+    const addrIssues = validateAddress({ name: recipientName, address, city, phone });
+    if (addrIssues.length) {
+      return NextResponse.json({
+        error: 'Adresă invalidă: ' + addrIssues.join('; '),
+        addressIssues: addrIssues,
+        requiresCorrection: true,
+      }, { status: 422, headers: corsHeaders() });
+    }
+
+    const token = await sdAuth(username, password);
+
+    // Auto-detect pickup point și serviciu dacă nu sunt specificate
+    let ppId = pickupPointId;
+    let svcId = serviceId;
+
+    if (!ppId) {
+      const pts = await sdPickupPoints(token);
+      if (!pts.length) throw new Error('Niciun pickup point în contul Sameday.');
+      ppId = pts[0].id || pts[0].pickupPointId;
+    }
+
+    if (!svcId) {
+      const svcs = await sdServices(token);
+      // Dacă e predare la easybox, preferăm serviciul Locker (LN)
+      const lockerSvc = svcs.find(s =>
+        (s.name || '').toLowerCase().includes('locker') ||
+        (s.code || '').toLowerCase().includes('ln') ||
+        (s.name || '').toLowerCase().includes('easybox')
+      );
+      const defaultSvc = svcs.find(s => (s.name || '').toLowerCase().includes('sameday')) || svcs[0];
+      const chosenSvc = senderEasyboxId ? (lockerSvc || defaultSvc) : defaultSvc;
+      if (!chosenSvc) throw new Error('Niciun serviciu disponibil în contul Sameday.');
+      svcId = chosenSvc.id || chosenSvc.serviceId;
+    }
+
+    const result = await createSdAwb(token, ppId, svcId, {
+      recipientName, phone, email, address, city, county, zip,
+      weight: parseFloat(weight) || 1,
+      parcels: parseInt(parcels) || 1,
+      content: content || `Comanda ${orderName}`,
+      observations: observations || content || `Comanda ${orderName}`,
+      isCOD: !!isCOD,
+      total: parseFloat(total) || 0,
+      openPackage: !!openPackage,
+      saturdayDelivery: !!saturdayDelivery,
+      thermo: !!thermo,
+      repaymentTransport: !!repaymentTransport,
+      insuredValue: parseFloat(insuredValue) || 0,
+      orderName: orderName || '',
+      senderEasyboxId: senderEasyboxId || null,
+    });
+
+    return NextResponse.json({
+      ok: true,
+      awb: result.awb,
+      parcelIds: result.parcelIds,
+      orderId,
+      orderName,
+      pickupMode: senderEasyboxId ? 'sender_easybox' : 'courier_pickup',
+      easyboxId: senderEasyboxId || null,
+    }, { headers: corsHeaders() });
+
+  } catch (e) {
+    console.error('[Sameday AWB]', e.message);
+    return NextResponse.json({
+      error: e.message,
+      hint: 'Verifică credențialele Sameday și că serviciul Locker este activat în cont pentru predare la easybox.',
+    }, { status: 500, headers: corsHeaders() });
+  }
+}
+
+// ── GET — configurație completă ────────────────────────────────────────────
+export async function GET(request) {
+  const { searchParams } = new URL(request.url);
+  const username = searchParams.get('username');
+  const password = searchParams.get('password');
+  const county   = searchParams.get('county') || '';
+
+  if (!username || !password) {
+    return NextResponse.json({ error: 'Missing credentials' }, { status: 400, headers: corsHeaders() });
+  }
+
+  try {
+    const token = await sdAuth(username, password);
+    const [pts, svcs, lockers] = await Promise.all([
+      sdPickupPoints(token),
+      sdServices(token),
+      sdLockers(token, county),
+    ]);
+
+    return NextResponse.json({
+      ok: true,
+      message: 'Sameday autentificare reușită!',
+      pickupPoints: pts.map(p => ({
+        id: p.id || p.pickupPointId,
+        name: p.name || p.alias,
+        city: p.city?.name || p.city || '',
+      })),
+      services: svcs.map(s => ({
+        id: s.id || s.serviceId,
+        name: s.name,
+        code: s.code || '',
+        isLocker: (s.name || '').toLowerCase().includes('locker') ||
+                  (s.code || '').toLowerCase().includes('ln') ||
+                  (s.name || '').toLowerCase().includes('easybox'),
+      })),
+      lockers: lockers.map(l => ({
+        id: l.id || l.lockerId,
+        name: l.name || l.alias || `easybox #${l.id}`,
+        address: l.address || '',
+        city: l.city?.name || l.city || '',
+        county: l.county?.name || l.county || '',
+      })),
+      options: SD_AWB_OPTIONS,
+    }, { headers: corsHeaders() });
+
+  } catch (e) {
+    return NextResponse.json({ error: e.message }, { status: 500, headers: corsHeaders() });
+  }
+}
