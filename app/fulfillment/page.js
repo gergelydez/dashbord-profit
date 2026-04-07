@@ -431,73 +431,154 @@ export default function FulfillmentPage() {
   // ── Test conexiune GLS ─────────────────────────────────────────────────
   const testGlsConnection = async () => {
     setGlsStatus('testing'); setGlsStatusMsg('');
+    const user   = glsUser   || '';
+    const pass   = glsPass   || '';
+    const client = glsClient || '553003585';
+    if (!user || !pass) {
+      setGlsStatus('error');
+      setGlsStatusMsg('✗ Completează username și parola GLS.');
+      toast('Completează credențialele GLS.','error');
+      return;
+    }
     try {
-      const res = await fetch('/api/gls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'get_config',
-          // Dacă userul a completat manual, le trimitem pentru override
-          username: glsUser || undefined,
-          password: glsPass || undefined,
-          clientNumber: glsClient || undefined,
-        }),
+      // Test direct cu GLS SOAP din browser (nu prin /api/gls)
+      const soap = `<?xml version="1.0" encoding="UTF-8"?>
+<DTU EmailAddress="${user}" Version="18.09.12.01" RequestType="GlsApiRequest" MethodName="prepareLabels">
+  <Auth><Username>${user}</Username><Password>${pass}</Password></Auth>
+  <Shipment SenderID="${client}" PickupDate="${new Date().toISOString().slice(0,10)}T00:00:00"
+    ClientRef="TEST-CONN" CODAmount="0" PCount="1" Info="Test">
+    <Address Name="Test" Address="Str Test 1" City="Bucuresti" ZipCode="010101"
+      CountryCode="RO" Phone="0700000000" Email=""/>
+    <Services/>
+  </Shipment>
+</DTU>`;
+
+      const res = await fetch('https://online.gls-romania.ro/webservices/soap_server.php?wsdl&ver=18.09.12.01', {
+        method:'POST',
+        headers:{'Content-Type':'text/xml; charset=UTF-8','SOAPAction':'prepareLabels'},
+        body: soap,
       });
-      const data = await res.json();
-      if (data.configured || data.ok) {
+      const xml = await res.text();
+      const low = xml.toLowerCase();
+      const isAuthErr = (low.includes('invalid')||low.includes('unauthorized')||low.includes('authentication'))
+                     && (low.includes('user')||low.includes('auth')||low.includes('password')||low.includes('credent'));
+
+      if (!isAuthErr) {
         setGlsStatus('ok');
         setGlsEnvOk(true);
-        if (data.clientNumber) setGlsClient(data.clientNumber);
-        setGlsStatusMsg(`✓ GLS conectat! Client nr: ${data.clientNumber||glsClient}`);
+        setGlsStatusMsg(`✓ GLS conectat! Client nr: ${client}`);
         toast('GLS conectat cu succes!','success');
       } else {
+        const errM = xml.match(/ErrorDescription="([^"]+)"/i)||xml.match(/<[Ee]rror[^>]*>([^<]+)/);
         setGlsStatus('error');
-        setGlsStatusMsg('✗ ' + (data.error||data.message||'Credențiale GLS invalide'));
-        toast('GLS eroare: '+(data.error||data.message),'error');
+        setGlsStatusMsg('✗ ' + (errM?errM[1]:'Credențiale GLS invalide. Verifică în MyGLS.'));
+        toast('GLS eroare: credențiale invalide','error');
       }
     } catch(e) {
-      setGlsStatus('error');
-      setGlsStatusMsg('✗ ' + e.message);
-      toast('GLS eroare: '+e.message,'error');
+      // CORS error = ruta de API e singurul mod — trimitem la /api/gls
+      try {
+        const res2 = await fetch('/api/gls', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ action:'test_connection', username:user, password:pass, clientNumber:client }),
+        });
+        if (!res2.ok) throw new Error(`HTTP ${res2.status}`);
+        const ct = res2.headers.get('content-type')||'';
+        if (!ct.includes('json')) throw new Error('Ruta /api/gls nu returnează JSON — fișierul nu e pe Vercel');
+        const data = await res2.json();
+        if (data.ok) {
+          setGlsStatus('ok'); setGlsEnvOk(true);
+          setGlsStatusMsg(`✓ GLS conectat! Client nr: ${data.clientNumber||client}`);
+          toast('GLS conectat!','success');
+        } else {
+          setGlsStatus('error');
+          setGlsStatusMsg('✗ '+(data.error||'Credențiale invalide'));
+          toast('GLS eroare: '+(data.error||'credențiale invalide'),'error');
+        }
+      } catch(e2) {
+        setGlsStatus('error');
+        setGlsStatusMsg('✗ Ruta /api/gls lipsește de pe Vercel. Urcă fișierul gls/route.js și redeploy.');
+        toast('GLS: ruta API lipsește de pe Vercel!','error');
+      }
     }
   };
 
-  // ── Test conexiune Sameday ─────────────────────────────────────────────
   const testSdConnection = async () => {
     setSdStatus('testing'); setSdStatusMsg('');
-    try {
-      // Încearcă mai întâi env vars (GET), dacă nu merge încearcă cu credențialele manuale
-      const res = await fetch('/api/sameday-awb', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'test_connection',
-          username: sdUser || undefined,
-          password: sdPass || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setSdStatus('ok');
-        setSdEnvOk(true);
-        const pts = data.pickupPoints||[];
-        const svcs = data.services||[];
-        if (pts.length) {
-          setSdConfig({ pickupPoints: pts, services: svcs });
-          if (!sdPickup&&pts[0]) setSdPickup(String(pts[0].id));
-          if (!sdService&&svcs[0]) setSdService(String(svcs[0].id));
-        }
-        setSdStatusMsg(`✓ Sameday conectat! ${pts.length} pickup points, ${svcs.length} servicii`);
-        toast(`Sameday conectat! ${pts.length} pickup points.`,'success');
-      } else {
-        setSdStatus('error');
-        setSdStatusMsg('✗ ' + (data.error||'Credențiale Sameday invalide'));
-        toast('Sameday eroare: '+(data.error||'credențiale invalide'),'error');
-      }
-    } catch(e) {
+    const user = sdUser || '';
+    const pass = sdPass || '';
+    if (!user || !pass) {
       setSdStatus('error');
-      setSdStatusMsg('✗ ' + e.message);
-      toast('Sameday eroare: '+e.message,'error');
+      setSdStatusMsg('✗ Completează username și parola Sameday.');
+      toast('Completează credențialele Sameday.','error');
+      return;
+    }
+    try {
+      // Test direct Sameday din browser
+      const authRes = await fetch('https://api.sameday.ro/api/authenticate', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-AUTH-TOKEN':''},
+        body: JSON.stringify({ username:user, password:pass }),
+      });
+      if (!authRes.ok) {
+        const txt = await authRes.text();
+        throw new Error(`Auth ${authRes.status}: ${txt.slice(0,100)}`);
+      }
+      const authData = await authRes.json();
+      const token = authData.token||authData.Token;
+      if (!token) throw new Error('Token invalid în răspuns');
+
+      // Încarcă pickup points
+      const ptsRes = await fetch('https://api.sameday.ro/api/client/pickup-points', {
+        headers:{'X-AUTH-TOKEN':token,'Accept':'application/json'},
+      });
+      const ptsData = await ptsRes.json();
+      const pts = (ptsData.data||[]).map(p=>({ id:p.id||p.pickupPointId, name:p.name||p.alias, city:p.city?.name||p.city||'' }));
+
+      const svcsRes = await fetch('https://api.sameday.ro/api/client/services', {
+        headers:{'X-AUTH-TOKEN':token,'Accept':'application/json'},
+      });
+      const svcsData = await svcsRes.json();
+      const svcs = (svcsData.data||svcsData.services||[]).map(s=>({ id:s.id||s.serviceId, name:s.name, code:s.code||'',
+        isLocker:(s.name||'').toLowerCase().includes('locker')||(s.code||'').toLowerCase().includes('ln') }));
+
+      setSdStatus('ok'); setSdEnvOk(true);
+      if (pts.length) {
+        setSdConfig({ pickupPoints:pts, services:svcs });
+        if (!sdPickup&&pts[0]) setSdPickup(String(pts[0].id));
+        if (!sdService&&svcs[0]) setSdService(String(svcs[0].id));
+      }
+      setSdStatusMsg(`✓ Sameday conectat! ${pts.length} pickup points, ${svcs.length} servicii`);
+      toast(`Sameday conectat! ${pts.length} pickup points.`,'success');
+
+    } catch(e) {
+      // Fallback la /api/sameday-awb dacă există
+      try {
+        const res2 = await fetch('/api/sameday-awb', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ action:'test_connection', username:user, password:pass }),
+        });
+        if (!res2.ok) throw new Error(`HTTP ${res2.status}`);
+        const ct = res2.headers.get('content-type')||'';
+        if (!ct.includes('json')) throw new Error('Ruta /api/sameday-awb nu returnează JSON — fișierul nu e pe Vercel');
+        const data = await res2.json();
+        if (data.ok) {
+          setSdStatus('ok'); setSdEnvOk(true);
+          const pts = data.pickupPoints||[]; const svcs = data.services||[];
+          if (pts.length) { setSdConfig({pickupPoints:pts,services:svcs}); if(!sdPickup&&pts[0])setSdPickup(String(pts[0].id)); if(!sdService&&svcs[0])setSdService(String(svcs[0].id)); }
+          setSdStatusMsg(`✓ Sameday conectat! ${pts.length} pickup points`);
+          toast(`Sameday conectat!`,'success');
+        } else {
+          setSdStatus('error'); setSdStatusMsg('✗ '+(data.error||'Credențiale invalide'));
+          toast('Sameday eroare: '+(data.error||'credențiale invalide'),'error');
+        }
+      } catch(e2) {
+        setSdStatus('error');
+        const msg = e2.message.includes('JSON') ? e2.message : ('✗ '+e.message);
+        setSdStatusMsg(msg);
+        toast('Sameday: '+(e2.message.includes('JSON')?'ruta API lipsește de pe Vercel!':e.message),'error');
+      }
     }
   };
 
