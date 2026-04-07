@@ -84,7 +84,7 @@ header {
 /* Rând 2: nav links — grid 4 col pe toată lățimea */
 .header-nav {
   display:grid;
-  grid-template-columns:repeat(4,1fr);
+  grid-template-columns:repeat(5,1fr);
   gap:6px;
 }
 .header-nav .nav-link {
