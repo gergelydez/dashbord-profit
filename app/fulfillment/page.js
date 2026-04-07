@@ -511,29 +511,6 @@ export default function FulfillmentPage() {
       toast('Sameday eroare: '+e.message,'error');
     }
   };
-      const soap = `<?xml version="1.0" encoding="UTF-8"?>
-<DTU EmailAddress="${user}" Version="18.09.12.01" RequestType="GlsApiRequest" MethodName="prepareLabels">
-  <Auth><Username>${user}</Username><Password>${pass}</Password></Auth>
-  <Shipment SenderID="${client}" PickupDate="${new Date().toISOString().slice(0,10)}T00:00:00"
-    ClientRef="TEST-CONN" CODAmount="0" PCount="1" Info="Test">
-    <Address Name="Test" Address="Str Test 1" City="Bucuresti" ZipCode="010101"
-      CountryCode="RO" Phone="0700000000" Email=""/>
-    <Services/>
-  </Shipment>
-</DTU>`;
-
-      const res = await fetch('https://online.gls-romania.ro/webservices/soap_server.php?wsdl&ver=18.09.12.01', {
-        method:'POST',
-        headers:{'Content-Type':'text/xml; charset=UTF-8','SOAPAction':'prepareLabels'},
-        body: soap,
-      });
-      const xml = await res.text();
-      const low = xml.toLowerCase();
-      const isAuthErr = (low.includes('invalid')||low.includes('unauthorized')||low.includes('authentication'))
-                     && (low.includes('user')||low.includes('auth')||low.includes('password')||low.includes('credent'));
-
-      if (!isAuthErr) {
-        setGlsStatus('ok');
   // ── Generare AWB ───────────────────────────────────────────────────────
   const generateAwb = async(order, options)=>{
     const { courier, weight, parcels, manualAwb, selectedServices, sdOptions, lockerId, observation, senderEasyboxId } = options;
