@@ -241,6 +241,11 @@ export default function FulfillmentPage() {
   // Stare configurare din Vercel env vars (auto-detectată la mount)
   const [glsEnvOk,setGlsEnvOk]   = useState(false);
   const [sdEnvOk,setSdEnvOk]     = useState(false);
+  // Status conexiune live per curier
+  const [glsStatus,setGlsStatus]     = useState('idle'); // idle | testing | ok | error
+  const [glsStatusMsg,setGlsStatusMsg] = useState('');
+  const [sdStatus,setSdStatus]       = useState('idle');
+  const [sdStatusMsg,setSdStatusMsg]   = useState('');
 
   // Sameday config
   const [sdUser,setSdUser]     = useState(()=>ls.get('fb_sd_user')||'');
@@ -269,7 +274,43 @@ export default function FulfillmentPage() {
   // Modals
   const [awbModal,setAwbModal]     = useState(null);
   const [invModal,setInvModal]     = useState(null);
-  const [addrModal,setAddrModal]   = useState(null); // { order, editAddr }
+  const [addrModal,setAddrModal]   = useState(null); // { order, editAddr, apiIssues, suggestion, saving, validating }
+
+  const openAddrModal = (order) => {
+    const editAddr = { name:order.client, address:order.address, address2:order.address2||'', city:order.city, county:order.county, zip:order.zip, phone:order.phone, email:'' };
+    setAddrModal({ order, editAddr, apiIssues:[], suggestion:null, saving:false, validating:false });
+    // Validare automată la deschidere (skipEmpty = nu marca câmpurile goale)
+    setTimeout(() => validateAddrApi(editAddr, true), 200);
+  };
+
+  const validateAddrApi = async (fields, skipEmpty=false) => {
+    setAddrModal(p => p ? { ...p, validating:true } : null);
+    try {
+      const res = await fetch('/api/validate-address', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ ...fields, skipEmpty }),
+      });
+      const data = await res.json();
+      setAddrModal(p => p ? { ...p, apiIssues: data.issues||[], suggestion: data.suggestion||null, validating:false } : null);
+    } catch {
+      setAddrModal(p => p ? { ...p, validating:false } : null);
+    }
+  };
+
+  const applyAddrSuggestion = () => {
+    if (!addrModal?.suggestion) return;
+    const s = addrModal.suggestion;
+    setAddrModal(p => ({
+      ...p,
+      editAddr: { ...p.editAddr,
+        address: s.formattedAddress || p.editAddr.address,
+        city:    s.city     || p.editAddr.city,
+        county:  s.county   || p.editAddr.county,
+        zip:     s.postcode || p.editAddr.zip,
+      },
+      suggestion: null, apiIssues: [],
+    }));
+  };
   const [settingsOpen,setSettingsOpen] = useState(false);
   const [bulkModal,setBulkModal]   = useState(false);
   const [bulkProgress,setBulkProgress] = useState({ running:false, done:0, total:0, errors:[] });
@@ -301,16 +342,25 @@ export default function FulfillmentPage() {
 
   // Auto-detectare credențiale din Vercel env vars la mount
   useEffect(()=>{
-    // Check GLS
-    fetch('/api/gls').then(r=>r.json()).then(d=>{ if(d.configured) { setGlsEnvOk(true); if(d.clientNumber) setGlsClient(d.clientNumber); } }).catch(()=>{});
-    // Check Sameday + încarcă pickup points
+    // Check GLS — GET /api/gls returnează configured:true dacă env vars sunt setate
+    fetch('/api/gls').then(r=>r.json()).then(d=>{
+      if(d.configured) {
+        setGlsEnvOk(true);
+        if(d.clientNumber) setGlsClient(d.clientNumber);
+      }
+    }).catch(()=>{});
+    // Check Sameday + încarcă pickup points automat
     fetch('/api/sameday-awb').then(r=>r.json()).then(d=>{
       if(d.configured) {
         setSdEnvOk(true);
-        if(d.pickupPoints?.length) { setSdConfig({ pickupPoints:d.pickupPoints, services:d.services||[] }); if(!sdPickup&&d.pickupPoints[0]) setSdPickup(String(d.pickupPoints[0].id)); if(!sdService&&d.services?.[0]) setSdService(String(d.services[0].id)); }
+        if(d.pickupPoints?.length) {
+          setSdConfig({ pickupPoints:d.pickupPoints, services:d.services||[] });
+          if(!sdPickup&&d.pickupPoints[0]) setSdPickup(String(d.pickupPoints[0].id));
+          if(!sdService&&d.services?.[0]) setSdService(String(d.services[0].id));
+        }
       }
     }).catch(()=>{});
-  },[]);
+  },[]);// eslint-disable-line
 
   // ── SmartBill serii ────────────────────────────────────────────────────
   const loadSbSeries = useCallback(async()=>{
@@ -325,18 +375,48 @@ export default function FulfillmentPage() {
 
   // ── Sameday config ─────────────────────────────────────────────────────
   const loadSdConfig = useCallback(async()=>{
-    if (!sdUser||!sdPass) return;
+    // Dacă env vars sunt configurate — folosim GET (fără credențiale)
+    // Dacă nu — trimitem credențialele manual prin POST
     try {
-      const res = await fetch(`/api/sameday-awb?username=${encodeURIComponent(sdUser)}&password=${encodeURIComponent(sdPass)}`);
-      const data = await res.json();
-      if (data.ok) {
-        setSdConfig({ pickupPoints:data.pickupPoints||[], services:data.services||[] });
-        if (!sdPickup&&data.pickupPoints?.[0]) setSdPickup(String(data.pickupPoints[0].id));
-        if (!sdService&&data.services?.[0]) setSdService(String(data.services[0].id));
-        toast('Sameday conectat! '+data.pickupPoints?.length+' pickup points.','success');
-      } else toast('Sameday: '+data.error,'error');
+      let data;
+      if (sdEnvOk) {
+        const res = await fetch('/api/sameday-awb');
+        data = await res.json();
+      } else {
+        if (!sdUser||!sdPass) { toast('Introdu username și parola Sameday.','error'); return; }
+        const res = await fetch('/api/sameday-awb', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ action:'get_lockers', username:sdUser, password:sdPass, county:'' }),
+        });
+        // Folosim un apel de test pentru a obține pickup points
+        const res2 = await fetch('/api/sameday-awb', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ action:'test_connection', username:sdUser, password:sdPass }),
+        });
+        data = await res2.json();
+        if (!data.ok) {
+          // Fallback — doar marcăm ca conectat cu credențialele introduse
+          toast('Credențiale Sameday salvate. Pickup points se vor încărca la prima generare AWB.','info');
+          return;
+        }
+      }
+      if (data.ok||data.configured) {
+        setSdEnvOk(true);
+        if(data.pickupPoints?.length) {
+          setSdConfig({ pickupPoints:data.pickupPoints||[], services:data.services||[] });
+          if(!sdPickup&&data.pickupPoints[0]) setSdPickup(String(data.pickupPoints[0].id));
+          if(!sdService&&data.services?.[0]) setSdService(String(data.services[0].id));
+          toast('Sameday conectat! '+data.pickupPoints.length+' pickup points.','success');
+        } else {
+          toast('Sameday conectat!','success');
+        }
+      } else {
+        toast('Sameday: '+(data.error||data.message||'eroare necunoscută'),'error');
+      }
     } catch(e) { toast('Sameday eroare: '+e.message,'error'); }
-  },[sdUser,sdPass,sdPickup,sdService,toast]);
+  },[sdEnvOk,sdUser,sdPass,sdPickup,sdService,toast]);
 
   const saveSettings = ()=>{
     ls.set('fb_gls_user',glsUser); ls.set('fb_gls_pass',glsPass); ls.set('fb_gls_client',glsClient);
@@ -346,6 +426,79 @@ export default function FulfillmentPage() {
     ls.set('sb_inv_series',sbSeries); ls.set('sb_warehouse',sbWarehouse);
     ls.set('sb_use_stock',String(sbUseStock)); ls.set('sb_pay_series',sbPaySeries);
     toast('Setări salvate!','success'); setSettingsOpen(false); loadSbSeries();
+  };
+
+  // ── Test conexiune GLS ─────────────────────────────────────────────────
+  const testGlsConnection = async () => {
+    setGlsStatus('testing'); setGlsStatusMsg('');
+    try {
+      const res = await fetch('/api/gls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'get_config',
+          // Dacă userul a completat manual, le trimitem pentru override
+          username: glsUser || undefined,
+          password: glsPass || undefined,
+          clientNumber: glsClient || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.configured || data.ok) {
+        setGlsStatus('ok');
+        setGlsEnvOk(true);
+        if (data.clientNumber) setGlsClient(data.clientNumber);
+        setGlsStatusMsg(`✓ GLS conectat! Client nr: ${data.clientNumber||glsClient}`);
+        toast('GLS conectat cu succes!','success');
+      } else {
+        setGlsStatus('error');
+        setGlsStatusMsg('✗ ' + (data.error||data.message||'Credențiale GLS invalide'));
+        toast('GLS eroare: '+(data.error||data.message),'error');
+      }
+    } catch(e) {
+      setGlsStatus('error');
+      setGlsStatusMsg('✗ ' + e.message);
+      toast('GLS eroare: '+e.message,'error');
+    }
+  };
+
+  // ── Test conexiune Sameday ─────────────────────────────────────────────
+  const testSdConnection = async () => {
+    setSdStatus('testing'); setSdStatusMsg('');
+    try {
+      // Încearcă mai întâi env vars (GET), dacă nu merge încearcă cu credențialele manuale
+      const res = await fetch('/api/sameday-awb', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'test_connection',
+          username: sdUser || undefined,
+          password: sdPass || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setSdStatus('ok');
+        setSdEnvOk(true);
+        const pts = data.pickupPoints||[];
+        const svcs = data.services||[];
+        if (pts.length) {
+          setSdConfig({ pickupPoints: pts, services: svcs });
+          if (!sdPickup&&pts[0]) setSdPickup(String(pts[0].id));
+          if (!sdService&&svcs[0]) setSdService(String(svcs[0].id));
+        }
+        setSdStatusMsg(`✓ Sameday conectat! ${pts.length} pickup points, ${svcs.length} servicii`);
+        toast(`Sameday conectat! ${pts.length} pickup points.`,'success');
+      } else {
+        setSdStatus('error');
+        setSdStatusMsg('✗ ' + (data.error||'Credențiale Sameday invalide'));
+        toast('Sameday eroare: '+(data.error||'credențiale invalide'),'error');
+      }
+    } catch(e) {
+      setSdStatus('error');
+      setSdStatusMsg('✗ ' + e.message);
+      toast('Sameday eroare: '+e.message,'error');
+    }
   };
 
   // ── Generare AWB ───────────────────────────────────────────────────────
@@ -590,7 +743,7 @@ export default function FulfillmentPage() {
                               {o.addrIssues.slice(0,2).map((iss,i)=>(
                                 <div key={i} style={{fontSize:9,color:'#f43f5e'}}>⚠ {iss}</div>
                               ))}
-                              <button className="fb-addr-tag" style={{marginTop:3}} onClick={()=>setAddrModal({ order:o, editAddr:{ name:o.client,address:o.address,address2:o.address2,city:o.city,county:o.county,zip:o.zip,phone:o.phone } })}>
+                              <button className="fb-addr-tag" style={{marginTop:3}} onClick={()=>openAddrModal(o)}>
                                 ✏️ Corectează
                               </button>
                             </div>
@@ -756,57 +909,97 @@ export default function FulfillmentPage() {
       {/* ── MODAL ADRESĂ ──────────────────────────────────────────────── */}
       {addrModal&&(
         <div className="fb-overlay" onClick={e=>{if(e.target===e.currentTarget)setAddrModal(null);}}>
-          <div className="fb-modal" style={{maxWidth:480}}>
-            <div className="fb-mhdr">
+          <div className="fb-modal" style={{maxWidth:460}}>
+
+            <div className="fb-mhdr" style={{position:'sticky',top:0,background:'#0f1419',zIndex:10,borderRadius:'14px 14px 0 0'}}>
               <div>
-                <div className="fb-mt">✏️ Corectare adresă — {addrModal.order.name}</div>
-                <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Modificările se salvează în Shopify</div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:15}}>✏️</span>
+                  <span className="fb-mt">Corectare adresă — {addrModal.order.name}</span>
+                </div>
+                <div style={{fontSize:11,color:'#475569',marginTop:2}}>Modificările se salvează în Shopify</div>
               </div>
               <button className="fb-mx" onClick={()=>setAddrModal(null)}>✕</button>
             </div>
+
             <div className="fb-mbdy">
-              {addrModal.order.addrIssues?.length>0&&(
-                <div className="fb-addr-issue">
-                  <div style={{fontSize:11,color:'#f43f5e',fontWeight:700,marginBottom:4}}>⚠ Probleme detectate:</div>
-                  {addrModal.order.addrIssues.map((iss,i)=><div key={i} style={{fontSize:10,color:'#f43f5e'}}>• {iss}</div>)}
+              {(addrModal.apiIssues||[]).length>0&&(
+                <div style={{background:'rgba(244,63,94,.08)',border:'1px solid rgba(244,63,94,.3)',borderRadius:10,padding:'10px 14px'}}>
+                  <div style={{fontSize:11,color:'#f43f5e',fontWeight:700,marginBottom:5}}>⚠ Probleme detectate:</div>
+                  {(addrModal.apiIssues||[]).map((iss,i)=>(
+                    <div key={i} style={{fontSize:11,color:'#f43f5e',lineHeight:1.7}}>• {iss.msg||iss}</div>
+                  ))}
                 </div>
               )}
+
+              {addrModal.suggestion&&(
+                <div style={{background:'rgba(16,185,129,.07)',border:'1px solid rgba(16,185,129,.25)',borderRadius:10,padding:'10px 14px'}}>
+                  <div style={{fontSize:10,color:'#10b981',fontWeight:700,marginBottom:5}}>
+                    The address [{addrModal.editAddr.city}, {addrModal.editAddr.address||'?'}] matches the ZIP code [{addrModal.suggestion.postcode}]. Internal.
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:12,color:'#94a3b8',flex:1}}>
+                      📍 {addrModal.suggestion.city}{addrModal.suggestion.county?', '+addrModal.suggestion.county:''}{addrModal.suggestion.formattedAddress?', '+addrModal.suggestion.formattedAddress:''}
+                      {addrModal.suggestion.postcode&&<strong style={{color:'#10b981'}}> · {addrModal.suggestion.postcode}</strong>}
+                    </span>
+                    <button onClick={applyAddrSuggestion}
+                      style={{background:'#10b981',color:'white',border:'none',borderRadius:6,padding:'5px 16px',fontSize:11,fontWeight:700,cursor:'pointer',flexShrink:0}}>
+                      fix
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {[
-                {key:'name',label:'Nume destinatar',ph:'Ion Popescu'},
-                {key:'phone',label:'Telefon',ph:'0712345678'},
-                {key:'address',label:'Adresă (str. + nr.)',ph:'Str. Exemplu nr. 10'},
-                {key:'address2',label:'Apartament / etaj (opțional)',ph:'Ap. 3, Et. 2'},
-                {key:'city',label:'Oraș',ph:'București'},
-                {key:'county',label:'Județ',ph:'Ilfov'},
-                {key:'zip',label:'Cod poștal',ph:'077190'},
+                {key:'name',    label:'NUME DESTINATAR',              ph:'Ion Popescu'},
+                {key:'phone',   label:'TELEFON',                      ph:'07XXXXXXXX'},
+                {key:'address', label:'ADRESĂ (STR. + NR.)',          ph:'Str. Exemplu nr. 10'},
+                {key:'address2',label:'APARTAMENT / ETAJ (OPȚIONAL)', ph:'Ap. 3, Et. 2'},
+                {key:'city',    label:'ORAȘ',                         ph:'București'},
+                {key:'county',  label:'JUDEȚ',                        ph:'Ilfov'},
+                {key:'zip',     label:'COD POȘTAL',                   ph:'077190'},
               ].map(({key,label,ph})=>{
-                const issues = validateAddr(addrModal.editAddr);
-                const hasErr = key==='name'&&issues.some(i=>i.includes('Nume')) ||
-                               key==='address'&&issues.some(i=>i.includes('strad')) ||
-                               key==='city'&&issues.some(i=>i.includes('oras')||i.includes('City')) ||
-                               key==='phone'&&issues.some(i=>i.includes('Telefon'));
+                const apiErr = (addrModal.apiIssues||[]).some(i=>(i.field||'')=== key);
+                const loc = validateAddr(addrModal.editAddr);
+                const locErr = key==='address'&&loc.some(i=>i.includes('strad')) || key==='phone'&&loc.some(i=>i.includes('telefon')||i.includes('Telefon'));
+                const isErr = apiErr||locErr;
                 return (
                   <div key={key} className="fb-field">
-                    <div className="fb-lbl">{label}</div>
-                    <input className={`fb-inp ${hasErr?'err':''}`} value={addrModal.editAddr[key]||''} placeholder={ph}
-                      onChange={e=>setAddrModal(p=>({...p,editAddr:{...p.editAddr,[key]:e.target.value}}))}/>
+                    <div className="fb-lbl" style={{color:isErr?'#f43f5e':'#64748b'}}>{label}</div>
+                    <input
+                      className={`fb-inp ${isErr?'err':''}`}
+                      value={addrModal.editAddr[key]||''} placeholder={ph}
+                      style={{fontFamily:'monospace',fontSize:14}}
+                      onChange={e=>setAddrModal(p=>({...p,editAddr:{...p.editAddr,[key]:e.target.value}}))}
+                    />
                   </div>
                 );
               })}
-              {/* Preview probleme rămase */}
+
               {(()=>{
-                const remaining = validateAddr(addrModal.editAddr);
-                return remaining.length>0?(
+                const rem = validateAddr(addrModal.editAddr);
+                if(rem.length>0) return (
                   <div className="fb-warnbox">
                     <div style={{fontWeight:700,marginBottom:4}}>⚠ Probleme rămase:</div>
-                    {remaining.map((r,i)=><div key={i} style={{fontSize:11}}>• {r}</div>)}
+                    {rem.map((r,i)=><div key={i} style={{fontSize:11}}>• {r}</div>)}
                   </div>
-                ):(<div className="fb-okbox"><div style={{color:'#10b981',fontWeight:700}}>✓ Adresa validă!</div></div>);
+                );
+                return <div className="fb-okbox"><div style={{color:'#10b981',fontWeight:700,fontSize:13}}>✓ Adresa validă!</div></div>;
               })()}
             </div>
-            <div className="fb-mftr">
+
+            <div className="fb-mftr" style={{position:'sticky',bottom:0,background:'#0f1419',borderRadius:'0 0 14px 14px'}}>
               <button className="fb-btn-g" onClick={()=>setAddrModal(null)}>Anulează</button>
-              <button className="fb-btn-p" onClick={()=>saveAddress(addrModal.order,addrModal.editAddr)}>💾 Salvează în Shopify</button>
+              <button
+                onClick={()=>validateAddrApi(addrModal.editAddr,false)}
+                disabled={addrModal.validating}
+                style={{flex:1,background:'rgba(59,130,246,.12)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:8,padding:'9px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit',opacity:addrModal.validating?.6:1}}>
+                {addrModal.validating?'⟳ Verifică...':'🔍 Verifică'}
+              </button>
+              <button className="fb-btn-p" disabled={addrModal.saving}
+                onClick={()=>saveAddress(addrModal.order,addrModal.editAddr)} style={{flex:2}}>
+                {addrModal.saving?'↻ Se salvează...':'💾 Salvează în Shopify'}
+              </button>
             </div>
           </div>
         </div>
@@ -839,101 +1032,135 @@ export default function FulfillmentPage() {
       {/* ── MODAL SETĂRI ──────────────────────────────────────────────── */}
       {settingsOpen&&(
         <div className="fb-overlay" onClick={e=>{if(e.target===e.currentTarget)setSettingsOpen(false);}}>
-          <div className="fb-modal" style={{maxWidth:660}}>
-            <div className="fb-mhdr"><div className="fb-mt">⚙️ Setări Integrări</div><button className="fb-mx" onClick={()=>setSettingsOpen(false)}>✕</button></div>
+          <div className="fb-modal" style={{maxWidth:680}}>
+            <div className="fb-mhdr">
+              <div className="fb-mt">⚙️ Setări Integrări</div>
+              <button className="fb-mx" onClick={()=>setSettingsOpen(false)}>✕</button>
+            </div>
             <div className="fb-mbdy">
-              <div className="fb-sett-grid">
-                <div className="fb-sett-card">
-                  <div className="fb-sett-hdr" style={{color:'#f97316'}}>
-                    📦 GLS Romania
-                    {glsEnvOk&&<span style={{marginLeft:'auto',fontSize:9,background:'rgba(16,185,129,.15)',color:'#10b981',border:'1px solid rgba(16,185,129,.3)',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ Vercel ENV</span>}
-                  </div>
-                  <div className="fb-sett-body">
-                    {glsEnvOk ? (
-                      <div style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#10b981',lineHeight:1.6}}>
-                        ✓ Credențialele GLS sunt configurate în <strong>Vercel Environment Variables</strong>.<br/>
-                        <span style={{color:'#64748b',fontSize:11}}>GLS_USERNAME · GLS_PASSWORD · GLS_CLIENT_NUMBER={glsClient}</span>
-                      </div>
-                    ) : (
-                      <>
-                        <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.2)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#f59e0b',marginBottom:4}}>
-                          ⚠ Adaugă în Vercel: <strong>GLS_USERNAME</strong>, <strong>GLS_PASSWORD</strong>, <strong>GLS_CLIENT_NUMBER</strong>
-                        </div>
-                        <div className="fb-field"><div className="fb-lbl">Username API (fallback)</div><input className="fb-inp" value={glsUser} onChange={e=>setGlsUser(e.target.value)} placeholder="user@gls.ro"/></div>
-                        <div className="fb-field"><div className="fb-lbl">Parolă API (fallback)</div><input type="password" className="fb-inp" value={glsPass} onChange={e=>setGlsPass(e.target.value)} placeholder="••••"/></div>
-                      </>
-                    )}
-                    <div className="fb-field"><div className="fb-lbl">Număr Client GLS</div><input className="fb-inp" value={glsClient} onChange={e=>setGlsClient(e.target.value)} placeholder="553003585"/></div>
-                  </div>
-                </div>
 
-                <div className="fb-sett-card">
-                  <div className="fb-sett-hdr" style={{color:'#3b82f6'}}>
-                    🚀 Sameday
-                    {sdEnvOk&&<span style={{marginLeft:'auto',fontSize:9,background:'rgba(16,185,129,.15)',color:'#10b981',border:'1px solid rgba(16,185,129,.3)',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ Vercel ENV</span>}
+              {/* ── GLS ── */}
+              <div className="fb-sett-card" style={{gridColumn:'1/-1'}}>
+                <div className="fb-sett-hdr" style={{color:'#f97316'}}>
+                  📦 GLS Romania
+                  {glsStatus==='ok'&&<span style={{marginLeft:'auto',fontSize:10,background:'rgba(16,185,129,.15)',color:'#10b981',border:'1px solid rgba(16,185,129,.3)',padding:'3px 10px',borderRadius:10,fontWeight:700}}>✓ Conectat</span>}
+                  {glsStatus==='error'&&<span style={{marginLeft:'auto',fontSize:10,background:'rgba(244,63,94,.15)',color:'#f43f5e',border:'1px solid rgba(244,63,94,.3)',padding:'3px 10px',borderRadius:10,fontWeight:700}}>✗ Eroare</span>}
+                  {glsStatus==='testing'&&<span style={{marginLeft:'auto',fontSize:10,color:'#64748b'}}>⟳ Se testează...</span>}
+                </div>
+                <div className="fb-sett-body">
+                  {glsEnvOk&&glsStatus!=='error'&&(
+                    <div style={{background:'rgba(16,185,129,.07)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#10b981'}}>
+                      ✓ Credențialele GLS sunt în <strong>Vercel ENV</strong> (GLS_USERNAME / GLS_PASSWORD)
+                    </div>
+                  )}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                    <div className="fb-field">
+                      <div className="fb-lbl">Username / App ID</div>
+                      <input className="fb-inp" value={glsUser} onChange={e=>setGlsUser(e.target.value)} placeholder={glsEnvOk?'(din Vercel ENV)':'user@gls.ro'}/>
+                    </div>
+                    <div className="fb-field">
+                      <div className="fb-lbl">Parolă / API Secret</div>
+                      <input type="password" className="fb-inp" value={glsPass} onChange={e=>setGlsPass(e.target.value)} placeholder={glsEnvOk?'(din Vercel ENV)':'••••••'}/>
+                    </div>
                   </div>
-                  <div className="fb-sett-body">
-                    {sdEnvOk ? (
-                      <div style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#10b981',lineHeight:1.6}}>
-                        ✓ Credențialele Sameday sunt configurate în <strong>Vercel Environment Variables</strong>.<br/>
-                        <span style={{color:'#64748b',fontSize:11}}>SAMEDAY_USERNAME · SAMEDAY_PASSWORD</span>
-                      </div>
-                    ) : (
-                      <>
-                        <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.2)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#f59e0b',marginBottom:4}}>
-                          ⚠ Adaugă în Vercel: <strong>SAMEDAY_USERNAME</strong>, <strong>SAMEDAY_PASSWORD</strong>
-                        </div>
-                        <div className="fb-field"><div className="fb-lbl">Username (fallback)</div><input className="fb-inp" value={sdUser} onChange={e=>setSdUser(e.target.value)} placeholder="username"/></div>
-                        <div className="fb-field"><div className="fb-lbl">Parolă (fallback)</div><input type="password" className="fb-inp" value={sdPass} onChange={e=>setSdPass(e.target.value)} placeholder="••••"/></div>
-                      </>
-                    )}
-                    <button className="fb-btn-g" style={{fontSize:11}} onClick={loadSdConfig}>🔌 {sdEnvOk?'Reîncarcă pickup points':'Conectează'}</button>
-                    {sdConfig.pickupPoints.length>0&&(<>
-                      <div className="fb-field"><div className="fb-lbl">Pickup Point</div>
+                  <div className="fb-field">
+                    <div className="fb-lbl">Număr Client GLS</div>
+                    <input className="fb-inp" value={glsClient} onChange={e=>setGlsClient(e.target.value)} placeholder="553003585"/>
+                  </div>
+                  {glsStatusMsg&&<div style={{fontSize:11,color:glsStatus==='ok'?'#10b981':'#f43f5e',background:glsStatus==='ok'?'rgba(16,185,129,.07)':'rgba(244,63,94,.07)',border:`1px solid ${glsStatus==='ok'?'rgba(16,185,129,.2)':'rgba(244,63,94,.2)'}`,borderRadius:7,padding:'7px 10px'}}>{glsStatusMsg}</div>}
+                  <button className="fb-btn-g" style={{fontSize:12}} onClick={testGlsConnection} disabled={glsStatus==='testing'}>
+                    {glsStatus==='testing'?'⟳ Se testează...':'🔌 Testează conexiunea GLS'}
+                  </button>
+                </div>
+              </div>
+
+              {/* ── SAMEDAY ── */}
+              <div className="fb-sett-card" style={{gridColumn:'1/-1'}}>
+                <div className="fb-sett-hdr" style={{color:'#3b82f6'}}>
+                  🚀 Sameday
+                  {sdStatus==='ok'&&<span style={{marginLeft:'auto',fontSize:10,background:'rgba(16,185,129,.15)',color:'#10b981',border:'1px solid rgba(16,185,129,.3)',padding:'3px 10px',borderRadius:10,fontWeight:700}}>✓ Conectat</span>}
+                  {sdStatus==='error'&&<span style={{marginLeft:'auto',fontSize:10,background:'rgba(244,63,94,.15)',color:'#f43f5e',border:'1px solid rgba(244,63,94,.3)',padding:'3px 10px',borderRadius:10,fontWeight:700}}>✗ Eroare</span>}
+                  {sdStatus==='testing'&&<span style={{marginLeft:'auto',fontSize:10,color:'#64748b'}}>⟳ Se testează...</span>}
+                </div>
+                <div className="fb-sett-body">
+                  {sdEnvOk&&sdStatus!=='error'&&(
+                    <div style={{background:'rgba(16,185,129,.07)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#10b981'}}>
+                      ✓ Credențialele Sameday sunt în <strong>Vercel ENV</strong> (SAMEDAY_USERNAME / SAMEDAY_PASSWORD)
+                    </div>
+                  )}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                    <div className="fb-field">
+                      <div className="fb-lbl">Username</div>
+                      <input className="fb-inp" value={sdUser} onChange={e=>setSdUser(e.target.value)} placeholder={sdEnvOk?'(din Vercel ENV)':'username'}/>
+                    </div>
+                    <div className="fb-field">
+                      <div className="fb-lbl">Parolă</div>
+                      <input type="password" className="fb-inp" value={sdPass} onChange={e=>setSdPass(e.target.value)} placeholder={sdEnvOk?'(din Vercel ENV)':'••••••'}/>
+                    </div>
+                  </div>
+                  {sdStatusMsg&&<div style={{fontSize:11,color:sdStatus==='ok'?'#10b981':'#f43f5e',background:sdStatus==='ok'?'rgba(16,185,129,.07)':'rgba(244,63,94,.07)',border:`1px solid ${sdStatus==='ok'?'rgba(16,185,129,.2)':'rgba(244,63,94,.2)'}`,borderRadius:7,padding:'7px 10px'}}>{sdStatusMsg}</div>}
+                  <button className="fb-btn-g" style={{fontSize:12}} onClick={testSdConnection} disabled={sdStatus==='testing'}>
+                    {sdStatus==='testing'?'⟳ Se testează...':'🔌 Testează conexiunea Sameday'}
+                  </button>
+                  {sdConfig.pickupPoints.length>0&&(
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                      <div className="fb-field">
+                        <div className="fb-lbl">Pickup Point ({sdConfig.pickupPoints.length} disponibile)</div>
                         <select className="fb-sel" value={sdPickup} onChange={e=>setSdPickup(e.target.value)}>
                           {sdConfig.pickupPoints.map(p=><option key={p.id} value={p.id}>{p.name} ({p.city})</option>)}
                         </select>
                       </div>
-                      <div className="fb-field"><div className="fb-lbl">Serviciu</div>
+                      <div className="fb-field">
+                        <div className="fb-lbl">Serviciu</div>
                         <select className="fb-sel" value={sdService} onChange={e=>setSdService(e.target.value)}>
                           {sdConfig.services.map(s=><option key={s.id} value={s.id}>{s.name}{s.isLocker?' 🔒':''}</option>)}
                         </select>
                       </div>
-                    </>)}
-                  </div>
+                    </div>
+                  )}
                 </div>
-                <div className="fb-sett-card" style={{gridColumn:'1/-1'}}>
-                  <div className="fb-sett-hdr" style={{color:'#10b981'}}>🧾 SmartBill</div>
-                  <div className="fb-sett-body">
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-                      <div className="fb-field"><div className="fb-lbl">Email</div><input className="fb-inp" value={sbEmail} onChange={e=>setSbEmail(e.target.value)} placeholder="email@firma.ro"/></div>
-                      <div className="fb-field"><div className="fb-lbl">Token API</div><input type="password" className="fb-inp" value={sbToken} onChange={e=>setSbToken(e.target.value)} placeholder="token"/></div>
-                      <div className="fb-field"><div className="fb-lbl">CIF</div><input className="fb-inp" value={sbCif} onChange={e=>setSbCif(e.target.value)} placeholder="RO12345678"/></div>
+              </div>
+
+              {/* ── SMARTBILL ── */}
+              <div className="fb-sett-card" style={{gridColumn:'1/-1'}}>
+                <div className="fb-sett-hdr" style={{color:'#10b981'}}>🧾 SmartBill</div>
+                <div className="fb-sett-body">
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+                    <div className="fb-field"><div className="fb-lbl">Email</div><input className="fb-inp" value={sbEmail} onChange={e=>setSbEmail(e.target.value)} placeholder="email@firma.ro"/></div>
+                    <div className="fb-field"><div className="fb-lbl">Token API</div><input type="password" className="fb-inp" value={sbToken} onChange={e=>setSbToken(e.target.value)} placeholder="token"/></div>
+                    <div className="fb-field"><div className="fb-lbl">CIF</div><input className="fb-inp" value={sbCif} onChange={e=>setSbCif(e.target.value)} placeholder="RO12345678"/></div>
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+                    <div className="fb-field">
+                      <div className="fb-lbl">Serie Factură</div>
+                      {sbSeriesList.length>0?<select className="fb-sel" value={sbSeries} onChange={e=>setSbSeries(e.target.value)}>{sbSeriesList.map(s=><option key={s}>{s}</option>)}</select>
+                      :<input className="fb-inp" value={sbSeries} onChange={e=>setSbSeries(e.target.value)} placeholder="FACT"/>}
                     </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-                      <div className="fb-field"><div className="fb-lbl">Serie Factură</div>
-                        {sbSeriesList.length>0?<select className="fb-sel" value={sbSeries} onChange={e=>setSbSeries(e.target.value)}>{sbSeriesList.map(s=><option key={s}>{s}</option>)}</select>
-                        :<input className="fb-inp" value={sbSeries} onChange={e=>setSbSeries(e.target.value)} placeholder="FACT"/>}
-                      </div>
-                      <div className="fb-field"><div className="fb-lbl">Serie Chitanță</div><input className="fb-inp" value={sbPaySeries} onChange={e=>setSbPaySeries(e.target.value)} placeholder="CHT"/></div>
-                      <div className="fb-field"><div className="fb-lbl">Gestiune</div>
-                        {sbWarehouses.length>0?<select className="fb-sel" value={sbWarehouse} onChange={e=>setSbWarehouse(e.target.value)}>{sbWarehouses.map(w=><option key={w}>{w}</option>)}</select>
-                        :<input className="fb-inp" value={sbWarehouse} onChange={e=>setSbWarehouse(e.target.value)} placeholder="Depozit"/>}
-                      </div>
+                    <div className="fb-field"><div className="fb-lbl">Serie Chitanță</div><input className="fb-inp" value={sbPaySeries} onChange={e=>setSbPaySeries(e.target.value)} placeholder="CHT"/></div>
+                    <div className="fb-field">
+                      <div className="fb-lbl">Gestiune</div>
+                      {sbWarehouses.length>0?<select className="fb-sel" value={sbWarehouse} onChange={e=>setSbWarehouse(e.target.value)}>{sbWarehouses.map(w=><option key={w}>{w}</option>)}</select>
+                      :<input className="fb-inp" value={sbWarehouse} onChange={e=>setSbWarehouse(e.target.value)} placeholder="Depozit"/>}
                     </div>
-                    <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
-                      <div className="fb-trow" style={{gap:8}}><button className={`fb-toggle ${sbUseStock?'on':''}`} onClick={()=>setSbUseStock(v=>!v)}/><span style={{fontSize:12,color:'#94a3b8'}}>Descarcă stoc gestiune (SKU obligatoriu)</span></div>
-                      <button className="fb-btn-g" style={{fontSize:11}} onClick={loadSbSeries}>🔌 Testează &amp; Încarcă serii</button>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+                    <div className="fb-trow" style={{gap:8}}>
+                      <button className={`fb-toggle ${sbUseStock?'on':''}`} onClick={()=>setSbUseStock(v=>!v)}/>
+                      <span style={{fontSize:12,color:'#94a3b8'}}>Descarcă stoc gestiune</span>
                     </div>
+                    <button className="fb-btn-g" style={{fontSize:12}} onClick={loadSbSeries}>🔌 Testează SmartBill</button>
                   </div>
                 </div>
               </div>
+
             </div>
-            <div className="fb-mftr"><button className="fb-btn-g" onClick={()=>setSettingsOpen(false)}>Anulează</button><button className="fb-btn-p" onClick={saveSettings}>💾 Salvează</button></div>
+            <div className="fb-mftr">
+              <button className="fb-btn-g" onClick={()=>setSettingsOpen(false)}>Anulează</button>
+              <button className="fb-btn-p" onClick={saveSettings}>💾 Salvează</button>
+            </div>
           </div>
         </div>
       )}
-
       {/* TOASTS */}
       <div className="toast-container">
         {toasts.map(t=>(<div key={t.id} className={`fb-toast ${t.type}`}>{t.type==='success'?'✅':t.type==='error'?'❌':'ℹ️'} {t.msg}</div>))}
