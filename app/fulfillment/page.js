@@ -236,7 +236,11 @@ export default function FulfillmentPage() {
   // GLS config
   const [glsUser,setGlsUser]     = useState(()=>ls.get('fb_gls_user')||'');
   const [glsPass,setGlsPass]     = useState(()=>ls.get('fb_gls_pass')||'');
-  const [glsClient,setGlsClient] = useState(()=>ls.get('fb_gls_client')||'');
+  const [glsClient,setGlsClient] = useState(()=>ls.get('fb_gls_client')||'553003585');
+
+  // Stare configurare din Vercel env vars (auto-detectată la mount)
+  const [glsEnvOk,setGlsEnvOk]   = useState(false);
+  const [sdEnvOk,setSdEnvOk]     = useState(false);
 
   // Sameday config
   const [sdUser,setSdUser]     = useState(()=>ls.get('fb_sd_user')||'');
@@ -294,6 +298,19 @@ export default function FulfillmentPage() {
   },[domain,shopToken]);
 
   useEffect(()=>{ fetchOrders(); },[fetchOrders]);
+
+  // Auto-detectare credențiale din Vercel env vars la mount
+  useEffect(()=>{
+    // Check GLS
+    fetch('/api/gls').then(r=>r.json()).then(d=>{ if(d.configured) { setGlsEnvOk(true); if(d.clientNumber) setGlsClient(d.clientNumber); } }).catch(()=>{});
+    // Check Sameday + încarcă pickup points
+    fetch('/api/sameday-awb').then(r=>r.json()).then(d=>{
+      if(d.configured) {
+        setSdEnvOk(true);
+        if(d.pickupPoints?.length) { setSdConfig({ pickupPoints:d.pickupPoints, services:d.services||[] }); if(!sdPickup&&d.pickupPoints[0]) setSdPickup(String(d.pickupPoints[0].id)); if(!sdService&&d.services?.[0]) setSdService(String(d.services[0].id)); }
+      }
+    }).catch(()=>{});
+  },[]);
 
   // ── SmartBill serii ────────────────────────────────────────────────────
   const loadSbSeries = useCallback(async()=>{
@@ -827,19 +844,50 @@ export default function FulfillmentPage() {
             <div className="fb-mbdy">
               <div className="fb-sett-grid">
                 <div className="fb-sett-card">
-                  <div className="fb-sett-hdr" style={{color:'#f97316'}}>📦 GLS Romania</div>
+                  <div className="fb-sett-hdr" style={{color:'#f97316'}}>
+                    📦 GLS Romania
+                    {glsEnvOk&&<span style={{marginLeft:'auto',fontSize:9,background:'rgba(16,185,129,.15)',color:'#10b981',border:'1px solid rgba(16,185,129,.3)',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ Vercel ENV</span>}
+                  </div>
                   <div className="fb-sett-body">
-                    <div className="fb-field"><div className="fb-lbl">Username API</div><input className="fb-inp" value={glsUser} onChange={e=>setGlsUser(e.target.value)} placeholder="user@gls.ro"/></div>
-                    <div className="fb-field"><div className="fb-lbl">Parolă API</div><input type="password" className="fb-inp" value={glsPass} onChange={e=>setGlsPass(e.target.value)} placeholder="••••"/></div>
-                    <div className="fb-field"><div className="fb-lbl">Număr Client GLS</div><input className="fb-inp" value={glsClient} onChange={e=>setGlsClient(e.target.value)} placeholder="12345"/></div>
+                    {glsEnvOk ? (
+                      <div style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#10b981',lineHeight:1.6}}>
+                        ✓ Credențialele GLS sunt configurate în <strong>Vercel Environment Variables</strong>.<br/>
+                        <span style={{color:'#64748b',fontSize:11}}>GLS_USERNAME · GLS_PASSWORD · GLS_CLIENT_NUMBER={glsClient}</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.2)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#f59e0b',marginBottom:4}}>
+                          ⚠ Adaugă în Vercel: <strong>GLS_USERNAME</strong>, <strong>GLS_PASSWORD</strong>, <strong>GLS_CLIENT_NUMBER</strong>
+                        </div>
+                        <div className="fb-field"><div className="fb-lbl">Username API (fallback)</div><input className="fb-inp" value={glsUser} onChange={e=>setGlsUser(e.target.value)} placeholder="user@gls.ro"/></div>
+                        <div className="fb-field"><div className="fb-lbl">Parolă API (fallback)</div><input type="password" className="fb-inp" value={glsPass} onChange={e=>setGlsPass(e.target.value)} placeholder="••••"/></div>
+                      </>
+                    )}
+                    <div className="fb-field"><div className="fb-lbl">Număr Client GLS</div><input className="fb-inp" value={glsClient} onChange={e=>setGlsClient(e.target.value)} placeholder="553003585"/></div>
                   </div>
                 </div>
+
                 <div className="fb-sett-card">
-                  <div className="fb-sett-hdr" style={{color:'#3b82f6'}}>🚀 Sameday</div>
+                  <div className="fb-sett-hdr" style={{color:'#3b82f6'}}>
+                    🚀 Sameday
+                    {sdEnvOk&&<span style={{marginLeft:'auto',fontSize:9,background:'rgba(16,185,129,.15)',color:'#10b981',border:'1px solid rgba(16,185,129,.3)',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ Vercel ENV</span>}
+                  </div>
                   <div className="fb-sett-body">
-                    <div className="fb-field"><div className="fb-lbl">Username</div><input className="fb-inp" value={sdUser} onChange={e=>setSdUser(e.target.value)} placeholder="username"/></div>
-                    <div className="fb-field"><div className="fb-lbl">Parolă</div><input type="password" className="fb-inp" value={sdPass} onChange={e=>setSdPass(e.target.value)} placeholder="••••"/></div>
-                    <button className="fb-btn-g" style={{fontSize:11}} onClick={loadSdConfig}>🔌 Conectează &amp; încarcă config</button>
+                    {sdEnvOk ? (
+                      <div style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#10b981',lineHeight:1.6}}>
+                        ✓ Credențialele Sameday sunt configurate în <strong>Vercel Environment Variables</strong>.<br/>
+                        <span style={{color:'#64748b',fontSize:11}}>SAMEDAY_USERNAME · SAMEDAY_PASSWORD</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.2)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#f59e0b',marginBottom:4}}>
+                          ⚠ Adaugă în Vercel: <strong>SAMEDAY_USERNAME</strong>, <strong>SAMEDAY_PASSWORD</strong>
+                        </div>
+                        <div className="fb-field"><div className="fb-lbl">Username (fallback)</div><input className="fb-inp" value={sdUser} onChange={e=>setSdUser(e.target.value)} placeholder="username"/></div>
+                        <div className="fb-field"><div className="fb-lbl">Parolă (fallback)</div><input type="password" className="fb-inp" value={sdPass} onChange={e=>setSdPass(e.target.value)} placeholder="••••"/></div>
+                      </>
+                    )}
+                    <button className="fb-btn-g" style={{fontSize:11}} onClick={loadSdConfig}>🔌 {sdEnvOk?'Reîncarcă pickup points':'Conectează'}</button>
                     {sdConfig.pickupPoints.length>0&&(<>
                       <div className="fb-field"><div className="fb-lbl">Pickup Point</div>
                         <select className="fb-sel" value={sdPickup} onChange={e=>setSdPickup(e.target.value)}>
@@ -848,7 +896,7 @@ export default function FulfillmentPage() {
                       </div>
                       <div className="fb-field"><div className="fb-lbl">Serviciu</div>
                         <select className="fb-sel" value={sdService} onChange={e=>setSdService(e.target.value)}>
-                          {sdConfig.services.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                          {sdConfig.services.map(s=><option key={s.id} value={s.id}>{s.name}{s.isLocker?' 🔒':''}</option>)}
                         </select>
                       </div>
                     </>)}
