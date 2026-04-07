@@ -1,266 +1,180 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 
-// ── Credențiale din Vercel Environment Variables ──────────────────────────
-const ENV_GLS_USER   = process.env.GLS_USERNAME   || process.env.GLS_APP_ID     || '';
-const ENV_GLS_PASS   = process.env.GLS_PASSWORD   || process.env.GLS_API_SECRET || process.env.GLS_API_KEY || '';
-const ENV_GLS_CLIENT = process.env.GLS_CLIENT_NUMBER || '553003585';
+const ENV_USER   = process.env.GLS_USERNAME   || process.env.GLS_APP_ID      || '';
+const ENV_PASS   = process.env.GLS_PASSWORD   || process.env.GLS_API_SECRET  || process.env.GLS_API_KEY || '';
+const ENV_CLIENT = process.env.GLS_CLIENT_NUMBER || '553003585';
 
-// ── MyGLS API Romania — REST JSON ─────────────────────────────────────────
-// Documentație: https://api.mygls.ro/index_en.html
-const GLS_BASE   = 'https://api.mygls.ro/ParcelService.svc/json';
-const GLS_BASE_TEST = 'https://api.test.mygls.ro/ParcelService.svc/json';
+// MyGLS REST API Romania — https://api.mygls.ro/index_en.html
+const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
-// Password trebuie hash-uit SHA512 → array de bytes (conform documentației)
-function hashPassword(password) {
-  const hash = crypto.createHash('sha512').update(password, 'utf8').digest();
-  // Convertim Buffer în array de numere (byte array) pentru JSON
-  return Array.from(hash);
+// SHA512 byte array — cerut de documentatia MyGLS
+function sha512bytes(str) {
+  return Array.from(crypto.createHash('sha512').update(str, 'utf8').digest());
 }
 
-function cors() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': '*',
-  };
-}
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 200, headers: cors() });
-}
-
-// ── Helper: apel API MyGLS ────────────────────────────────────────────────
-async function glsApi(endpoint, username, password, clientNumber, body, useTest = false) {
-  const base = useTest ? GLS_BASE_TEST : GLS_BASE;
-  const url = `${base}/${endpoint}`;
-
-  const requestBody = {
-    Username: username,
-    Password: hashPassword(password),      // SHA512 byte array
-    ClientNumberList: [parseInt(clientNumber)],
-    WebshopEngine: 'Custom',
-    ...body,
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify(requestBody),
-    cache: 'no-store',
-  });
-
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); } catch {
-    throw new Error(`GLS răspuns invalid (${res.status}): ${text.slice(0, 200)}`);
-  }
-  return { data, status: res.status, ok: res.ok };
-}
-
-// ── Servicii disponibile GLS Romania ─────────────────────────────────────
-export const GLS_SERVICES = {
-  SM1: { code: 'SM1', label: '📱 SMS la livrare',        param: 'phone',  group: 'Notificări', paramKey: 'SM1Parameter' },
-  SM2: { code: 'SM2', label: '📧 SMS pre-aviz',          param: 'phone',  group: 'Notificări', paramKey: 'SM2Parameter' },
-  FDS: { code: 'FDS', label: '🕐 FlexDelivery Email',    param: 'email',  group: 'Flex',       paramKey: 'FDSParameter' },
-  FSS: { code: 'FSS', label: '💬 FlexDelivery SMS',      param: 'phone',  group: 'Flex',       paramKey: 'FSSParameter' },
-  SAT: { code: 'SAT', label: '📅 Livrare Sâmbătă',       param: null,     group: 'Livrare',    paramKey: null },
-  T12: { code: 'T12', label: '⏰ Până la 12:00',          param: null,     group: 'Livrare',    paramKey: null },
-  AOS: { code: 'AOS', label: '✍️ Semnătură destinatar',  param: 'name',   group: 'Livrare',    paramKey: 'AOSParameter' },
-  PSD: { code: 'PSD', label: '🏪 ParcelShop/Locker',     param: 'shopId', group: 'Livrare',    paramKey: 'PSDParameter' },
-  INS: { code: 'INS', label: '🛡️ Asigurare valoare',     param: 'value',  group: 'Extra',      paramKey: 'INSParameter' },
-  CS1: { code: 'CS1', label: '📞 Contact phone',         param: 'phone',  group: 'Extra',      paramKey: 'CS1Parameter' },
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  'Access-Control-Allow-Headers': '*',
 };
 
-// ── Construiește ServiceList pentru API ───────────────────────────────────
-function buildServiceList(selectedServices, order) {
-  const list = [];
-  for (const [code, value] of Object.entries(selectedServices || {})) {
-    if (!value || value === false) continue;
-    const svcDef = GLS_SERVICES[code];
-    if (!svcDef) continue;
-
-    const svc = { Code: code };
-    if (svcDef.paramKey) {
-      if (code === 'SM1') svc.SM1Parameter = { Value: `${(order?.phone||'').replace(/\D/g,'').slice(-10)}|Colet GLS #ParcelNr#` };
-      else if (code === 'SM2') svc.SM2Parameter = { Value: (order?.phone||'').replace(/\D/g,'') };
-      else if (code === 'FDS') svc.FDSParameter = { Value: order?.email || value };
-      else if (code === 'FSS') svc.FSSParameter = { Value: (order?.phone||'').replace(/\D/g,'') };
-      else if (code === 'AOS') svc.AOSParameter = { Value: order?.recipientName || value };
-      else if (code === 'INS') svc.INSParameter = { Value: String(value) };
-      else if (code === 'CS1') svc.CS1Parameter = { Value: (order?.phone||'').replace(/\D/g,'') };
-      else if (code === 'PSD') svc.PSDParameter = { StringValue: String(value) };
-    }
-    list.push(svc);
-  }
-  return list;
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 200, headers: CORS });
 }
 
-// ── GET: status rapid fără apel API ──────────────────────────────────────
 export async function GET() {
   return NextResponse.json({
-    ok: !!(ENV_GLS_USER && ENV_GLS_PASS),
-    configured: !!(ENV_GLS_USER && ENV_GLS_PASS),
-    clientNumber: ENV_GLS_CLIENT,
-    apiUrl: GLS_BASE,
-    message: ENV_GLS_USER
-      ? `GLS configurat (${ENV_GLS_USER}). Apasă Test pentru verificare.`
-      : 'GLS_USERNAME lipsește din Vercel env vars.',
-    services: GLS_SERVICES,
-  }, { headers: cors() });
+    ok: !!(ENV_USER && ENV_PASS),
+    configured: !!(ENV_USER && ENV_PASS),
+    clientNumber: ENV_CLIENT,
+    message: ENV_USER ? `GLS configurat (${ENV_USER})` : 'GLS_USERNAME lipsa din Vercel env vars.',
+  }, { headers: CORS });
 }
 
-// ── POST: test conexiune + generare AWB ───────────────────────────────────
-export async function POST(request) {
+export async function POST(req) {
   try {
-    const body = await request.json();
+    const body = await req.json();
+    const user   = body.username     || ENV_USER   || '';
+    const pass   = body.password     || ENV_PASS   || '';
+    const client = body.clientNumber || ENV_CLIENT || '553003585';
 
-    if (body.action === 'get_services') {
-      return NextResponse.json({ ok: true, services: GLS_SERVICES }, { headers: cors() });
+    if (!user || !pass) {
+      return NextResponse.json({ ok: false, error: 'Completeaza username si parola GLS.' }, { headers: CORS });
     }
 
-    // ── TEST CONEXIUNE ──────────────────────────────────────────────────
-    if (body.action === 'get_config' || body.action === 'test_connection') {
-      const user   = body.username     || ENV_GLS_USER   || '';
-      const pass   = body.password     || ENV_GLS_PASS   || '';
-      const client = body.clientNumber || ENV_GLS_CLIENT || '553003585';
-
-      if (!user || !pass) {
-        return NextResponse.json({
-          ok: false, configured: false,
-          error: 'Completează username și parola GLS.',
-        }, { headers: cors() });
-      }
-
-      // Testăm cu GetParcelList pe o perioadă scurtă — cel mai sigur test de auth
-      // Dacă credențialele sunt greșite → error code 14 (User not exists) sau 15
-      // Dacă sunt corecte → răspuns gol (fără colete în perioadă) = OK
-      try {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const today = new Date();
-
-        const { data, status } = await glsApi('GetParcelList', user, pass, client, {
-          PickupDateFrom: yesterday.toISOString(),
-          PickupDateTo: today.toISOString(),
-        });
-
-        // Error code 14 = User not exists, 15 = Not authorized
-        const errors = data?.GetParcelListErrors || [];
-        const authError = errors.find(e => [14, 15, 27].includes(e.ErrorCode));
-        if (authError) {
-          return NextResponse.json({
-            ok: false, configured: false,
-            error: `Credențiale GLS invalide (cod ${authError.ErrorCode}): ${authError.ErrorDescription}`,
-          }, { headers: cors() });
-        }
-
-        // Dacă nu e eroare de auth = credențiale corecte
-        return NextResponse.json({
-          ok: true, configured: true, clientNumber: client,
-          message: `GLS conectat! Client nr: ${client} · ${data?.PrintDataInfoList?.length || 0} colete recente`,
-        }, { headers: cors() });
-
-      } catch (e) {
-        return NextResponse.json({
-          ok: false, configured: false,
-          error: 'Eroare conectare GLS: ' + e.message,
-        }, { headers: cors() });
-      }
-    }
-
-    // ── GENERARE AWB ───────────────────────────────────────────────────
-    const {
-      username: bUser, password: bPass, clientNumber: bClient,
-      recipientName, phone, email, address, city, zip, county,
-      parcels, content, codAmount, codCurrency, orderName, orderId,
-      selectedServices, manualAwb, weight,
-    } = body;
-
-    if (manualAwb) {
-      return NextResponse.json({ ok: true, awb: manualAwb, mode: 'manual' }, { headers: cors() });
-    }
-
-    const username     = ENV_GLS_USER   || bUser   || '';
-    const password     = ENV_GLS_PASS   || bPass   || '';
-    const clientNumber = ENV_GLS_CLIENT || bClient || '';
-
-    if (!username || !password || !clientNumber) {
-      return NextResponse.json({
-        error: 'Credențiale GLS lipsă. Configurează GLS_USERNAME, GLS_PASSWORD, GLS_CLIENT_NUMBER în Vercel.',
-      }, { status: 400, headers: cors() });
-    }
-
-    // Parsăm adresa (stradă + număr)
-    const addressParts = (address || '').match(/^(.*?)\s*(?:nr\.?\s*)?(\d+.*)$/i);
-    const street    = addressParts ? addressParts[1].trim() : address;
-    const houseNum  = addressParts ? addressParts[2].trim() : '';
-
-    const serviceList = buildServiceList(selectedServices, { phone, email, recipientName });
-
-    const parcelData = {
-      ClientNumber:    parseInt(clientNumber),
-      ClientReference: (orderName || '').slice(0, 40),
-      Count:           parseInt(parcels) || 1,
-      CODAmount:       parseFloat(codAmount) || 0,
-      CODReference:    codAmount > 0 ? (orderName || '') : '',
-      CODCurrency:     codAmount > 0 ? (codCurrency || 'RON') : undefined,
-      Content:         (content || orderName || 'Colet').slice(0, 40),
-      PickupDate:      `/Date(${Date.now()})/`,
-      PickupAddress:   null, // Va folosi adresa implicită din cont
-      DeliveryAddress: {
-        Name:           (recipientName || '').slice(0, 40),
-        Street:         (street || address || '').slice(0, 40),
-        HouseNumber:    houseNum || '1',
-        City:           (city || '').slice(0, 40),
-        ZipCode:        (zip || '').replace(/\s/g, ''),
-        CountryIsoCode: 'RO',
-        ContactName:    (recipientName || '').slice(0, 40),
-        ContactPhone:   (phone || '').replace(/\D/g, '').slice(-10),
-        ContactEmail:   email || '',
-      },
-      ServiceList: serviceList,
+    const baseReq = {
+      Username: user,
+      Password: sha512bytes(pass),
+      ClientNumberList: [parseInt(client)],
+      WebshopEngine: 'Custom',
     };
 
-    // PrintLabels = PrepareLabels + GetPrintedLabels într-un singur apel
-    const { data, status } = await glsApi('PrintLabels', username, password, clientNumber, {
-      ParcelList: [parcelData],
-      TypeOfPrinter: 'A4_2x2',
-      PrintPosition: 1,
-      ShowPrintDialog: false,
-    });
+    // TEST CONEXIUNE
+    if (body.action === 'test_connection' || body.action === 'get_config') {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
 
-    // Verificăm erori
-    const errors = data?.PrintLabelsErrorList || [];
-    if (errors.length > 0) {
-      const err = errors[0];
+      const res = await fetch(`${GLS_BASE}/GetParcelList`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          ...baseReq,
+          PickupDateFrom: yesterday.toISOString(),
+          PickupDateTo: new Date().toISOString(),
+        }),
+        cache: 'no-store',
+      });
+
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch {
+        throw new Error(`Raspuns invalid GLS (${res.status}): ${text.slice(0, 200)}`);
+      }
+
+      const errors = data?.GetParcelListErrors || [];
+      const authErr = errors.find(e => [14, 15, 27].includes(e.ErrorCode));
+      if (authErr) {
+        return NextResponse.json({
+          ok: false, configured: false,
+          error: `Credentiale invalide (${authErr.ErrorCode}): ${authErr.ErrorDescription}`,
+        }, { headers: CORS });
+      }
+
       return NextResponse.json({
-        error: `GLS Eroare ${err.ErrorCode}: ${err.ErrorDescription}`,
-        errorCode: err.ErrorCode,
-      }, { status: 422, headers: cors() });
+        ok: true, configured: true, clientNumber: client,
+        message: `GLS conectat! Client: ${client}`,
+      }, { headers: CORS });
     }
 
-    // Extragem AWB-ul
-    const parcelInfo = (data?.PrintLabelsInfoList || [])[0];
-    const awb = parcelInfo?.ParcelNumber || parcelInfo?.ParcelId;
-    const pdf = data?.Labels; // Base64 PDF
+    // GENERARE AWB
+    const { recipientName, phone, email, address, city, zip,
+      parcels, content, codAmount, codCurrency, orderName, orderId,
+      selectedServices, manualAwb } = body;
 
+    if (manualAwb) return NextResponse.json({ ok: true, awb: manualAwb, mode: 'manual' }, { headers: CORS });
+
+    const m = (address || '').match(/^(.*?)\s*(?:nr\.?\s*)?(\d+.*)$/i);
+    const street = m ? m[1].trim() : (address || '');
+    const houseNum = m ? m[2].trim() : '1';
+
+    const serviceList = [];
+    for (const [code, val] of Object.entries(selectedServices || {})) {
+      if (!val || val === false) continue;
+      const svc = { Code: code };
+      if (code === 'SM1') svc.SM1Parameter = { Value: `${(phone||'').replace(/\D/g,'').slice(-10)}|Colet GLS #ParcelNr#` };
+      else if (code === 'SM2') svc.SM2Parameter = { Value: (phone||'').replace(/\D/g,'') };
+      else if (code === 'FDS') svc.FDSParameter = { Value: email || String(val) };
+      else if (code === 'FSS') svc.FSSParameter = { Value: (phone||'').replace(/\D/g,'') };
+      else if (code === 'AOS') svc.AOSParameter = { Value: recipientName || String(val) };
+      else if (code === 'INS') svc.INSParameter = { Value: String(val) };
+      else if (code === 'CS1') svc.CS1Parameter = { Value: (phone||'').replace(/\D/g,'') };
+      else if (code === 'PSD') svc.PSDParameter = { StringValue: String(val) };
+      serviceList.push(svc);
+    }
+
+    const printRes = await fetch(`${GLS_BASE}/PrintLabels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        ...baseReq,
+        ParcelList: [{
+          ClientNumber: parseInt(client),
+          ClientReference: (orderName || '').slice(0, 40),
+          Count: parseInt(parcels) || 1,
+          CODAmount: parseFloat(codAmount) || 0,
+          CODReference: codAmount > 0 ? (orderName || '') : '',
+          CODCurrency: codAmount > 0 ? (codCurrency || 'RON') : undefined,
+          Content: (content || orderName || 'Colet').slice(0, 40),
+          PickupDate: `/Date(${Date.now()})/`,
+          PickupAddress: null,
+          DeliveryAddress: {
+            Name: (recipientName || '').slice(0, 40),
+            Street: (street || address || '').slice(0, 40),
+            HouseNumber: houseNum || '1',
+            City: (city || '').slice(0, 40),
+            ZipCode: (zip || '').replace(/\s/g, ''),
+            CountryIsoCode: 'RO',
+            ContactName: (recipientName || '').slice(0, 40),
+            ContactPhone: (phone || '').replace(/\D/g, '').slice(-10),
+            ContactEmail: email || '',
+          },
+          ServiceList: serviceList,
+        }],
+        TypeOfPrinter: 'A4_2x2',
+        PrintPosition: 1,
+        ShowPrintDialog: false,
+      }),
+      cache: 'no-store',
+    });
+
+    const raw = await printRes.text();
+    let data;
+    try { data = JSON.parse(raw); } catch { throw new Error(`Raspuns invalid: ${raw.slice(0, 200)}`); }
+
+    const errs = data?.PrintLabelsErrorList || [];
+    if (errs.length > 0) {
+      return NextResponse.json({
+        error: `GLS ${errs[0].ErrorCode}: ${errs[0].ErrorDescription}`,
+        errorCode: errs[0].ErrorCode,
+      }, { status: 422, headers: CORS });
+    }
+
+    const info = (data?.PrintLabelsInfoList || [])[0];
+    const awb = info?.ParcelNumber || info?.ParcelId;
     if (!awb) {
       return NextResponse.json({
-        error: 'AWB negăsit în răspunsul GLS',
+        error: 'AWB negasit in raspunsul GLS',
         _raw: JSON.stringify(data).slice(0, 400),
-      }, { status: 500, headers: cors() });
+      }, { status: 500, headers: CORS });
     }
 
     return NextResponse.json({
-      ok: true,
-      awb: String(awb),
-      parcelId: parcelInfo?.ParcelId,
-      pdf: pdf || null,
-      orderId,
-      orderName,
-    }, { headers: cors() });
+      ok: true, awb: String(awb), parcelId: info?.ParcelId,
+      pdf: data?.Labels || null, orderId, orderName,
+    }, { headers: CORS });
 
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500, headers: cors() });
+    return NextResponse.json({ error: e.message }, { status: 500, headers: CORS });
   }
 }
