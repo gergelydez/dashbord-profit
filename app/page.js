@@ -152,6 +152,8 @@ function procOrder(o) {
     currency: o.presentment_currency || o.currency || 'RON',
     address: [addr.address1, addr.address2].filter(Boolean).join(', '),
     county: addr.province || '',
+    zip: addr.zip || '',
+    phone: o.phone || addr.phone || '',
     clientEmail: o.email || '',
     utmSource: o.utmSource || '', utmMedium: o.utmMedium || '',
     utmCampaign: o.utmCampaign || '', referrerUrl: o.referrerUrl || '',
@@ -162,6 +164,17 @@ function procOrder(o) {
       price: parseFloat(i.price) || 0,
       variantId: String(i.variant_id || ''),
     })),
+    // Validare adresă locală (detectare rapidă fără API)
+    addrIssues: (() => {
+      const issues = [];
+      if (!addr.name || addr.name.trim().length < 3) issues.push('Nume lipsă');
+      if (!addr.address1 || addr.address1.trim().length < 5) issues.push('Adresă incompletă');
+      else if (!/\d/.test(addr.address1)) issues.push('Fără număr stradal');
+      if (!addr.city || addr.city.trim().length < 2) issues.push('Oraș lipsă');
+      const ph = (o.phone || addr.phone || '').replace(/\D/g,'');
+      if (ph.length < 10) issues.push('Telefon invalid');
+      return issues;
+    })(),
   };
 }
 
@@ -206,6 +219,11 @@ export default function Dashboard() {
   const [showTranzitPanel, setShowTranzitPanel] = useState(false);
   const [showLivrateModal, setShowLivrateModal] = useState(false);
   const [showReturModal, setShowReturModal]   = useState(false);
+
+  // ── ADDRESS CORRECTION (ca XConnector) ────────────────────────────────
+  const [addrModal, setAddrModal] = useState(null);
+  // { order, editFields: {name,email,phone,address,address2,city,county,zip}, validating, issues, suggestion, saving, updateCustomer }
+  const [addrValidating, setAddrValidating] = useState(false);
   const [liveTrackingData, setLiveTrackingData] = useState({}); // { orderId: {statusCode, desc, location, lastUpdate, loading} }
 
   const fetchLiveTracking = async (orders) => {
@@ -677,6 +695,90 @@ export default function Dashboard() {
 
   const disconnect = () => { setOrders([]); setConnected(false); setError(''); ls.del('gx_t'); };
 
+  // ── ADDRESS CORRECTION FUNCTIONS ──────────────────────────────────────
+  const openAddrModal = (order) => {
+    setAddrModal({
+      order,
+      editFields: {
+        name:     order.client || '',
+        email:    order.clientEmail || '',
+        phone:    order.phone  || '',
+        address:  order.address || '',
+        address2: '',
+        city:     order.oras || '',
+        county:   order.county || '',
+        zip:      order.zip || '',
+        country:  'Romania',
+      },
+      issues: [],
+      suggestion: null,
+      saving: false,
+      updateCustomer: false,
+    });
+  };
+
+  const validateAddressApi = async (fields) => {
+    setAddrValidating(true);
+    try {
+      const res = await fetch('/api/validate-address', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+      });
+      const data = await res.json();
+      setAddrModal(prev => prev ? { ...prev, issues: data.issues || [], suggestion: data.suggestion || null } : null);
+    } catch {}
+    setAddrValidating(false);
+  };
+
+  const applyAddrSuggestion = () => {
+    if (!addrModal?.suggestion) return;
+    const s = addrModal.suggestion;
+    setAddrModal(prev => ({
+      ...prev,
+      editFields: {
+        ...prev.editFields,
+        address: s.formattedAddress || prev.editFields.address,
+        city:    s.city    || prev.editFields.city,
+        county:  s.county  || prev.editFields.county,
+        zip:     s.postcode|| prev.editFields.zip,
+      },
+      suggestion: null, issues: [],
+    }));
+  };
+
+  const saveAddressToShopify = async () => {
+    if (!addrModal) return;
+    setAddrModal(prev => ({ ...prev, saving: true }));
+    const { order, editFields, updateCustomer } = addrModal;
+    try {
+      const shopDomain = ls.get('gx_d');
+      const shopToken  = ls.get('gx_t');
+      const res = await fetch(`https://${shopDomain}/admin/api/2024-01/orders/${order.id}.json`, {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': shopToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: { id: order.id, shipping_address: {
+          name: editFields.name, phone: editFields.phone,
+          address1: editFields.address, address2: editFields.address2,
+          city: editFields.city, province: editFields.county,
+          zip: editFields.zip, country: editFields.country || 'Romania',
+        }}}),
+      });
+      if (res.ok) {
+        setAllOrders(prev => prev.map(o => o.id === order.id ? {
+          ...o, client: editFields.name, phone: editFields.phone,
+          address: editFields.address, oras: editFields.city,
+          county: editFields.county, addrOk: true,
+        } : o));
+        setAddrModal(null);
+      } else {
+        setAddrModal(prev => ({ ...prev, saving: false, issues: [{ field:'general', msg:'Eroare Shopify la salvare.' }] }));
+      }
+    } catch(e) {
+      setAddrModal(prev => ({ ...prev, saving: false, issues: [{ field:'general', msg: e.message }] }));
+    }
+  };
+
   // ── TRACKING LIVE GLS / Sameday ──
   const refreshTracking = async (silent = false) => {
     const now = new Date();
@@ -1014,6 +1116,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               <a href="/profit" className="nav-link" style={{background:'rgba(16,185,129,.12)',color:'#10b981',border:'1px solid rgba(16,185,129,.25)'}}>💹 Profit</a>
               <a href="/stats" className="nav-link" style={{background:'rgba(59,130,246,.12)',color:'#3b82f6',border:'1px solid rgba(59,130,246,.25)'}}>📊 Statistici</a>
               <a href="/import" className="nav-link" style={{background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.25)'}}>📦 Import</a>
+              <a href="/fulfillment" className="nav-link" style={{background:'rgba(249,115,22,.12)',color:'#f97316',border:'1px solid rgba(249,115,22,.25)'}}>⚡ Fulfillment</a>
               <a href="/whatsapp" className="nav-link" style={{background:'rgba(37,211,102,.12)',color:'#25d366',border:'1px solid rgba(37,211,102,.25)'}}>📱 WhatsApp</a>
             </div>
           )}
@@ -1507,6 +1610,21 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                                 SD · {sdLabel}{!sdDone&&<span style={{color:'#4a5568'}}> ?</span>}
                               </span>;
                             })()}
+                            {/* ── ICONIȚĂ ROȘIE ADRESĂ — ca XConnector ── */}
+                            {o.addrIssues?.length>0&&!o.addrOk&&(
+                              <button
+                                onClick={e=>{e.stopPropagation();openAddrModal(o);}}
+                                title={`⚠ Probleme adresă: ${o.addrIssues.join(', ')}`}
+                                style={{
+                                  marginLeft:4,background:'rgba(244,63,94,.15)',
+                                  border:'1px solid rgba(244,63,94,.4)',
+                                  color:'#f43f5e',borderRadius:4,
+                                  padding:'1px 5px',fontSize:9,fontWeight:700,
+                                  cursor:'pointer',lineHeight:1.5,
+                                }}>
+                                ⚠ adresă
+                              </button>
+                            )}
                             {o.trackingStatus&&<div style={{fontSize:9,color:'#64748b',marginTop:2,maxWidth:130,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.3}} title={o.trackingStatus+(o.trackingLocation?' · '+o.trackingLocation:'')}>{o.trackingStatus}{o.trackingLocation?<span style={{color:'#334155'}}> · {o.trackingLocation}</span>:''}</div>}
                             {o.trackingLastUpdate&&<div style={{fontSize:8,color:'#334155',marginTop:1}}>{String(o.trackingLastUpdate).slice(0,16).replace('T',' ')}</div>}
                           </td>
@@ -1649,6 +1767,113 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   disabled={!(invoiceModal.seriesInput||sbInvSeries)}
                   style={{background:'#f97316',color:'white',border:'none',borderRadius:8,padding:'8px 20px',cursor:'pointer',fontSize:12,fontWeight:700,opacity:!(invoiceModal.seriesInput||sbInvSeries)?.5:1}}>
                   ⚡ Generează Factura
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ MODAL ADDRESS CORRECTION — identic XConnector ══ */}
+      {addrModal&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.78)',zIndex:1100,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={e=>{if(e.target===e.currentTarget)setAddrModal(null);}}>
+          <div style={{background:'#0f1419',border:'1px solid #243040',borderRadius:14,width:'100%',maxWidth:500,maxHeight:'92vh',overflow:'auto'}}>
+
+            {/* Header */}
+            <div style={{padding:'16px 20px 12px',borderBottom:'1px solid #1e2a35',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:'#e8edf2'}}>
+                  Order {addrModal.order.name} / {addrModal.order.id}
+                  <span style={{fontSize:11,color:'#f43f5e',marginLeft:8,background:'rgba(244,63,94,.1)',padding:'1px 7px',borderRadius:10,border:'1px solid rgba(244,63,94,.2)'}}>⚠ Address correction</span>
+                </div>
+              </div>
+              <button onClick={()=>setAddrModal(null)} style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'3px 9px',cursor:'pointer',fontSize:13}}>✕</button>
+            </div>
+
+            <div style={{padding:'16px 20px',display:'flex',flexDirection:'column',gap:10}}>
+
+              {/* Erori detectate */}
+              {addrModal.issues.length>0&&(
+                <div style={{background:'rgba(244,63,94,.08)',border:'1px solid rgba(244,63,94,.25)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#f43f5e',lineHeight:1.7}}>
+                  {addrModal.issues.map((iss,i)=>(
+                    <div key={i}>⚠ {iss.msg||iss}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* Sugestie adresă — ca XConnector */}
+              {addrModal.suggestion&&(
+                <div style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8,padding:'10px 12px',fontSize:12}}>
+                  <div style={{fontSize:10,color:'#10b981',fontWeight:700,marginBottom:4}}>
+                    The address [{addrModal.editFields.city}, {addrModal.editFields.city}, {addrModal.editFields.address}] matches the ZIP code [{addrModal.suggestion.postcode}]. Internal.
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <div style={{color:'#94a3b8',fontSize:12}}>
+                      📍 {addrModal.suggestion.city}, {addrModal.suggestion.county && addrModal.suggestion.county+', '}{addrModal.suggestion.formattedAddress}
+                    </div>
+                    <button onClick={applyAddrSuggestion}
+                      style={{background:'#10b981',color:'white',border:'none',borderRadius:6,padding:'4px 14px',fontSize:11,fontWeight:700,cursor:'pointer',flexShrink:0,marginLeft:8}}>
+                      fix
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Câmpuri editabile */}
+              {[
+                {key:'name',    label:'Name',           type:'text'},
+                {key:'email',   label:'Email',          type:'email'},
+                {key:'phone',   label:'Phone number',   type:'tel'},
+                {key:'address', label:'Address',        type:'text'},
+                {key:'address2',label:'Address details',type:'text'},
+                {key:'city',    label:'City',           type:'text'},
+                {key:'county',  label:'County',         type:'text'},
+                {key:'zip',     label:'Zip code',       type:'text'},
+                {key:'country', label:'Country',        type:'text'},
+              ].map(({key,label,type})=>{
+                const hasErr = addrModal.issues.some(i=>(i.field||'')===key);
+                return (
+                  <div key={key}>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>{label}</div>
+                    <input
+                      type={type}
+                      value={addrModal.editFields[key]||''}
+                      onChange={e=>setAddrModal(prev=>({...prev,editFields:{...prev.editFields,[key]:e.target.value}}))}
+                      style={{
+                        width:'100%',background:'#161d24',
+                        border:`1px solid ${hasErr?'#f43f5e':'#243040'}`,
+                        color:'#e8edf2',padding:'8px 11px',borderRadius:7,
+                        fontSize:13,outline:'none',fontFamily:'inherit',
+                      }}
+                    />
+                  </div>
+                );
+              })}
+
+              {/* Checkbox Update customer address in Shopify */}
+              <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',marginTop:2}}>
+                <input type="checkbox" checked={addrModal.updateCustomer}
+                  onChange={e=>setAddrModal(prev=>({...prev,updateCustomer:e.target.checked}))}
+                  style={{width:14,height:14,accentColor:'#f97316'}}/>
+                <span style={{fontSize:12,color:'#94a3b8'}}>Update customer's address in Shopify</span>
+              </label>
+
+              {/* Acțiuni */}
+              <div style={{display:'flex',gap:8,marginTop:4}}>
+                <button
+                  onClick={()=>validateAddressApi(addrModal.editFields)}
+                  disabled={addrValidating}
+                  style={{flex:1,background:'rgba(59,130,246,.12)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:8,padding:'9px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit',opacity:addrValidating?.6:1}}>
+                  {addrValidating?'⟳ Verifică...':'🔍 Verifică adresa'}
+                </button>
+                <button onClick={()=>setAddrModal(null)}
+                  style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>
+                  Close
+                </button>
+                <button onClick={saveAddressToShopify} disabled={addrModal.saving}
+                  style={{background:'#f97316',color:'white',border:'none',borderRadius:8,padding:'9px 20px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit',opacity:addrModal.saving?.6:1}}>
+                  {addrModal.saving?'⟳ Se salvează...':'Update'}
                 </button>
               </div>
             </div>
@@ -1833,6 +2058,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
+
 
 
 
