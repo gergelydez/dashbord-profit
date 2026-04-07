@@ -106,42 +106,41 @@ export async function POST(request) {
           error:'Completează username și parola GLS.'},{headers:cors()});
       }
 
-      // Încearcă MyGLS REST API mai întâi (mai nou, mai rapid)
+      // Test direct cu SOAP GLS Romania
       try {
-        const token = await testMyGLSAuth(user, pass, client);
-        if(token) {
-          return NextResponse.json({ok:true,configured:true,clientNumber:client,
-            message:`GLS conectat via MyGLS API! Client: ${client}`},{headers:cors()});
-        }
-      } catch(restErr) {
-        // REST a eșuat — încearcă SOAP clasic
-        try {
-          const soap = buildSOAP({username:user,password:pass,clientNumber:client,parcel:{
-            consigName:'Test',consigAddress:'Str Test 1',consigCity:'Bucuresti',
-            consigZip:'010101',consigPhone:'0700000000',consigEmail:'',
-            codAmount:0,pcount:1,clientRef:'TEST',info:'Test',
-          },services:{}});
+        const soap = buildSOAP({username:user, password:pass, clientNumber:client, parcel:{
+          consigName:'Test Conexiune', consigAddress:'Str Victoriei 1', consigCity:'Bucuresti',
+          consigZip:'010073', consigPhone:'0700000000', consigEmail:'',
+          codAmount:0, pcount:1, clientRef:'TEST-API', info:'Test conexiune API',
+        }, services:{}});
 
-          const res = await fetch(GLS_SOAP,{
-            method:'POST',
-            headers:{'Content-Type':'text/xml; charset=UTF-8','SOAPAction':'prepareLabels'},
-            body:soap,cache:'no-store',
-          });
-          const xml = await res.text();
-          const low = xml.toLowerCase();
-          // Auth error explicit
-          if(low.includes('invalid user')||low.includes('authentication failed')||
-             low.includes('wrong password')||(low.includes('error')&&low.includes('user'))) {
-            return NextResponse.json({ok:false,configured:false,
-              error:'Credențiale GLS invalide. Verifică username/parolă în MyGLS.'},{headers:cors()});
-          }
-          // Dacă a răspuns fără eroare de auth = credențiale corecte
-          return NextResponse.json({ok:true,configured:true,clientNumber:client,
-            message:`GLS conectat via SOAP! Client: ${client}`},{headers:cors()});
-        } catch(soapErr) {
-          return NextResponse.json({ok:false,configured:false,
-            error:`REST: ${restErr.message} | SOAP: ${soapErr.message}`},{headers:cors()});
+        const res = await fetch(GLS_SOAP, {
+          method:'POST',
+          headers:{'Content-Type':'text/xml; charset=UTF-8','SOAPAction':'prepareLabels'},
+          body:soap, cache:'no-store',
+        });
+        const xml = await res.text();
+        const low = xml.toLowerCase();
+
+        // Detectăm erori de autentificare din răspunsul SOAP
+        if (low.includes('invalid user') || low.includes('authentication') ||
+            low.includes('wrong password') || low.includes('access denied') ||
+            low.includes('unauthorized')) {
+          return NextResponse.json({ok:false, configured:false,
+            error:'Credențiale GLS invalide. Verifică username/parolă în cont MyGLS.'
+          }, {headers:cors()});
         }
+
+        // Dacă serverul a răspuns (chiar și cu eroare de validare colet) = credențiale OK
+        // Eroare de validare colet = autentificat dar coletul test e invalid = OK pentru test
+        return NextResponse.json({ok:true, configured:true, clientNumber:client,
+          message:`GLS conectat! Client nr: ${client}`
+        }, {headers:cors()});
+
+      } catch(e) {
+        return NextResponse.json({ok:false, configured:false,
+          error:'Nu pot contacta serverul GLS: ' + e.message
+        }, {headers:cors()});
       }
     }
 
