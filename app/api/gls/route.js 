@@ -1,36 +1,42 @@
 import { NextResponse } from 'next/server';
 
+// ── Credențiale din Vercel Environment Variables ──────────────────────────
+// GLS_USERNAME, GLS_PASSWORD, GLS_CLIENT_NUMBER — setate în Vercel Dashboard
+const ENV_GLS_USER   = process.env.GLS_USERNAME    || '';
+const ENV_GLS_PASS   = process.env.GLS_PASSWORD    || '';
+const ENV_GLS_CLIENT = process.env.GLS_CLIENT_NUMBER || '553003585';
+
 const GLS_WSDL = 'https://online.gls-romania.ro/webservices/soap_server.php?wsdl&ver=18.09.12.01';
 
 export const GLS_SERVICES = {
-  SM1: { code:'SM1', label:'SMS notificare livrare',      desc:'SMS trimis destinatarului la livrare',               param:'phone',  icon:'📱', group:'notificari' },
-  SM2: { code:'SM2', label:'SMS + Email livrare',          desc:'SMS și email notificare destinatar',                  param:'email',  icon:'📧', group:'notificari' },
-  FDS: { code:'FDS', label:'FlexDelivery Email',           desc:'Destinatarul alege ora/locul livrării via email',     param:'email',  icon:'🕐', group:'flex' },
-  FSS: { code:'FSS', label:'FlexDelivery SMS',             desc:'Destinatarul alege ora/locul livrării via SMS',       param:'phone',  icon:'💬', group:'flex' },
-  SAT: { code:'SAT', label:'Livrare Sâmbătă',              desc:'Livrare garantată sâmbătă',                          param:null,     icon:'📅', group:'livrare' },
-  T12: { code:'T12', label:'Livrare înainte de 12:00',     desc:'Garantat livrat dimineața',                           param:null,     icon:'⏰', group:'livrare' },
-  SBS: { code:'SBS', label:'Livrare la Shop/ParcelLocker', desc:'Livrare la parcel shop GLS sau locker',              param:'shopId', icon:'🏪', group:'livrare' },
-  AOS: { code:'AOS', label:'Semnătură obligatorie',        desc:'Confirmare prin semnătură la livrare',               param:null,     icon:'✍️', group:'livrare' },
-  DPV: { code:'DPV', label:'Numai la adresă privată',      desc:'Livrat exclusiv la adresă, nu la vecin',             param:null,     icon:'🏠', group:'livrare' },
-  INS: { code:'INS', label:'Asigurare valoare declarată',  desc:'Asigurare pentru valoarea coletului',                param:'value',  icon:'🛡️', group:'extra' },
-  SDS: { code:'SDS', label:'Shop Return Service',          desc:'Return facilitat prin shop GLS',                     param:null,     icon:'↩️', group:'extra' },
-  EXW: { code:'EXW', label:'Ex Works — ridicare curier',   desc:'Coletul e ridicat de la adresa expeditorului',       param:null,     icon:'🚛', group:'extra' },
+  SM1:{ code:'SM1',label:'📱 SMS la livrare',      desc:'SMS trimis destinatarului la livrare',               param:'phone',  group:'Notificări' },
+  SM2:{ code:'SM2',label:'📧 SMS + Email livrare', desc:'SMS și email notificare la livrare',                 param:'email',  group:'Notificări' },
+  FDS:{ code:'FDS',label:'🕐 FlexDelivery Email',  desc:'Destinatarul alege ora/locul via email',             param:'email',  group:'Flex' },
+  FSS:{ code:'FSS',label:'💬 FlexDelivery SMS',    desc:'Destinatarul alege ora/locul via SMS',               param:'phone',  group:'Flex' },
+  SAT:{ code:'SAT',label:'📅 Livrare Sâmbătă',     desc:'Garantat livrat sâmbătă',                           param:null,     group:'Livrare' },
+  T12:{ code:'T12',label:'⏰ Livrare până 12:00',  desc:'Garantat înainte de prânz',                         param:null,     group:'Livrare' },
+  SBS:{ code:'SBS',label:'🏪 Shop/ParcelLocker',   desc:'Livrare la shop GLS sau parcel locker',             param:'shopId', group:'Livrare' },
+  AOS:{ code:'AOS',label:'✍️ Semnătură',           desc:'Confirmare prin semnătură la livrare',              param:null,     group:'Livrare' },
+  DPV:{ code:'DPV',label:'🏠 Numai adresă privată',desc:'Nu se lasă la vecin/recepție',                      param:null,     group:'Livrare' },
+  INS:{ code:'INS',label:'🛡️ Asigurare',           desc:'Asigurare pentru valoarea declarată a coletului',   param:'value',  group:'Extra' },
+  SDS:{ code:'SDS',label:'↩️ Shop Return',         desc:'Return facilitat prin shop GLS',                    param:null,     group:'Extra' },
+  EXW:{ code:'EXW',label:'🚛 Ex Works',            desc:'Ridicare de la adresa expeditorului',               param:null,     group:'Extra' },
 };
 
-function corsHeaders() {
+function cors() {
   return { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'*' };
 }
 export async function OPTIONS() {
-  return new NextResponse(null, { status:200, headers:corsHeaders() });
+  return new NextResponse(null, { status:200, headers:cors() });
 }
 
 function validateAddress(a) {
   const issues = [];
-  if (!a.name || a.name.trim().length < 3) issues.push('Nume destinatar lipsă sau prea scurt');
-  if (!a.address || a.address.trim().length < 5) issues.push('Adresa stradală incompletă');
-  if (!a.address || !/\d/.test(a.address)) issues.push('Adresa nu conține număr stradal');
-  if (!a.city || a.city.trim().length < 2) issues.push('Orașul lipsește');
-  if (!a.phone || a.phone.replace(/\D/g,'').length < 10) issues.push('Telefon invalid (minim 10 cifre)');
+  if (!a.name||a.name.trim().length<3) issues.push('Nume destinatar lipsă sau prea scurt');
+  if (!a.address||a.address.trim().length<5) issues.push('Adresa stradală incompletă');
+  if (a.address && !/\d/.test(a.address)) issues.push('Adresa nu conține număr stradal');
+  if (!a.city||a.city.trim().length<2) issues.push('Orașul lipsește');
+  if (!a.phone||a.phone.replace(/\D/g,'').length<10) issues.push('Telefon invalid (minim 10 cifre)');
   if (a.zip && !/^\d{6}$/.test(a.zip.replace(/\s/g,''))) issues.push('Cod poștal invalid (6 cifre RO)');
   return issues;
 }
@@ -75,20 +81,54 @@ function parseGLSResponse(xml) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    if (body.action === 'get_services') return NextResponse.json({ ok:true, services:GLS_SERVICES }, { headers:corsHeaders() });
-    if (body.action === 'validate_address') {
-      const issues = validateAddress(body.address||{});
-      return NextResponse.json({ ok:true, valid:issues.length===0, issues }, { headers:corsHeaders() });
+
+    // Returnează config din env (pentru frontend să știe dacă e configurat)
+    if (body.action === 'get_config') {
+      return NextResponse.json({
+        ok: true,
+        configured: !!(ENV_GLS_USER && ENV_GLS_PASS),
+        clientNumber: ENV_GLS_CLIENT,
+        services: GLS_SERVICES,
+      }, { headers: cors() });
     }
 
-    const { username, password, clientNumber, recipientName, phone, email, address, city, zip, country,
-      parcels, content, codAmount, codCurrency, orderName, orderId, selectedServices, manualAwb } = body;
+    if (body.action === 'get_services') {
+      return NextResponse.json({ ok:true, services:GLS_SERVICES }, { headers:cors() });
+    }
 
-    if (manualAwb) return NextResponse.json({ ok:true, awb:manualAwb, mode:'manual' }, { headers:corsHeaders() });
-    if (!username||!password||!clientNumber) return NextResponse.json({ error:'Credențiale GLS incomplete.' }, { status:400, headers:corsHeaders() });
+    if (body.action === 'validate_address') {
+      const issues = validateAddress(body.address||{});
+      return NextResponse.json({ ok:true, valid:issues.length===0, issues }, { headers:cors() });
+    }
+
+    const {
+      // Credențialele vin din env — fallback la cele trimise din frontend (dacă userul le-a introdus manual)
+      username:    bodyUser,
+      password:    bodyPass,
+      clientNumber: bodyClient,
+      recipientName, phone, email, address, city, zip, country,
+      parcels, content, codAmount, codCurrency, orderName, orderId,
+      selectedServices, manualAwb,
+    } = body;
+
+    if (manualAwb) return NextResponse.json({ ok:true, awb:manualAwb, mode:'manual' }, { headers:cors() });
+
+    // Prioritate: env vars → fallback la ce trimite frontend-ul
+    const username     = ENV_GLS_USER   || bodyUser   || '';
+    const password     = ENV_GLS_PASS   || bodyPass   || '';
+    const clientNumber = ENV_GLS_CLIENT || bodyClient || '';
+
+    if (!username||!password||!clientNumber) {
+      return NextResponse.json({
+        error:'Credențiale GLS lipsă. Adaugă GLS_USERNAME, GLS_PASSWORD, GLS_CLIENT_NUMBER în Vercel Environment Variables.',
+        hint:'Mergi la Vercel Dashboard → Project → Settings → Environment Variables'
+      }, { status:400, headers:cors() });
+    }
 
     const addrIssues = validateAddress({ name:recipientName, address, city, zip, phone });
-    if (addrIssues.length) return NextResponse.json({ error:'Adresă invalidă: '+addrIssues.join('; '), addressIssues:addrIssues, requiresCorrection:true }, { status:422, headers:corsHeaders() });
+    if (addrIssues.length) {
+      return NextResponse.json({ error:'Adresă invalidă: '+addrIssues.join('; '), addressIssues:addrIssues, requiresCorrection:true }, { status:422, headers:cors() });
+    }
 
     const services = {};
     for (const [code, value] of Object.entries(selectedServices||{})) {
@@ -110,19 +150,27 @@ export async function POST(request) {
     });
     const xml = await res.text();
     const parsed = parseGLSResponse(xml);
-    if (!parsed.success||!parsed.awb) return NextResponse.json({ error:parsed.error||`GLS SOAP eroare`, _raw:xml.slice(0,500) }, { status:500, headers:corsHeaders() });
-    return NextResponse.json({ ok:true, awb:parsed.awb, pdf:parsed.pdf, orderId, orderName, servicesApplied:Object.keys(services) }, { headers:corsHeaders() });
+    if (!parsed.success||!parsed.awb) {
+      return NextResponse.json({ error:parsed.error||'GLS SOAP: răspuns fără AWB', _raw:xml.slice(0,500) }, { status:500, headers:cors() });
+    }
+    return NextResponse.json({ ok:true, awb:parsed.awb, pdf:parsed.pdf, orderId, orderName, servicesApplied:Object.keys(services) }, { headers:cors() });
+
   } catch(e) {
-    return NextResponse.json({ error:e.message, hint:'Verifică credențialele GLS.' }, { status:500, headers:corsHeaders() });
+    return NextResponse.json({ error:e.message }, { status:500, headers:cors() });
   }
 }
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
-  if (searchParams.get('action')==='services') return NextResponse.json({ ok:true, services:GLS_SERVICES }, { headers:corsHeaders() });
-  const username = searchParams.get('username');
-  const password = searchParams.get('password');
-  const clientNumber = searchParams.get('clientNumber')||'0';
-  if (!username||!password) return NextResponse.json({ error:'Missing credentials' }, { status:400, headers:corsHeaders() });
-  return NextResponse.json({ ok:true, message:'Credențiale GLS primite. Testul real se face la prima generare AWB.', services:GLS_SERVICES }, { headers:corsHeaders() });
+  if (searchParams.get('action')==='services') {
+    return NextResponse.json({ ok:true, services:GLS_SERVICES }, { headers:cors() });
+  }
+  // Test conexiune folosind env vars
+  return NextResponse.json({
+    ok: !!(ENV_GLS_USER && ENV_GLS_PASS),
+    configured: !!(ENV_GLS_USER && ENV_GLS_PASS),
+    clientNumber: ENV_GLS_CLIENT,
+    message: ENV_GLS_USER ? 'GLS configurat din Vercel env vars.' : 'GLS_USERNAME lipsă din Vercel env vars.',
+    services: GLS_SERVICES,
+  }, { headers:cors() });
 }
