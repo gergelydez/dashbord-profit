@@ -125,6 +125,7 @@ function toRestOrder(node) {
     currency: node.totalPriceSet?.shopMoney?.currencyCode || 'RON',
     note_attributes: (node.customAttributes || []).map(a => ({ name: a.key, value: a.value })),
     utmSource: '', utmMedium: '', utmCampaign: '', referrerUrl: '', landingPage: '',
+    email: node.email || '',
     phone: node.phone || node.shippingAddress?.phone || node.billingAddress?.phone || '',
     shipping_address: { name: addr.name||'', address1: addr.address1||'', address2: addr.address2||'', city: addr.city||'', province: addr.province||'', zip: addr.zip||'', phone: addr.phone||'' },
     billing_address:  { name: baddr.name||'', address1: baddr.address1||'', address2: baddr.address2||'', city: baddr.city||'', province: baddr.province||'', zip: baddr.zip||'' },
@@ -216,4 +217,3 @@ export async function OPTIONS() {
     },
   });
 }
-
