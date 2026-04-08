@@ -225,16 +225,18 @@ const CSS = `
   .fb-addr-info{font-size:11px;color:#64748b;margin-top:2px;line-height:1.4}
 `;
 
+// BUGFIX: nu apela direct Shopify din browser — CORS blocat!
+// Trebuie să treacă prin API-ul nostru server-side
 async function updateShopifyAddress(domain, token, orderId, addrData) {
-  const res = await fetch(`https://${domain}/admin/api/2024-01/orders/${orderId}.json`, {
-    method:'PUT',
-    headers:{ 'X-Shopify-Access-Token':token,'Content-Type':'application/json' },
-    body:JSON.stringify({ order:{ id:orderId, shipping_address:addrData } }),
-    cache:'no-store',
+  const res = await fetch('/api/orders', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain, token, orderId, shippingAddress: addrData }),
+    cache: 'no-store',
   });
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(`Shopify ${res.status}: ${txt.slice(0,200)}`);
+    throw new Error(`Shopify update ${res.status}: ${txt.slice(0, 200)}`);
   }
   return true;
 }
@@ -530,7 +532,8 @@ export default function FulfillmentPage() {
           setAwbResults(p=>({...p,[order.id]:{
             ok:true, awb:data.awb, courier,
             labelBase64: data.labelBase64 || null,
-            trackUrl: data.trackUrl || `https://gls-group.com/track/${data.awb}`,
+            trackUrl: data.trackUrl || `https://gls-group.com/RO/ro/paket-verfolgen?match=${data.awb}`,
+            myglsUrl: data.myglsUrl || `https://mygls.ro/Parcel/Detail/${data.awb}`,
             servicesApplied: data.servicesApplied||[],
             mode: data.mode,
           }}));
@@ -819,7 +822,7 @@ export default function FulfillmentPage() {
                                   </button>
                                 ):(
                                   // Link direct MyGLS pentru descărcarea etichetei
-                                  <a href={`https://mygls.ro/Parcel/Detail/${existingAwb}`} target="_blank" rel="noopener noreferrer"
+                                  <a href={awbRes?.myglsUrl||`https://mygls.ro/Parcel/Detail/${existingAwb}`} target="_blank" rel="noopener noreferrer"
                                     style={{background:'rgba(249,115,22,.15)',border:'1px solid rgba(249,115,22,.4)',color:'#f97316',borderRadius:5,padding:'3px 8px',fontSize:10,fontWeight:700,textDecoration:'none'}}>
                                     ⬇ MyGLS
                                   </a>
@@ -1283,10 +1286,17 @@ function AwbModal({ order, glsUser, glsPass, glsClient, sdUser, sdPass, sdConfig
     setGlsSelected(p=>{
       const newVal=!p[code];
       if (newVal&&svc?.param) {
-        setGlsParams(pp=>({
-          ...pp,
-          [code]: pp[code]||(svc.param==='phone'?(order.phone||''):svc.param==='email'?(order.email||''):svc.param==='value'?String(order.total):''),
-        }));
+        setGlsParams(pp=>{
+          // Pre-completează cu datele din comandă dacă câmpul e gol
+          let defaultVal = pp[code];
+          if (!defaultVal) {
+            if (svc.param==='phone') defaultVal = order.phone||'';
+            else if (svc.param==='email') defaultVal = order.email||''; // EMAIL DIN SHOPIFY automat
+            else if (svc.param==='value') defaultVal = String(order.total);
+            else defaultVal = '';
+          }
+          return { ...pp, [code]: defaultVal };
+        });
       }
       return {...p,[code]:newVal};
     });
@@ -1420,16 +1430,30 @@ function AwbModal({ order, glsUser, glsPass, glsClient, sdUser, sdPass, sdConfig
                           <div className="fb-svc-label">{svc.label}</div>
                           <div className="fb-svc-desc">{svc.desc}</div>
                           {glsSelected[svc.code]&&svc.param&&(
-                            <div onClick={e=>e.stopPropagation()}>
+                            <div onClick={e=>e.stopPropagation()} style={{marginTop:6}}>
                               <input
-                                className={`fb-inp fb-svc-input ${svc.param==='email'&&glsSelected[svc.code]&&!(glsParams[svc.code]||order.email)?'err':''}`}
-                                placeholder={svc.param==='phone'?(order.phone||'07XXXXXXXX'):svc.param==='email'?(order.email||'email@client.com'):svc.param==='value'?String(order.total):'ID shop'}
-                                value={glsParams[svc.code]||(svc.param==='phone'?(order.phone||''):svc.param==='email'?(order.email||''):'') }
-                                onChange={e=>{setGlsParams(p=>({...p,[svc.code]:e.target.value}));}}
-                                style={{fontSize:11,padding:'5px 8px'}}
+                                className="fb-inp fb-svc-input"
+                                style={{
+                                  fontSize:11, padding:'5px 8px',
+                                  borderColor: svc.param==='email'
+                                    ? (glsParams[svc.code]||order.email) ? '#10b981' : '#f43f5e'
+                                    : undefined,
+                                }}
+                                placeholder={
+                                  svc.param==='phone' ? (order.phone||'07XXXXXXXX') :
+                                  svc.param==='email' ? (order.email ? `${order.email} (din Shopify)` : 'email@client.com') :
+                                  svc.param==='value' ? String(order.total) : 'ID shop'
+                                }
+                                value={glsParams[svc.code] || (svc.param==='phone' ? (order.phone||'') : svc.param==='email' ? (order.email||'') : '')}
+                                onChange={e=>setGlsParams(p=>({...p,[svc.code]:e.target.value}))}
                               />
-                              {svc.param==='email'&&!(glsParams[svc.code]||order.email)&&(
-                                <div style={{fontSize:9,color:'#f43f5e',marginTop:3}}>⚠ Email obligatoriu pentru FlexDelivery</div>
+                              {svc.param==='email' && (glsParams[svc.code]||order.email) && (
+                                <div style={{fontSize:9,color:'#10b981',marginTop:2}}>
+                                  ✓ Email: {glsParams[svc.code]||order.email}
+                                </div>
+                              )}
+                              {svc.param==='email' && !(glsParams[svc.code]||order.email) && (
+                                <div style={{fontSize:9,color:'#f43f5e',marginTop:2}}>⚠ Email obligatoriu — completează manual</div>
                               )}
                             </div>
                           )}
