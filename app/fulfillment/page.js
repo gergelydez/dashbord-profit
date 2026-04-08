@@ -292,8 +292,37 @@ export default function FulfillmentPage() {
   const [bulkWeight,setBulkWeight] = useState('1');
   const [bulkDoAwb,setBulkDoAwb]   = useState(true);
   const [bulkDoInv,setBulkDoInv]   = useState(false);
+  // ZIP validation results per order id
+  const [zipIssues,setZipIssues]   = useState({});
 
   const { toasts, add:toast } = useToast();
+
+  // ── Validare ZIP automată pentru comenzile din tabel ─────────────────────────
+  const validateZipBatch = useCallback(async(orderList)=>{
+    // Validează primele 30 comenzi fără AWB — în background, câte 3 deodată
+    const toValidate = orderList.filter(o=>!o.trackingNo && o.address && o.city && o.zip);
+    const chunks = [];
+    for (let i=0;i<Math.min(toValidate.length,30);i+=3) chunks.push(toValidate.slice(i,i+3));
+    for (const chunk of chunks) {
+      await Promise.all(chunk.map(async o=>{
+        try {
+          const res=await fetch('/api/validate-address',{
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ address:o.address, city:o.city, county:o.county, zip:o.zip, phone:o.phone, skipEmpty:true }),
+          });
+          const data=await res.json();
+          const zipErr = (data.issues||[]).find(i=>i.field==='zip'&&i.severity==='error');
+          const suggestion = data.suggestion;
+          if (zipErr||suggestion?.zipMismatch) {
+            setZipIssues(prev=>({...prev,[o.id]:{ msg:zipErr?.msg||suggestion?.zipMessage, correct:suggestion?.postcode||null }}));
+            // Adaugă și în addrIssues pentru filtrul din tabel
+            setOrders(prev=>prev.map(x=>x.id===o.id?{...x,addrIssues:[...(x.addrIssues||[]).filter(i=>!i.includes('poștal')&&!i.includes('ZIP')), zipErr?.msg||suggestion?.zipMessage]}:x));
+          }
+        } catch{}
+      }));
+      await new Promise(r=>setTimeout(r,300)); // pauză între chunk-uri
+    }
+  },[]);
 
   // ── Fetch comenzi ──────────────────────────────────────────────────────────
   const fetchOrders = useCallback(async()=>{
@@ -304,7 +333,10 @@ export default function FulfillmentPage() {
       const res=await fetch(`/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(shopToken)}&created_at_min=${d30}`);
       const data=await res.json();
       if (!res.ok||!data.orders) throw new Error(data.error||'Eroare Shopify');
-      setOrders(data.orders.map(procOrder));
+      const processed = data.orders.map(procOrder);
+      setOrders(processed);
+      // Validare ZIP în background după ce comenzile s-au încărcat
+      setTimeout(()=>validateZipBatch(processed), 500);
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
   },[domain,shopToken]);
@@ -715,13 +747,14 @@ export default function FulfillmentPage() {
                     const existingAwb=o.trackingNo||awbRes?.awb;
                     const existingInv=o.hasInvoice||invRes?.ok;
                     const hasIssues=o.addrIssues&&o.addrIssues.length>0;
+                    const zipIssue = zipIssues[o.id];
                     return (
-                      <tr key={o.id} className={hasIssues?'fb-warn':''}>
+                      <tr key={o.id} className={hasIssues||zipIssue?'fb-warn':''}>
                         <td>
                           <div style={{fontFamily:'monospace',fontWeight:700,color:'#f97316',fontSize:12}}>{o.name}</div>
                           <div style={{fontSize:9,marginTop:3,display:'flex',gap:4,flexWrap:'wrap'}}>
                             {o.courier!=='unknown'&&existingAwb&&<span className={`fb-badge fb-badge-${o.courier==='sameday'?'sd':'gls'}`}>{o.courier.toUpperCase()}</span>}
-                            {hasIssues&&<span style={{fontSize:9,color:'#f43f5e',fontWeight:700}}>⚠ adresă</span>}
+                            {(hasIssues||zipIssue)&&<span style={{fontSize:9,color:'#f43f5e',fontWeight:700}}>⚠ adresă</span>}
                           </div>
                         </td>
                         <td>
@@ -729,17 +762,29 @@ export default function FulfillmentPage() {
                           <div className="fb-addr-info">
                             {[o.address,o.city].filter(Boolean).join(', ')||'—'}
                             {o.county&&<span style={{color:'#475569'}}> · {o.county}</span>}
-                            {o.zip&&<span style={{fontFamily:'monospace',color:'#334155'}}> {o.zip}</span>}
+                            {o.zip&&<span style={{fontFamily:'monospace',color:zipIssue?'#f43f5e':'#334155',fontWeight:zipIssue?700:400}}> {o.zip}{zipIssue?' ⚠':''}</span>}
                           </div>
+                          {/* ZIP issue — afișat direct în tabel */}
+                          {zipIssue&&(
+                            <div style={{marginTop:3,background:'rgba(244,63,94,.08)',border:'1px solid rgba(244,63,94,.25)',borderRadius:5,padding:'4px 7px'}}>
+                              <div style={{fontSize:9,color:'#f43f5e',lineHeight:1.5,fontWeight:600}}>📮 {zipIssue.msg}</div>
+                              {zipIssue.correct&&<div style={{fontSize:9,color:'#f59e0b',marginTop:1}}>Corect: <strong>{zipIssue.correct}</strong></div>}
+                            </div>
+                          )}
                           {hasIssues&&(
                             <div style={{marginTop:4}}>
-                              {o.addrIssues.slice(0,2).map((iss,i)=>(
+                              {o.addrIssues.filter(i=>!i.includes('poștal')&&!i.includes('ZIP')&&!i.includes('437')&&!i.includes('430')).slice(0,2).map((iss,i)=>(
                                 <div key={i} style={{fontSize:9,color:'#f43f5e',lineHeight:1.5}}>⚠ {iss}</div>
                               ))}
                               <button className="fb-addr-tag" style={{marginTop:4}} onClick={()=>openAddrModal(o)}>
                                 ✏️ Corectează
                               </button>
                             </div>
+                          )}
+                          {!hasIssues&&zipIssue&&(
+                            <button className="fb-addr-tag" style={{marginTop:4}} onClick={()=>openAddrModal(o)}>
+                              ✏️ Corectează ZIP
+                            </button>
                           )}
                         </td>
                         <td className="hmob" style={{fontSize:11,color:'#64748b',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={o.prods}>{(o.prods||'—').slice(0,55)}</td>
@@ -752,24 +797,39 @@ export default function FulfillmentPage() {
                         <td>
                           {existingAwb?(
                             <div>
-                              <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap'}}>
-                                <span className="fb-awbn">{String(existingAwb).slice(0,18)}</span>
-                                {/* Track link */}
-                                <a href={awbRes?.trackUrl||`https://gls-group.com/track/${existingAwb}`} target="_blank" rel="noopener noreferrer"
-                                  style={{fontSize:9,color:'#3b82f6',textDecoration:'none'}} title="Track colet">↗</a>
+                              <div style={{fontFamily:'monospace',fontWeight:800,color:'#10b981',fontSize:12,letterSpacing:'-0.5px'}}>
+                                {String(existingAwb)}
                               </div>
-                              {/* Download label PDF dacă avem base64 */}
-                              {awbRes?.labelBase64&&(
-                                <button onClick={()=>{
-                                  const blob=new Blob([Uint8Array.from(atob(awbRes.labelBase64),c=>c.charCodeAt(0))],{type:'application/pdf'});
-                                  const url=URL.createObjectURL(blob);
-                                  const a=document.createElement('a');
-                                  a.href=url; a.download=`AWB_${existingAwb}.pdf`; a.click();
-                                  URL.revokeObjectURL(url);
-                                }} style={{background:'rgba(16,185,129,.1)',border:'1px solid rgba(16,185,129,.3)',color:'#10b981',borderRadius:5,padding:'2px 7px',fontSize:9,cursor:'pointer',fontWeight:700,marginTop:3,display:'block'}}>
-                                  ⬇ Label PDF
-                                </button>
-                              )}
+                              <div style={{display:'flex',gap:6,marginTop:4,flexWrap:'wrap'}}>
+                                {/* Download label — PDF base64 dacă îl avem, altfel link MyGLS */}
+                                {awbRes?.labelBase64?(
+                                  <button onClick={()=>{
+                                    try {
+                                      const bin=atob(awbRes.labelBase64);
+                                      const bytes=new Uint8Array(bin.length);
+                                      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+                                      const blob=new Blob([bytes],{type:'application/pdf'});
+                                      const url=URL.createObjectURL(blob);
+                                      const a=document.createElement('a');
+                                      a.href=url; a.download=`AWB_GLS_${existingAwb}.pdf`; a.click();
+                                      setTimeout(()=>URL.revokeObjectURL(url),1000);
+                                    } catch(e){ alert('Eroare descărcare: '+e.message); }
+                                  }} style={{background:'#10b981',border:'none',color:'white',borderRadius:5,padding:'3px 8px',fontSize:10,cursor:'pointer',fontWeight:700}}>
+                                    ⬇ PDF
+                                  </button>
+                                ):(
+                                  // Link direct MyGLS pentru descărcarea etichetei
+                                  <a href={`https://mygls.ro/Parcel/Detail/${existingAwb}`} target="_blank" rel="noopener noreferrer"
+                                    style={{background:'rgba(249,115,22,.15)',border:'1px solid rgba(249,115,22,.4)',color:'#f97316',borderRadius:5,padding:'3px 8px',fontSize:10,fontWeight:700,textDecoration:'none'}}>
+                                    ⬇ MyGLS
+                                  </a>
+                                )}
+                                {/* Track */}
+                                <a href={`https://gls-group.com/RO/ro/paket-verfolgen?match=${existingAwb}`} target="_blank" rel="noopener noreferrer"
+                                  style={{background:'rgba(59,130,246,.1)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:5,padding:'3px 8px',fontSize:10,fontWeight:700,textDecoration:'none'}}>
+                                  📍 Track
+                                </a>
+                              </div>
                               {awbRes?.servicesApplied?.length>0&&<div style={{fontSize:8,color:'#475569',marginTop:2}}>{awbRes.servicesApplied.join(' · ')}</div>}
                               {awbRes?.mode==='manual'&&<div style={{fontSize:8,color:'#64748b'}}>manual</div>}
                             </div>
