@@ -495,7 +495,13 @@ export default function FulfillmentPage() {
         const res=await fetch('/api/gls',{ method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body) });
         const data=await res.json();
         if (data.ok) {
-          setAwbResults(p=>({...p,[order.id]:{ ok:true,awb:data.awb,courier,labelBase64:data.labelBase64||null,trackUrl:data.trackUrl||null,servicesApplied:data.servicesApplied||[],mode:data.mode }}));
+          setAwbResults(p=>({...p,[order.id]:{
+            ok:true, awb:data.awb, courier,
+            labelBase64: data.labelBase64 || null,
+            trackUrl: data.trackUrl || `https://gls-group.com/track/${data.awb}`,
+            servicesApplied: data.servicesApplied||[],
+            mode: data.mode,
+          }}));
           setOrders(prev=>prev.map(o=>o.id===order.id?{...o,trackingNo:data.awb,courier}:o));
           toast(`AWB GLS ${data.awb} generat!`,'success');
         } else {
@@ -1231,12 +1237,23 @@ function AwbModal({ order, glsUser, glsPass, glsClient, sdUser, sdPass, sdConfig
     for (const [code,selected] of Object.entries(glsSelected)) {
       if (!selected) continue;
       const def=GLS_SERVICES[code];
-      if (def.param==='phone') svc[code]=glsParams[code]||order.phone||'';
-      else if (def.param==='email') svc[code]=glsParams[code]||'';
-      else if (def.param==='value') svc[code]=glsParams[code]||String(order.total);
-      else if (def.param==='shopId') svc[code]=glsParams[code]||'';
-      else svc[code]=true;
+      if (def.param==='phone') {
+        // Trimite telefonul — dacă e completat manual în câmp, altfel cel din comandă
+        svc[code] = glsParams[code] || order.phone || '';
+      } else if (def.param==='email') {
+        // FDS/SM2 — email. Dacă nu e completat, folosim un placeholder valid
+        // GLS nu acceptă string gol pentru FDS, trimitem 'noreply@glamx.ro' ca fallback
+        svc[code] = glsParams[code] || order.email || 'noreply@glamx.ro';
+      } else if (def.param==='value') {
+        svc[code] = glsParams[code] || String(order.total);
+      } else if (def.param==='shopId') {
+        svc[code] = glsParams[code] || '';
+      } else {
+        // SAT, T12, AOS, DPV, SDS — fără parametru, trimitem true
+        svc[code] = true;
+      }
     }
+    console.log('[AWB Modal] selectedServices:', JSON.stringify(svc));
     return svc;
   };
 
