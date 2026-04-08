@@ -42,6 +42,12 @@
       "short_name": "Import",
       "url": "/import",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Sales Engine PRO",
+      "short_name": "Sales AI",
+      "url": "/sales-engine-pro",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
