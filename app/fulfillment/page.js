@@ -63,7 +63,8 @@ function procOrder(o) {
 
   return {
     id:String(o.id||''), name:o.name||'', client:addr.name||'',
-    phone:o.phone||addr.phone||'', address:addr.address1||'', address2:addr.address2||'',
+    phone:o.phone||addr.phone||'', email:o.email||'',
+    address:addr.address1||'', address2:addr.address2||'',
     city:addr.city||'', county:addr.province||'', zip:addr.zip||'',
     fin:(o.financial_status||'').toLowerCase(),
     fulfillmentStatus:(o.fulfillment_status||'').toLowerCase(),
@@ -295,6 +296,21 @@ export default function FulfillmentPage() {
     } catch {
       setAddrModal(p => p ? { ...p, validating:false } : null);
     }
+  };
+
+  // Debounce auto-validare la schimbare câmpuri
+  const validateDebounceRef = useRef(null);
+  const onAddrFieldChange = (key, value) => {
+    setAddrModal(p => {
+      if (!p) return null;
+      const newFields = { ...p.editAddr, [key]: value };
+      // Validare automată cu debounce 800ms după ce userul termină de tastat
+      clearTimeout(validateDebounceRef.current);
+      validateDebounceRef.current = setTimeout(() => {
+        validateAddrApi(newFields, false);
+      }, 800);
+      return { ...p, editAddr: newFields };
+    });
   };
 
   const applyAddrSuggestion = () => {
@@ -981,12 +997,15 @@ export default function FulfillmentPage() {
                 const isErr = apiErr||locErr;
                 return (
                   <div key={key} className="fb-field">
-                    <div className="fb-lbl" style={{color:isErr?'#f43f5e':'#64748b'}}>{label}</div>
+                    <div className="fb-lbl" style={{color:isErr?'#f43f5e':'#64748b',display:'flex',alignItems:'center',gap:6}}>
+                      {label}
+                      {key==='zip'&&addrModal.validating&&<span style={{fontSize:9,color:'#64748b'}}>⟳ verifică...</span>}
+                    </div>
                     <input
                       className={`fb-inp ${isErr?'err':''}`}
                       value={addrModal.editAddr[key]||''} placeholder={ph}
                       style={{fontFamily:'monospace',fontSize:14}}
-                      onChange={e=>setAddrModal(p=>({...p,editAddr:{...p.editAddr,[key]:e.target.value}}))}
+                      onChange={e=>onAddrFieldChange(key, e.target.value)}
                     />
                   </div>
                 );
@@ -1006,12 +1025,6 @@ export default function FulfillmentPage() {
 
             <div className="fb-mftr" style={{position:'sticky',bottom:0,background:'#0f1419',borderRadius:'0 0 14px 14px'}}>
               <button className="fb-btn-g" onClick={()=>setAddrModal(null)}>Anulează</button>
-              <button
-                onClick={()=>validateAddrApi(addrModal.editAddr,false)}
-                disabled={addrModal.validating}
-                style={{flex:1,background:'rgba(59,130,246,.12)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:8,padding:'9px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit',opacity:addrModal.validating?.6:1}}>
-                {addrModal.validating?'⟳ Verifică...':'🔍 Verifică'}
-              </button>
               <button className="fb-btn-p" disabled={addrModal.saving}
                 onClick={()=>saveAddress(addrModal.order,addrModal.editAddr)} style={{flex:2}}>
                 {addrModal.saving?'↻ Se salvează...':'💾 Salvează în Shopify'}
@@ -1236,7 +1249,18 @@ function AwbModal({ order, glsUser, glsPass, glsClient, sdUser, sdPass, sdConfig
   const addrOk = order.addrIssues?.length===0;
 
   const toggleGls = (code)=>{
-    setGlsSelected(p=>({...p,[code]:!p[code]}));
+    const svc = GLS_SERVICES[code];
+    setGlsSelected(p=>{
+      const newVal = !p[code];
+      // Pre-completează cu datele din comandă când bifezi
+      if (newVal && svc?.param) {
+        setGlsParams(pp=>({
+          ...pp,
+          [code]: pp[code] || (svc.param==='phone' ? (order.phone||'') : svc.param==='email' ? (order.email||'') : svc.param==='value' ? String(order.total) : ''),
+        }));
+      }
+      return {...p,[code]:newVal};
+    });
   };
 
   const buildGlsServices = ()=>{
@@ -1324,7 +1348,18 @@ function AwbModal({ order, glsUser, glsPass, glsClient, sdUser, sdPass, sdConfig
                           <div className="fb-svc-label">{svc.label}</div>
                           <div className="fb-svc-desc">{svc.desc}</div>
                           {glsSelected[svc.code]&&svc.param&&svc.param!==null&&(
-                            <input className="fb-inp fb-svc-input" placeholder={svc.param==='phone'?'07XXXXXXXX':svc.param==='email'?'email@ex.com':svc.param==='value'?'valoare RON':'ID shop'} value={glsParams[svc.code]||''} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();setGlsParams(p=>({...p,[svc.code]:e.target.value}));}} style={{fontSize:11,padding:'5px 8px'}}/>
+                            <input
+                              className="fb-inp fb-svc-input"
+                              placeholder={
+                                svc.param==='phone' ? (order.phone||'07XXXXXXXX') :
+                                svc.param==='email' ? (order.clientEmail||'email@exemplu.com') :
+                                svc.param==='value' ? String(order.total) : 'ID shop'
+                              }
+                              value={glsParams[svc.code]||''}
+                              onClick={e=>e.stopPropagation()}
+                              onChange={e=>{e.stopPropagation();setGlsParams(p=>({...p,[svc.code]:e.target.value}));}}
+                              style={{fontSize:11,padding:'5px 8px'}}
+                            />
                           )}
                         </div>
                       </div>
