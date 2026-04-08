@@ -20,8 +20,8 @@ const buildQuery = (cursor, createdAtMin) => {
         displayFinancialStatus displayFulfillmentStatus
         paymentGatewayNames
         totalPriceSet { shopMoney { amount currencyCode } }
-        shippingAddress { name city province phone }
-        billingAddress { name city province phone }
+        shippingAddress { name address1 address2 city province zip phone }
+        billingAddress { name address1 address2 city province zip phone }
         lineItems(first: 10) {
           edges {
             node {
@@ -126,8 +126,8 @@ function toRestOrder(node) {
     note_attributes: (node.customAttributes || []).map(a => ({ name: a.key, value: a.value })),
     utmSource: '', utmMedium: '', utmCampaign: '', referrerUrl: '', landingPage: '',
     phone: node.phone || node.shippingAddress?.phone || node.billingAddress?.phone || '',
-    shipping_address: { name: addr.name||'', city: addr.city||'', province: addr.province||'', address1: '', address2: '', phone: addr.phone||'' },
-    billing_address:  { name: baddr.name||'', city: baddr.city||'', province: baddr.province||'', address1: '', address2: '' },
+    shipping_address: { name: addr.name||'', address1: addr.address1||'', address2: addr.address2||'', city: addr.city||'', province: addr.province||'', zip: addr.zip||'', phone: addr.phone||'' },
+    billing_address:  { name: baddr.name||'', address1: baddr.address1||'', address2: baddr.address2||'', city: baddr.city||'', province: baddr.province||'', zip: baddr.zip||'' },
     fulfillments,
     line_items: lineItems,
   };
@@ -216,3 +216,4 @@ export async function OPTIONS() {
     },
   });
 }
+
