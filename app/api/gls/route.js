@@ -249,47 +249,55 @@ export async function POST(req) {
 
     // GLS returnează PDF în Labels — poate fi array sau string direct base64
     let labelBase64 = null;
-    if (Array.isArray(data?.Labels) && data.Labels.length > 0) {
+    if (Array.isArray(data?.Labels) && data.Labels.length > 0 && data.Labels[0]?.length > 100) {
       labelBase64 = data.Labels[0];
     } else if (typeof data?.Labels === 'string' && data.Labels.length > 100) {
       labelBase64 = data.Labels;
     }
 
-    // Dacă GLS nu a returnat PDF în PrintLabels, încearcă GetPrintedLabels separat
-    if (!labelBase64 && awb) {
+    // Dacă GLS nu a returnat PDF în PrintLabels, încearcă GetPrintedLabels cu ParcelNumber
+    if (!labelBase64) {
       try {
+        // GLS API: GetPrintedLabels acceptă ParcelNumberList (numărul AWB), nu ParcelId
         const labelRes = await fetch(`${GLS_BASE}/GetPrintedLabels`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify({
             ...baseReq,
-            ParcelIdList: [parseInt(info?.ParcelId || awb)],
+            ParcelNumberList: [String(awb)],
             TypeOfPrinter: 'A4_2x2',
             PrintPosition: 1,
           }),
           cache: 'no-store',
         });
-        const labelData = await labelRes.json();
-        if (Array.isArray(labelData?.Labels) && labelData.Labels[0]) {
+        const labelRaw = await labelRes.text();
+        let labelData;
+        try { labelData = JSON.parse(labelRaw); } catch { labelData = {}; }
+        
+        if (Array.isArray(labelData?.Labels) && labelData.Labels[0]?.length > 100) {
           labelBase64 = labelData.Labels[0];
         } else if (typeof labelData?.Labels === 'string' && labelData.Labels.length > 100) {
           labelBase64 = labelData.Labels;
         }
-        console.log('[GLS] GetPrintedLabels result, has label:', !!labelBase64);
+        console.log('[GLS] GetPrintedLabels response keys:', Object.keys(labelData||{}));
       } catch(e) {
         console.warn('[GLS] GetPrintedLabels failed:', e.message);
       }
     }
 
-    console.log('[GLS] AWB:', awb, '| Has label PDF:', !!labelBase64);
+    console.log('[GLS] AWB:', awb, '| Has label PDF:', !!labelBase64, '| Label length:', labelBase64?.length||0);
+
+    // URL-uri corecte GLS Romania
+    const trackUrl   = `https://gls-group.eu/RO/ro/urmarire-colet?match=${awb}`;
+    const myglsUrl   = `https://mygls.ro/Parcel/Detail/${awb}`;
 
     return NextResponse.json({
       ok: true,
       awb: String(awb),
       parcelId: info?.ParcelId,
       labelBase64,
-      trackUrl: `https://gls-group.com/RO/ro/paket-verfolgen?match=${awb}`,
-      myglsUrl: `https://mygls.ro/Parcel/Detail/${awb}`,
+      trackUrl,
+      myglsUrl,
       servicesApplied: serviceList.map(s=>s.Code),
       orderId, orderName,
     }, { headers: CORS });
