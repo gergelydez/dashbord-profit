@@ -212,8 +212,44 @@ export async function OPTIONS() {
     status: 200,
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
       'Access-Control-Allow-Headers': '*',
     },
   });
+}
+
+// PUT — actualizare adresă livrare în Shopify (prin server, evită CORS din browser)
+export async function PUT(req) {
+  try {
+    const { domain, token, orderId, shippingAddress } = await req.json();
+    if (!domain || !token || !orderId || !shippingAddress) {
+      return NextResponse.json({ error: 'Lipsesc parametrii: domain, token, orderId, shippingAddress' }, { status: 400 });
+    }
+
+    const res = await fetch(`https://${domain}/admin/api/2024-01/orders/${orderId}.json`, {
+      method: 'PUT',
+      headers: {
+        'X-Shopify-Access-Token': token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        order: {
+          id: orderId,
+          shipping_address: shippingAddress,
+        },
+      }),
+      cache: 'no-store',
+    });
+
+    const txt = await res.text();
+    if (!res.ok) {
+      return NextResponse.json({ error: `Shopify ${res.status}: ${txt.slice(0, 300)}` }, { status: res.status });
+    }
+
+    return NextResponse.json({ ok: true }, {
+      headers: { 'Access-Control-Allow-Origin': '*' },
+    });
+  } catch (e) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
 }
