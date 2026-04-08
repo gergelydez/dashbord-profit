@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
-const PAGES = ['/', '/whatsapp', '/stats', '/import', '/profit'];
+const PAGES = ['/', '/whatsapp', '/stats', '/import', '/profit', '/sales-engine-pro'];
 const EASE  = 'transform 260ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
 const SNAP  = 'transform 220ms cubic-bezier(0.34, 1.2, 0.64, 1)';
 

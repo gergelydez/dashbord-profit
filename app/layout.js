@@ -62,6 +62,10 @@ export default function RootLayout({ children }) {
               <span>💹</span>
               <span>Profit</span>
             </a>
+            <a href="/sales-engine-pro" className="bn-item">
+              <span>⚡</span>
+              <span>Sales AI</span>
+            </a>
           </div>
         </nav>
       </body>
