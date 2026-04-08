@@ -4,9 +4,10 @@ const ENV_USER   = process.env.GLS_USERNAME   || process.env.GLS_APP_ID      || 
 const ENV_PASS   = process.env.GLS_PASSWORD   || process.env.GLS_API_SECRET  || process.env.GLS_API_KEY || '';
 const ENV_CLIENT = process.env.GLS_CLIENT_NUMBER || '553003585';
 
+// MyGLS REST API Romania — https://api.mygls.ro/index_en.html
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
-// SHA512 folosind Web Crypto API (disponibil pe orice runtime Vercel/Edge/Node)
+// SHA512 folosind Web Crypto API — disponibil pe orice runtime Vercel
 async function sha512bytes(str) {
   const encoded = new TextEncoder().encode(str);
   const hashBuffer = await globalThis.crypto.subtle.digest('SHA-512', encoded);
@@ -48,7 +49,6 @@ export async function POST(req) {
     }
 
     const passwordHash = await sha512bytes(pass);
-
     const baseReq = {
       Username: user,
       Password: passwordHash,
@@ -94,25 +94,29 @@ export async function POST(req) {
     }
 
     // ── GENERARE AWB ──────────────────────────────────────────────────
-    const { recipientName, phone, email, address, city, zip,
+    const {
+      recipientName, phone, email, address, city, zip,
       parcels, content, codAmount, codCurrency,
-      orderName, orderId, selectedServices, manualAwb } = body;
+      orderName, orderId, selectedServices, manualAwb,
+    } = body;
 
     if (manualAwb) {
       return NextResponse.json({ ok: true, awb: manualAwb, mode: 'manual' }, { headers: CORS });
     }
 
+    // Separa strada de numar
     const m = (address || '').match(/^(.*?)\s*(?:nr\.?\s*)?(\d+.*)$/i);
     const street   = m ? m[1].trim() : (address || '');
     const houseNum = m ? m[2].trim() : '1';
 
+    // Construieste ServiceList
     const serviceList = [];
     for (const [code, val] of Object.entries(selectedServices || {})) {
       if (!val || val === false) continue;
       const svc = { Code: code };
       if (code === 'SM1') svc.SM1Parameter = { Value: `${(phone||'').replace(/\D/g,'').slice(-10)}|Colet GLS #ParcelNr#` };
       else if (code === 'SM2') svc.SM2Parameter = { Value: (phone||'').replace(/\D/g,'') };
-      else if (code === 'FDS') svc.FDSParameter = { Value: email || String(val) };
+      else if (code === 'FDS') svc.FDSParameter = { Value: typeof val === 'string' && val.includes('@') ? val : (email || '') };
       else if (code === 'FSS') svc.FSSParameter = { Value: (phone||'').replace(/\D/g,'') };
       else if (code === 'AOS') svc.AOSParameter = { Value: recipientName || String(val) };
       else if (code === 'INS') svc.INSParameter = { Value: String(val) };
@@ -135,7 +139,6 @@ export async function POST(req) {
           CODCurrency:     codAmount > 0 ? (codCurrency || 'RON') : undefined,
           Content:         (content || orderName || 'Colet').slice(0, 40),
           PickupDate:      `/Date(${Date.now()})/`,
-          PickupAddress:   null,
           DeliveryAddress: {
             Name:           (recipientName || '').slice(0, 40),
             Street:         (street || address || '').slice(0, 40),
@@ -162,11 +165,11 @@ export async function POST(req) {
       throw new Error(`Raspuns invalid: ${raw.slice(0, 200)}`);
     }
 
-    const errs = data?.PrintLabelsErrorList || [];
-    if (errs.length > 0) {
+    const printErrs = data?.PrintLabelsErrorList || [];
+    if (printErrs.length > 0) {
       return NextResponse.json({
-        error: `GLS ${errs[0].ErrorCode}: ${errs[0].ErrorDescription}`,
-        errorCode: errs[0].ErrorCode,
+        error: `GLS ${printErrs[0].ErrorCode}: ${printErrs[0].ErrorDescription}`,
+        errorCode: printErrs[0].ErrorCode,
       }, { status: 422, headers: CORS });
     }
 
@@ -188,4 +191,3 @@ export async function POST(req) {
     return NextResponse.json({ error: e.message }, { status: 500, headers: CORS });
   }
 }
-
