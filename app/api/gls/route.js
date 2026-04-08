@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import crypto from 'node:crypto';
 
 const ENV_USER   = process.env.GLS_USERNAME   || process.env.GLS_APP_ID      || '';
 const ENV_PASS   = process.env.GLS_PASSWORD   || process.env.GLS_API_SECRET  || process.env.GLS_API_KEY || '';
@@ -7,8 +6,11 @@ const ENV_CLIENT = process.env.GLS_CLIENT_NUMBER || '553003585';
 
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
-function sha512bytes(str) {
-  return Array.from(crypto.createHash('sha512').update(str, 'utf8').digest());
+// SHA512 folosind Web Crypto API (disponibil pe orice runtime Vercel/Edge/Node)
+async function sha512bytes(str) {
+  const encoded = new TextEncoder().encode(str);
+  const hashBuffer = await globalThis.crypto.subtle.digest('SHA-512', encoded);
+  return Array.from(new Uint8Array(hashBuffer));
 }
 
 const CORS = {
@@ -27,7 +29,7 @@ export async function GET() {
     configured: !!(ENV_USER && ENV_PASS),
     clientNumber: ENV_CLIENT,
     message: ENV_USER
-      ? `GLS configurat (${ENV_USER}). Apasa Test pentru verificare.`
+      ? `GLS configurat (${ENV_USER}). Apasa Test.`
       : 'GLS_USERNAME lipseste din Vercel env vars.',
   }, { headers: CORS });
 }
@@ -41,29 +43,27 @@ export async function POST(req) {
 
     if (!user || !pass) {
       return NextResponse.json({
-        ok: false,
-        error: 'Completeaza username si parola GLS.',
+        ok: false, error: 'Completeaza username si parola GLS.',
       }, { headers: CORS });
     }
 
+    const passwordHash = await sha512bytes(pass);
+
     const baseReq = {
       Username: user,
-      Password: sha512bytes(pass),
+      Password: passwordHash,
       ClientNumberList: [parseInt(client)],
       WebshopEngine: 'Custom',
     };
 
-    // TEST CONEXIUNE
+    // ── TEST CONEXIUNE ────────────────────────────────────────────────
     if (body.action === 'test_connection' || body.action === 'get_config') {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
 
       const res = await fetch(`${GLS_BASE}/GetParcelList`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           ...baseReq,
           PickupDateFrom: yesterday.toISOString(),
@@ -75,33 +75,28 @@ export async function POST(req) {
       const text = await res.text();
       let data;
       try { data = JSON.parse(text); } catch {
-        throw new Error(`Raspuns invalid GLS (${res.status}): ${text.slice(0, 200)}`);
+        throw new Error(`Raspuns invalid GLS (${res.status}): ${text.slice(0, 300)}`);
       }
 
-      const errors = data?.GetParcelListErrors || [];
-      const authErr = errors.find(e => [14, 15, 27].includes(e.ErrorCode));
+      const errs = data?.GetParcelListErrors || [];
+      const authErr = errs.find(e => [14, 15, 27].includes(e.ErrorCode));
       if (authErr) {
         return NextResponse.json({
-          ok: false,
-          configured: false,
+          ok: false, configured: false,
           error: `Credentiale invalide (${authErr.ErrorCode}): ${authErr.ErrorDescription}`,
         }, { headers: CORS });
       }
 
       return NextResponse.json({
-        ok: true,
-        configured: true,
-        clientNumber: client,
+        ok: true, configured: true, clientNumber: client,
         message: `GLS conectat! Client: ${client}`,
       }, { headers: CORS });
     }
 
-    // GENERARE AWB
-    const {
-      recipientName, phone, email, address, city, zip,
+    // ── GENERARE AWB ──────────────────────────────────────────────────
+    const { recipientName, phone, email, address, city, zip,
       parcels, content, codAmount, codCurrency,
-      orderName, orderId, selectedServices, manualAwb,
-    } = body;
+      orderName, orderId, selectedServices, manualAwb } = body;
 
     if (manualAwb) {
       return NextResponse.json({ ok: true, awb: manualAwb, mode: 'manual' }, { headers: CORS });
@@ -128,10 +123,7 @@ export async function POST(req) {
 
     const printRes = await fetch(`${GLS_BASE}/PrintLabels`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
         ...baseReq,
         ParcelList: [{
@@ -188,15 +180,12 @@ export async function POST(req) {
     }
 
     return NextResponse.json({
-      ok: true,
-      awb: String(awb),
-      parcelId: info?.ParcelId,
-      pdf: data?.Labels || null,
-      orderId,
-      orderName,
+      ok: true, awb: String(awb), parcelId: info?.ParcelId,
+      pdf: data?.Labels || null, orderId, orderName,
     }, { headers: CORS });
 
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500, headers: CORS });
   }
 }
+
