@@ -266,17 +266,17 @@ export default function App() {
   }, [loading]);
 
   const callAI = async (systemPrompt, userMsg) => {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("/api/sales-engine", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 4000,
         system: systemPrompt,
         messages: [{ role: "user", content: userMsg }],
+        max_tokens: 4000,
       }),
     });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Eroare server");
     return data.content?.map(b => b.text || "").join("\n") || "";
   };
 

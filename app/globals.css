@@ -136,7 +136,7 @@ header {
   border-top:1px solid var(--c-border2);
   padding-bottom:var(--safe-bottom);
 }
-.bottom-nav-items { display:grid; grid-template-columns:repeat(5,1fr); height:var(--nav-h); }
+.bottom-nav-items { display:grid; grid-template-columns:repeat(6,1fr); height:var(--nav-h); }
 .bn-item {
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   gap:3px; color:var(--c-text4); text-decoration:none;
