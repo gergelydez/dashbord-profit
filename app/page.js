@@ -1117,6 +1117,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               <a href="/stats" className="nav-link" style={{background:'rgba(59,130,246,.12)',color:'#3b82f6',border:'1px solid rgba(59,130,246,.25)'}}>📊 Statistici</a>
               <a href="/import" className="nav-link" style={{background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.25)'}}>📦 Import</a>
               <a href="/fulfillment" className="nav-link" style={{background:'rgba(249,115,22,.12)',color:'#f97316',border:'1px solid rgba(249,115,22,.25)'}}>⚡ Fulfillment</a>
+<a href="/sales-engine-pro" className="nav-link" style={{background:'rgba(249,115,22,.12)',color:'#f97316',border:'1px solid rgba(249,115,22,.25)'}}>💰 SalesEnginePro</a>
               <a href="/whatsapp" className="nav-link" style={{background:'rgba(37,211,102,.12)',color:'#25d366',border:'1px solid rgba(37,211,102,.25)'}}>📱 WhatsApp</a>
             </div>
           )}
