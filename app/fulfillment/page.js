@@ -828,7 +828,7 @@ export default function FulfillmentPage() {
                                   </a>
                                 )}
                                 {/* Track */}
-                                <a href={`https://gls-group.com/RO/ro/paket-verfolgen?match=${existingAwb}`} target="_blank" rel="noopener noreferrer"
+                                <a href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${existingAwb}`} target="_blank" rel="noopener noreferrer"
                                   style={{background:'rgba(59,130,246,.1)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:5,padding:'3px 8px',fontSize:10,fontWeight:700,textDecoration:'none'}}>
                                   📍 Track
                                 </a>
