@@ -247,15 +247,49 @@ export async function POST(req) {
     const awb  = info?.ParcelNumber || info?.ParcelId;
     if (!awb) return NextResponse.json({ ok: false, error: 'AWB negasit in raspunsul GLS', _raw: JSON.stringify(data).slice(0,400) }, { status: 500, headers: CORS });
 
-    // Labels vine ca array de base64 PDF-uri
-    const labelBase64 = Array.isArray(data?.Labels) ? data.Labels[0] : (data?.Labels || null);
+    // GLS returnează PDF în Labels — poate fi array sau string direct base64
+    let labelBase64 = null;
+    if (Array.isArray(data?.Labels) && data.Labels.length > 0) {
+      labelBase64 = data.Labels[0];
+    } else if (typeof data?.Labels === 'string' && data.Labels.length > 100) {
+      labelBase64 = data.Labels;
+    }
+
+    // Dacă GLS nu a returnat PDF în PrintLabels, încearcă GetPrintedLabels separat
+    if (!labelBase64 && awb) {
+      try {
+        const labelRes = await fetch(`${GLS_BASE}/GetPrintedLabels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            ...baseReq,
+            ParcelIdList: [parseInt(info?.ParcelId || awb)],
+            TypeOfPrinter: 'A4_2x2',
+            PrintPosition: 1,
+          }),
+          cache: 'no-store',
+        });
+        const labelData = await labelRes.json();
+        if (Array.isArray(labelData?.Labels) && labelData.Labels[0]) {
+          labelBase64 = labelData.Labels[0];
+        } else if (typeof labelData?.Labels === 'string' && labelData.Labels.length > 100) {
+          labelBase64 = labelData.Labels;
+        }
+        console.log('[GLS] GetPrintedLabels result, has label:', !!labelBase64);
+      } catch(e) {
+        console.warn('[GLS] GetPrintedLabels failed:', e.message);
+      }
+    }
+
+    console.log('[GLS] AWB:', awb, '| Has label PDF:', !!labelBase64);
 
     return NextResponse.json({
       ok: true,
       awb: String(awb),
       parcelId: info?.ParcelId,
       labelBase64,
-      trackUrl: `https://gls-group.com/track/${awb}`,
+      trackUrl: `https://gls-group.com/RO/ro/paket-verfolgen?match=${awb}`,
+      myglsUrl: `https://mygls.ro/Parcel/Detail/${awb}`,
       servicesApplied: serviceList.map(s=>s.Code),
       orderId, orderName,
     }, { headers: CORS });
