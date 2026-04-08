@@ -4,6 +4,15 @@ const ENV_USER   = process.env.GLS_USERNAME   || process.env.GLS_APP_ID      || 
 const ENV_PASS   = process.env.GLS_PASSWORD   || process.env.GLS_API_SECRET  || process.env.GLS_API_KEY || '';
 const ENV_CLIENT = process.env.GLS_CLIENT_NUMBER || '553003585';
 
+// Date expeditor (pickup) — setează în Vercel ENV vars
+const ENV_PICKUP_NAME    = process.env.GLS_PICKUP_NAME    || process.env.COMPANY_NAME || '';
+const ENV_PICKUP_STREET  = process.env.GLS_PICKUP_STREET  || '';
+const ENV_PICKUP_CITY    = process.env.GLS_PICKUP_CITY    || '';
+const ENV_PICKUP_ZIP     = process.env.GLS_PICKUP_ZIP     || '';
+const ENV_PICKUP_COUNTY  = process.env.GLS_PICKUP_COUNTY  || '';
+const ENV_PICKUP_PHONE   = process.env.GLS_PICKUP_PHONE   || process.env.COMPANY_PHONE || '';
+const ENV_PICKUP_COUNTRY = 'RO';
+
 // MyGLS REST API Romania
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
@@ -24,10 +33,14 @@ export async function OPTIONS() {
 }
 
 export async function GET() {
+  const pickupConfigured = !!(ENV_PICKUP_NAME && ENV_PICKUP_STREET && ENV_PICKUP_CITY && ENV_PICKUP_ZIP);
   return NextResponse.json({
     ok: !!(ENV_USER && ENV_PASS),
     configured: !!(ENV_USER && ENV_PASS),
     clientNumber: ENV_CLIENT,
+    pickupConfigured,
+    pickupName: ENV_PICKUP_NAME,
+    pickupCity: ENV_PICKUP_CITY,
     message: ENV_USER
       ? `GLS configurat (${ENV_USER}). Apasă Test.`
       : 'GLS_USERNAME lipsește din Vercel env vars.',
@@ -174,6 +187,16 @@ export async function POST(req) {
       serviceList.push(svc);
     }
 
+    // Date expeditor din body (trimise din frontend) sau din ENV vars
+    const senderName   = body.senderName   || ENV_PICKUP_NAME   || recipientName; // fallback la destinatar dacă nu e configurat
+    const senderStreet = body.senderStreet || ENV_PICKUP_STREET || address;
+    const senderCity   = body.senderCity   || ENV_PICKUP_CITY   || city;
+    const senderZip    = body.senderZip    || ENV_PICKUP_ZIP    || zipCleaned;
+    const senderCounty = body.senderCounty || ENV_PICKUP_COUNTY || county;
+    const senderPhone  = body.senderPhone  || ENV_PICKUP_PHONE  || (phone || '').replace(/\D/g, '').slice(-10);
+
+    const { street: sStreet, houseNum: sHouseNum } = parseStreet(senderStreet);
+
     const parcelPayload = {
       ClientNumber:    parseInt(client),
       ClientReference: (orderName || '').slice(0, 40),
@@ -183,14 +206,26 @@ export async function POST(req) {
       CODCurrency:     (codAmount > 0) ? (codCurrency || 'RON') : undefined,
       Content:         (content || orderName || 'Colet').slice(0, 40),
       PickupDate:      `/Date(${Date.now()})/`,
+      // CRITICAL FIX: GLS necesită adresa EXPEDITORULUI (Pickup) separat de destinatar
+      PickupAddress: {
+        Name:           senderName.slice(0, 40),
+        Street:         sStreet.slice(0, 40),
+        HouseNumber:    (sHouseNum || '1').slice(0, 10),
+        CountyName:     senderCounty.slice(0, 40),
+        City:           senderCity.slice(0, 40),
+        ZipCode:        cleanZip(senderZip),
+        CountryIsoCode: 'RO',
+        ContactName:    senderName.slice(0, 40),
+        ContactPhone:   senderPhone.replace(/\D/g, '').slice(-10),
+        ContactEmail:   '',
+      },
       DeliveryAddress: {
         Name:           (recipientName || '').slice(0, 40),
         Street:         (street || address || '').slice(0, 40),
         HouseNumber:    (houseNum || '1').slice(0, 10),
-        // BUGFIX: GLS necesită County pentru RO (altfel dă "Pickup Country" error)
         CountyName:     (county || '').slice(0, 40),
         City:           (city || '').slice(0, 40),
-        ZipCode:        zipCleaned, // BUGFIX: ZIP fără spații și exact 6 cifre
+        ZipCode:        zipCleaned,
         CountryIsoCode: 'RO',
         ContactName:    (recipientName || '').slice(0, 40),
         ContactPhone:   (phone || '').replace(/\D/g, '').slice(-10),
