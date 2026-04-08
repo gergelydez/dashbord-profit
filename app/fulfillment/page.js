@@ -804,8 +804,8 @@ export default function FulfillmentPage() {
                                 {String(existingAwb)}
                               </div>
                               <div style={{display:'flex',gap:6,marginTop:4,flexWrap:'wrap'}}>
-                                {/* Download label — PDF base64 dacă îl avem, altfel link MyGLS */}
-                                {awbRes?.labelBase64?(
+                                {/* PDF base64 dacă avem din generare curentă */}
+                                {awbRes?.labelBase64 ? (
                                   <button onClick={()=>{
                                     try {
                                       const bin=atob(awbRes.labelBase64);
@@ -816,24 +816,26 @@ export default function FulfillmentPage() {
                                       const a=document.createElement('a');
                                       a.href=url; a.download=`AWB_GLS_${existingAwb}.pdf`; a.click();
                                       setTimeout(()=>URL.revokeObjectURL(url),1000);
-                                    } catch(e){ alert('Eroare descărcare: '+e.message); }
-                                  }} style={{background:'#10b981',border:'none',color:'white',borderRadius:5,padding:'3px 8px',fontSize:10,cursor:'pointer',fontWeight:700}}>
+                                    } catch(e){ alert('Eroare: '+e.message); }
+                                  }} style={{background:'#10b981',border:'none',color:'white',borderRadius:5,padding:'4px 10px',fontSize:11,cursor:'pointer',fontWeight:700}}>
                                     ⬇ PDF
                                   </button>
-                                ):(
-                                  // Link direct MyGLS pentru descărcarea etichetei
-                                  <a href={awbRes?.myglsUrl||`https://mygls.ro/Parcel/Detail/${existingAwb}`} target="_blank" rel="noopener noreferrer"
-                                    style={{background:'rgba(249,115,22,.15)',border:'1px solid rgba(249,115,22,.4)',color:'#f97316',borderRadius:5,padding:'3px 8px',fontSize:10,fontWeight:700,textDecoration:'none'}}>
-                                    ⬇ MyGLS
+                                ) : (
+                                  // ÎNTOTDEAUNA arată buton MyGLS — merge și pentru AWB vechi
+                                  <a href={`https://mygls.ro/Parcel/Detail/${existingAwb}`}
+                                    target="_blank" rel="noopener noreferrer"
+                                    style={{background:'rgba(249,115,22,.2)',border:'1px solid #f97316',color:'#f97316',borderRadius:5,padding:'4px 10px',fontSize:11,fontWeight:700,textDecoration:'none',display:'inline-block'}}>
+                                    ⬇ Etichetă
                                   </a>
                                 )}
-                                {/* Track */}
-                                <a href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${existingAwb}`} target="_blank" rel="noopener noreferrer"
-                                  style={{background:'rgba(59,130,246,.1)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:5,padding:'3px 8px',fontSize:10,fontWeight:700,textDecoration:'none'}}>
+                                {/* Track — ÎNTOTDEAUNA vizibil */}
+                                <a href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${existingAwb}`}
+                                  target="_blank" rel="noopener noreferrer"
+                                  style={{background:'rgba(59,130,246,.15)',border:'1px solid #3b82f6',color:'#3b82f6',borderRadius:5,padding:'4px 10px',fontSize:11,fontWeight:700,textDecoration:'none',display:'inline-block'}}>
                                   📍 Track
                                 </a>
                               </div>
-                              {awbRes?.servicesApplied?.length>0&&<div style={{fontSize:8,color:'#475569',marginTop:2}}>{awbRes.servicesApplied.join(' · ')}</div>}
+                              {awbRes?.servicesApplied?.length>0&&<div style={{fontSize:8,color:'#475569',marginTop:3}}>{awbRes.servicesApplied.join(' · ')}</div>}
                               {awbRes?.mode==='manual'&&<div style={{fontSize:8,color:'#64748b'}}>manual</div>}
                             </div>
                           ):awbRes?.error?(
