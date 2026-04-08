@@ -14,38 +14,58 @@ export async function OPTIONS() {
 // Setează GEOAPIFY_KEY în Vercel ENV sau folosim key-ul public de demo
 const GEOAPIFY_KEY = process.env.GEOAPIFY_KEY || '';
 
-// Nominatim ca fallback (fără key, dar mai puțin precis)
+// Nominatim ca fallback — încearcă mai multe query-uri de la specific la general
 async function lookupNominatim(address, city) {
-  const query = `${address}, ${city}, Romania`;
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&countrycodes=ro&addressdetails=1`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'FulfillmentBridge/3.0' },
-    signal: AbortSignal.timeout(5000),
-    cache: 'no-store',
-  });
-  if (!res.ok) return null;
-  const results = await res.json();
-
   const norm = s => (s||'').toLowerCase().normalize('NFD')
     .replace(/[\u0300-\u036f]/g,'')
     .replace(/[șş]/g,'s').replace(/[țţ]/g,'t')
     .replace(/[ăâ]/g,'a').replace(/î/g,'i').trim();
 
   const cityN = norm(city);
-  for (const r of results) {
-    const a = r.address || {};
-    const zip = (a.postcode||'').replace(/\s/g,'');
-    if (!zip || zip.length !== 6 || !/^\d{6}$/.test(zip)) continue;
-    const rCity = norm(a.city||a.town||a.village||a.municipality||a.suburb||'');
-    // Verificare strictă — orașul trebuie să se potrivească
-    if (!rCity || (!rCity.includes(cityN) && !cityN.includes(rCity))) continue;
-    return {
-      zip,
-      city: a.city||a.town||a.village||city,
-      county: a.county||'',
-      street: a.road||'',
-      source: 'nominatim',
-    };
+
+  // Extrage strada fără număr și numărul separat
+  const streetMatch = address.match(/^(.+?)\s+(\d+[\w\/\-]*)$/);
+  const streetName  = streetMatch ? streetMatch[1].trim() : address;
+  const houseNum    = streetMatch ? streetMatch[2] : '';
+
+  // Încearcă query-uri de la cel mai specific la general
+  const queries = [
+    // 1. Strada + număr + oraș (cel mai precis)
+    houseNum ? `${streetName} ${houseNum}, ${city}, Romania` : null,
+    // 2. Strada + oraș
+    `${streetName}, ${city}, Romania`,
+    // 3. Adresa completă + oraș
+    `${address}, ${city}, Romania`,
+  ].filter(Boolean);
+
+  for (const query of queries) {
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&countrycodes=ro&addressdetails=1`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'FulfillmentBridge/3.0' },
+        signal: AbortSignal.timeout(4000),
+        cache: 'no-store',
+      });
+      if (!res.ok) continue;
+      const results = await res.json();
+
+      for (const r of results) {
+        const a = r.address || {};
+        const zip = (a.postcode||'').replace(/\s/g,'');
+        if (!zip || zip.length !== 6 || !/^\d{6}$/.test(zip)) continue;
+        const rCity = norm(a.city||a.town||a.village||a.municipality||a.suburb||'');
+        if (!rCity || (!rCity.includes(cityN) && !cityN.includes(rCity))) continue;
+        // Preferă rezultate cu stradă (mai precise)
+        const hasRoad = !!(a.road || a.pedestrian || a.path);
+        return {
+          zip, hasRoad,
+          city: a.city||a.town||a.village||city,
+          county: a.county||'',
+          street: a.road||'',
+          source: 'nominatim',
+        };
+      }
+    } catch { continue; }
   }
   return null;
 }
