@@ -143,17 +143,47 @@ export async function POST(req) {
     // ── SERVICII GLS ──────────────────────────────────────────────────────
     const serviceList = [];
     for (const [code, val] of Object.entries(selectedServices || {})) {
-      if (val === false || val === null || val === undefined || val === '') continue;
+      // Skip doar dacă explicit false/null/undefined — NU skip string gol
+      if (val === false || val === null || val === undefined) continue;
+
       const entry = { Code: code };
       switch(code) {
-        case 'SM1': entry.SM1Parameter = { Value: `${(phone||'').replace(/\D/g,'').slice(-10)}|Colet GLS #ParcelNr#` }; break;
-        case 'SM2': entry.SM2Parameter = { Value: (phone||'').replace(/\D/g,'') }; break;
-        case 'FDS': entry.FDSParameter = { Value: (typeof val==='string'&&val.includes('@'))?val:(email||'') }; break;
-        case 'FSS': entry.FSSParameter = { Value: (phone||'').replace(/\D/g,'').slice(-10) }; break;
-        case 'AOS': entry.AOSParameter = { Value: recipientName }; break;
-        case 'INS': entry.INSParameter = { Value: typeof val==='string'?val:String(codAmount||0) }; break;
-        case 'SBS': entry.SBSParameter = { Value: typeof val==='string'?val:'' }; break;
-        // SAT, T12, DPV, SDS, EXW — fara parametru
+        case 'SM1':
+          entry.SM1Parameter = { Value: `${(phone||'').replace(/\D/g,'').slice(-10)}|Colet GLS #ParcelNr#` };
+          break;
+        case 'SM2':
+          entry.SM2Parameter = { Value: (phone||'').replace(/\D/g,'').slice(-10) };
+          break;
+        case 'FDS':
+          // FlexDelivery Email — folosește emailul din val, din comandă, sau generăm unul
+          // GLS trimite email clientului cu link să aleagă ora/locul
+          const fdsEmail = (typeof val==='string' && val.includes('@')) ? val
+            : (email && email.includes('@')) ? email
+            : null;
+          if (!fdsEmail) {
+            // Nu avem email — nu putem adăuga FDS, skip
+            console.warn('[GLS] FDS skip — no email available');
+            continue;
+          }
+          entry.FDSParameter = { Value: fdsEmail };
+          break;
+        case 'FSS':
+          // FlexDelivery SMS
+          const fssPhone = (typeof val==='string' && val.length>5) ? val.replace(/\D/g,'')
+            : (phone||'').replace(/\D/g,'').slice(-10);
+          entry.FSSParameter = { Value: fssPhone };
+          break;
+        case 'AOS':
+          entry.AOSParameter = { Value: recipientName };
+          break;
+        case 'INS':
+          entry.INSParameter = { Value: typeof val==='string' && val ? val : String(Math.round(parseFloat(codAmount||0))) };
+          break;
+        case 'SBS':
+          if (typeof val==='string' && val) entry.SBSParameter = { Value: val };
+          else continue; // SBS fără shopId e invalid
+          break;
+        // SAT, T12, DPV, SDS, EXW — fără parametru, doar Code
       }
       serviceList.push(entry);
     }
