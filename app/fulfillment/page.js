@@ -495,7 +495,7 @@ export default function FulfillmentPage() {
         const res=await fetch('/api/gls',{ method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body) });
         const data=await res.json();
         if (data.ok) {
-          setAwbResults(p=>({...p,[order.id]:{ ok:true,awb:data.awb,courier,pdf:data.pdf,servicesApplied:data.servicesApplied||[],mode:data.mode }}));
+          setAwbResults(p=>({...p,[order.id]:{ ok:true,awb:data.awb,courier,labelBase64:data.labelBase64||null,trackUrl:data.trackUrl||null,servicesApplied:data.servicesApplied||[],mode:data.mode }}));
           setOrders(prev=>prev.map(o=>o.id===order.id?{...o,trackingNo:data.awb,courier}:o));
           toast(`AWB GLS ${data.awb} generat!`,'success');
         } else {
@@ -746,7 +746,25 @@ export default function FulfillmentPage() {
                         <td>
                           {existingAwb?(
                             <div>
-                              <div className="fb-awbn">{String(existingAwb).slice(0,18)}</div>
+                              <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap'}}>
+                                <span className="fb-awbn">{String(existingAwb).slice(0,18)}</span>
+                                {/* Track link */}
+                                <a href={awbRes?.trackUrl||`https://gls-group.com/track/${existingAwb}`} target="_blank" rel="noopener noreferrer"
+                                  style={{fontSize:9,color:'#3b82f6',textDecoration:'none'}} title="Track colet">↗</a>
+                              </div>
+                              {/* Download label PDF dacă avem base64 */}
+                              {awbRes?.labelBase64&&(
+                                <button onClick={()=>{
+                                  const blob=new Blob([Uint8Array.from(atob(awbRes.labelBase64),c=>c.charCodeAt(0))],{type:'application/pdf'});
+                                  const url=URL.createObjectURL(blob);
+                                  const a=document.createElement('a');
+                                  a.href=url; a.download=`AWB_${existingAwb}.pdf`; a.click();
+                                  URL.revokeObjectURL(url);
+                                }} style={{background:'rgba(16,185,129,.1)',border:'1px solid rgba(16,185,129,.3)',color:'#10b981',borderRadius:5,padding:'2px 7px',fontSize:9,cursor:'pointer',fontWeight:700,marginTop:3,display:'block'}}>
+                                  ⬇ Label PDF
+                                </button>
+                              )}
+                              {awbRes?.servicesApplied?.length>0&&<div style={{fontSize:8,color:'#475569',marginTop:2}}>{awbRes.servicesApplied.join(' · ')}</div>}
                               {awbRes?.mode==='manual'&&<div style={{fontSize:8,color:'#64748b'}}>manual</div>}
                             </div>
                           ):awbRes?.error?(
