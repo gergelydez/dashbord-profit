@@ -1243,7 +1243,7 @@ function AwbModal({ order, glsUser, glsPass, glsClient, sdUser, sdPass, sdConfig
       } else if (def.param==='email') {
         // FDS/SM2 — email. Dacă nu e completat, folosim un placeholder valid
         // GLS nu acceptă string gol pentru FDS, trimitem 'noreply@glamx.ro' ca fallback
-        svc[code] = glsParams[code] || order.email || 'noreply@glamx.ro';
+        svc[code] = glsParams[code] || order.email || '';
       } else if (def.param==='value') {
         svc[code] = glsParams[code] || String(order.total);
       } else if (def.param==='shopId') {
@@ -1360,14 +1360,18 @@ function AwbModal({ order, glsUser, glsPass, glsClient, sdUser, sdPass, sdConfig
                           <div className="fb-svc-label">{svc.label}</div>
                           <div className="fb-svc-desc">{svc.desc}</div>
                           {glsSelected[svc.code]&&svc.param&&(
-                            <input
-                              className="fb-inp fb-svc-input"
-                              placeholder={svc.param==='phone'?(order.phone||'07XXXXXXXX'):svc.param==='email'?(order.email||'email@exemplu.com'):svc.param==='value'?String(order.total):'ID shop'}
-                              value={glsParams[svc.code]||''}
-                              onClick={e=>e.stopPropagation()}
-                              onChange={e=>{e.stopPropagation();setGlsParams(p=>({...p,[svc.code]:e.target.value}));}}
-                              style={{fontSize:11,padding:'5px 8px'}}
-                            />
+                            <div onClick={e=>e.stopPropagation()}>
+                              <input
+                                className={`fb-inp fb-svc-input ${svc.param==='email'&&glsSelected[svc.code]&&!(glsParams[svc.code]||order.email)?'err':''}`}
+                                placeholder={svc.param==='phone'?(order.phone||'07XXXXXXXX'):svc.param==='email'?(order.email||'email@client.com'):svc.param==='value'?String(order.total):'ID shop'}
+                                value={glsParams[svc.code]||(svc.param==='phone'?(order.phone||''):svc.param==='email'?(order.email||''):'') }
+                                onChange={e=>{setGlsParams(p=>({...p,[svc.code]:e.target.value}));}}
+                                style={{fontSize:11,padding:'5px 8px'}}
+                              />
+                              {svc.param==='email'&&!(glsParams[svc.code]||order.email)&&(
+                                <div style={{fontSize:9,color:'#f43f5e',marginTop:3}}>⚠ Email obligatoriu pentru FlexDelivery</div>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
