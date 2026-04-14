@@ -1,6 +1,7 @@
 /**
  * app/api/connector/orders/route.ts
- * Lists Shopify orders enriched with our DB processing state (invoice + shipment).
+ * Lists Shopify orders enriched with DB state (invoice + shipment).
+ * Uses REST API (not GraphQL) to avoid Shopify's "Customer object" PII restriction.
  */
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
@@ -11,50 +12,53 @@ import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
 
 const API_VERSION = '2024-01';
 
-/* ── Shopify GraphQL fetch ── */
+/* ── Shopify REST fetch ── */
 async function fetchShopifyOrders(
   domain: string,
   token: string,
-  cursor: string | null,
+  pageInfo: string | null,
   filters: { search?: string; createdMin?: string; financialStatus?: string },
 ) {
-  const parts: string[] = ['status:any'];
-  if (filters.createdMin) parts.push(`created_at:>=${filters.createdMin}`);
-  if (filters.financialStatus && filters.financialStatus !== 'all')
-    parts.push(`financial_status:${filters.financialStatus}`);
-  if (filters.search) parts.push(`(name:*${filters.search}* OR email:*${filters.search}*)`);
+  const params = new URLSearchParams({ limit: '50', status: 'any' });
 
-  const query = `{
-    orders(first:50 ${cursor ? `after:"${cursor}"` : ''} query:"${parts.join(' ')}" sortKey:CREATED_AT reverse:true) {
-      pageInfo { hasNextPage endCursor }
-      edges { node {
-        id name createdAt cancelledAt
-        displayFinancialStatus displayFulfillmentStatus
-        paymentGatewayNames
-        totalPriceSet { shopMoney { amount currencyCode } }
-        email phone
-        shippingAddress { name address1 address2 city province zip phone }
-        billingAddress  { name address1 address2 city province zip phone }
-        lineItems(first:10) { edges { node {
-          name quantity
-          originalUnitPriceSet { shopMoney { amount } }
-          variant { sku }
-        }}}
-        customAttributes { key value }
-      }}
+  if (pageInfo) {
+    // Cursor pagination — only page_info is allowed alongside limit
+    params.set('page_info', pageInfo);
+  } else {
+    if (filters.createdMin)   params.set('created_at_min', `${filters.createdMin}T00:00:00Z`);
+    if (filters.financialStatus && filters.financialStatus !== 'all')
+      params.set('financial_status', filters.financialStatus);
+    if (filters.search) {
+      // REST supports name search with exact # prefix
+      const q = filters.search.startsWith('#') ? filters.search : `#${filters.search}`;
+      params.set('name', q);
     }
-  }`;
+    params.set('order', 'created_at desc');
+  }
 
-  const res = await fetch(`https://${domain}/admin/api/${API_VERSION}/graphql.json`, {
-    method: 'POST',
-    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
+  const url = `https://${domain}/admin/api/${API_VERSION}/orders.json?${params}`;
+  const res = await fetch(url, {
+    headers: { 'X-Shopify-Access-Token': token },
     cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}`);
-  const json = await res.json();
-  if (json.errors?.length) throw new Error(json.errors[0].message);
-  return json.data.orders;
+  if (!res.ok) throw new Error(`Shopify orders ${res.status}: ${await res.text()}`);
+
+  const { orders } = await res.json();
+
+  // Parse Link header for cursor pagination
+  const link = res.headers.get('Link') || '';
+  const nextMatch = link.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+  const prevMatch = link.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="previous"/);
+
+  return {
+    orders,
+    pageInfo: {
+      hasNextPage: !!nextMatch,
+      endCursor:   nextMatch ? nextMatch[1] : null,
+      hasPrevPage: !!prevMatch,
+      prevCursor:  prevMatch ? prevMatch[1] : null,
+    },
+  };
 }
 
 /* ── Enrich with DB state ── */
@@ -65,9 +69,18 @@ async function enrichWithDbState(shopifyIds: string[], domain: string) {
   if (!shop) return { invoices: {}, shipments: {}, orders: {} };
 
   const [dbOrders, invoices, shipments] = await Promise.all([
-    db.order.findMany({ where: { shopId: shop.id, shopifyId: { in: shopifyIds } }, select: { id: true, shopifyId: true, status: true, processingError: true } }),
-    db.invoice.findMany({ where: { shopId: shop.id, order: { shopifyId: { in: shopifyIds } } }, include: { order: { select: { shopifyId: true } } } }),
-    db.shipment.findMany({ where: { shopId: shop.id, order: { shopifyId: { in: shopifyIds } } }, include: { order: { select: { shopifyId: true } } } }),
+    db.order.findMany({
+      where: { shopId: shop.id, shopifyId: { in: shopifyIds } },
+      select: { id: true, shopifyId: true, status: true, processingError: true },
+    }),
+    db.invoice.findMany({
+      where: { shopId: shop.id, order: { shopifyId: { in: shopifyIds } } },
+      include: { order: { select: { shopifyId: true } } },
+    }),
+    db.shipment.findMany({
+      where: { shopId: shop.id, order: { shopifyId: { in: shopifyIds } } },
+      include: { order: { select: { shopifyId: true } } },
+    }),
   ]);
 
   const orderMap: Record<string, { id: string; status: string; error?: string | null }> = {};
@@ -88,61 +101,60 @@ async function enrichWithDbState(shopifyIds: string[], domain: string) {
   return { invoices: invMap, shipments: shipMap, orders: orderMap };
 }
 
-/* ── Map Shopify node → enriched order ── */
-function mapNode(node: Record<string, unknown>, enriched: Awaited<ReturnType<typeof enrichWithDbState>>) {
-  const gid   = node.id as string;
-  const numId = gid.replace(/\D/g, '');
-  const addr  = (node.shippingAddress ?? node.billingAddress ?? {}) as Record<string, string>;
-
-  const items = ((node.lineItems as { edges: { node: Record<string, unknown> }[] }).edges ?? []).map((e) => ({
-    name:     (e.node.name as string) || '',
-    quantity: (e.node.quantity as number) || 1,
-    price:    parseFloat(((e.node.originalUnitPriceSet as Record<string, Record<string, string>>)?.shopMoney?.amount) || '0'),
-    sku:      ((e.node.variant as Record<string, string> | null)?.sku) || '',
-  }));
-
+/* ── Map REST order → EnrichedOrder ── */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>>) {
+  const numId  = String(o.id);
+  const addr   = o.shipping_address || o.billing_address || {};
   const dbOrder  = enriched.orders[numId];
   const invoice  = enriched.invoices[numId] ?? null;
   const shipment = enriched.shipments[numId] ?? null;
 
-  const fin  = ((node.displayFinancialStatus  as string) || '').toLowerCase();
-  const ful  = ((node.displayFulfillmentStatus as string) || '').toLowerCase();
+  const fin = (o.financial_status || '').toLowerCase();
+  const ful = (o.fulfillment_status || '').toLowerCase();
 
   let procStatus = 'pending';
-  if (node.cancelledAt)           procStatus = 'cancelled';
+  if (o.cancelled_at)                   procStatus = 'cancelled';
   else if (dbOrder?.status === 'FAILED') procStatus = 'failed';
-  else if (invoice && shipment)   procStatus = 'fulfilled';
-  else if (invoice || shipment)   procStatus = 'partial';
+  else if (invoice && shipment)          procStatus = 'fulfilled';
+  else if (invoice || shipment)          procStatus = 'partial';
   else if (dbOrder?.status === 'PROCESSING') procStatus = 'processing';
 
+  const items = (o.line_items || []).map((li: any) => ({
+    name:     li.name     || '',
+    quantity: li.quantity || 1,
+    price:    parseFloat(li.price || '0'),
+    sku:      li.sku      || '',
+  }));
+
   return {
-    id:     numId,
-    gid,
-    dbId:   dbOrder?.id ?? null,
-    name:   node.name as string,
-    createdAt: node.createdAt as string,
-    cancelled: !!(node.cancelledAt),
+    id:        numId,
+    gid:       `gid://shopify/Order/${numId}`,
+    dbId:      dbOrder?.id ?? null,
+    name:      o.name,
+    createdAt: o.created_at,
+    cancelled: !!(o.cancelled_at),
     customer: {
-      name:  addr.name  || '',
-      email: (node.email as string) || '',
-      phone: (node.phone as string) || addr.phone || '',
+      name:  addr.name  || o.customer?.first_name && `${o.customer.first_name} ${o.customer.last_name}` || '',
+      email: o.email    || '',
+      phone: o.phone    || addr.phone || '',
     },
     address: {
       address1: addr.address1 || '',
       address2: addr.address2 || '',
       city:     addr.city     || '',
-      province: addr.province || '',
+      province: addr.province || addr.province_code || '',
       zip:      addr.zip      || '',
     },
-    lineItems: items,
-    totalPrice: parseFloat(((node.totalPriceSet as Record<string, Record<string, string>>)?.shopMoney?.amount) || '0'),
-    currency:   ((node.totalPriceSet as Record<string, Record<string, string>>)?.shopMoney?.currencyCode) || 'RON',
+    lineItems:         items,
+    totalPrice:        parseFloat(o.total_price || '0'),
+    currency:          o.currency || 'RON',
     financialStatus:   fin,
     fulfillmentStatus: ful || null,
     invoice,
     shipment,
     processingStatus: procStatus,
-    processingError: dbOrder?.error ?? null,
+    processingError:  dbOrder?.error ?? null,
   };
 }
 
@@ -160,17 +172,18 @@ export async function GET(request: Request) {
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
   try {
-    const shopifyData = await fetchShopifyOrders(shopCfg.domain, shopCfg.accessToken, cursor, { search, createdMin: dateFrom, financialStatus: finStatus });
-    const nodes = shopifyData.edges.map((e: { node: unknown }) => e.node) as Record<string, unknown>[];
-    const ids   = nodes.map((n) => (n.id as string).replace(/\D/g, ''));
+    const result = await fetchShopifyOrders(
+      shopCfg.domain,
+      shopCfg.accessToken,
+      cursor,
+      { search, createdMin: dateFrom, financialStatus: finStatus },
+    );
 
+    const ids      = result.orders.map((o: any) => String(o.id));
     const enriched = await enrichWithDbState(ids, shopCfg.domain);
-    const orders   = nodes.map((n) => mapNode(n, enriched));
+    const orders   = result.orders.map((o: any) => mapOrder(o, enriched));
 
-    return NextResponse.json({
-      orders,
-      pageInfo: shopifyData.pageInfo,
-    });
+    return NextResponse.json({ orders, pageInfo: result.pageInfo });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }

@@ -46,7 +46,12 @@ export interface EnrichedOrder {
 
 export interface OrdersResponse {
   orders:   EnrichedOrder[];
-  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  pageInfo: {
+    hasNextPage: boolean;
+    endCursor:   string | null;
+    hasPrevPage: boolean;
+    prevCursor:  string | null;
+  };
 }
 
 /* Per-row local action state (not in DB, just in React state) */
