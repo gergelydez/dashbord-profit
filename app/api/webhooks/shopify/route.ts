@@ -32,7 +32,7 @@ import { SHOP_CONFIGS } from '@/lib/shops';
 const log = logger.child({ module: 'webhooks/shopify' });
 
 // Topics we actually process (others are acknowledged but ignored)
-const HANDLED_TOPICS = new Set(['orders/create', 'orders/paid', 'orders/fulfilled']);
+const HANDLED_TOPICS = new Set(['orders/create', 'orders/paid', 'orders/fulfilled', 'orders/updated', 'orders/cancelled']);
 
 export async function POST(request: Request) {
   // ── 1. Read raw body for HMAC verification ──────────────────────────────
