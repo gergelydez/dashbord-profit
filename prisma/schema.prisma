@@ -1,0 +1,268 @@
+// xConnector Prisma Schema
+// Run: prisma db push  (dev)  OR  prisma migrate deploy  (prod)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum OrderStatus {
+  PENDING           // just received, not yet processed
+  PROCESSING        // worker picked it up
+  INVOICE_CREATED   // invoice done, AWB pending
+  SHIPMENT_CREATED  // AWB done, Shopify update pending
+  FULFILLED         // all steps done
+  FAILED            // terminal failure after max retries
+  CANCELLED         // order was cancelled in Shopify
+}
+
+enum InvoiceStatus {
+  PENDING
+  CREATED
+  COLLECTED   // receipt (chitanta) also issued
+  FAILED
+  CANCELLED
+}
+
+enum ShipmentStatus {
+  PENDING
+  CREATED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED_ATTEMPT
+  RETURNED
+  FAILED
+  CANCELLED
+}
+
+enum JobStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+  DELAYED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+// One Shop = one Shopify store. Supports multi-tenancy.
+// For single-shop setups, this is populated from env vars on first webhook.
+model Shop {
+  id          String   @id @default(uuid())
+  domain      String   @unique              // e.g. "your-store.myshopify.com"
+  accessToken String                        // Shopify Admin API access token
+  active      Boolean  @default(true)
+  scopes      String   @default("")         // comma-separated OAuth scopes
+  installedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders        Order[]
+  webhookEvents WebhookEvent[]
+
+  @@index([domain])
+}
+
+// Shopify order, stored for idempotency and reprocessing
+model Order {
+  id            String      @id @default(uuid())
+  shopId        String
+  shopifyId     String      // numeric Shopify REST order ID  e.g. "5901234567890"
+  shopifyName   String      // display name e.g. "#1042"
+  shopifyGid    String?     // GID e.g. "gid://shopify/Order/5901234567890"
+
+  // Financial
+  financialStatus   String          // paid / pending / refunded / voided
+  totalPrice        Decimal         @db.Decimal(10, 2)
+  currency          String          @default("RON")
+  isPaid            Boolean         @default(false)
+  paymentGateway    String          @default("")
+
+  // Fulfillment
+  fulfillmentStatus String?         // null | partial | fulfilled
+
+  // Customer
+  customerName  String
+  customerEmail String  @default("")
+  customerPhone String  @default("")
+
+  // Shipping address (denormalized for fast access)
+  shippingAddress1 String @default("")
+  shippingAddress2 String @default("")
+  shippingCity     String @default("")
+  shippingProvince String @default("")   // Shopify province = Romanian judet
+  shippingZip      String @default("")
+  shippingCountry  String @default("RO")
+
+  // Line items stored as JSON array: [{name, sku, qty, price}]
+  lineItems     Json    @default("[]")
+
+  // Raw Shopify webhook payload (kept for replay / debugging)
+  rawPayload    Json?
+
+  // Processing state
+  status            OrderStatus @default(PENDING)
+  processingError   String?
+  invoiceCreated    Boolean     @default(false)
+  shipmentCreated   Boolean     @default(false)
+  fulfilled         Boolean     @default(false)
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  shopifyCreatedAt DateTime?
+
+  shop          Shop       @relation(fields: [shopId], references: [id])
+  invoices      Invoice[]
+  shipments     Shipment[]
+  webhookEvents WebhookEvent[]
+
+  @@unique([shopId, shopifyId])  // idempotency: one row per order per shop
+  @@index([shopId])
+  @@index([status])
+  @@index([shopifyId])
+  @@index([createdAt])
+}
+
+// SmartBill invoice record
+model Invoice {
+  id     String @id @default(uuid())
+  orderId String
+  shopId  String
+
+  // SmartBill data
+  series      String
+  number      String                    // invoice number (string, e.g. "1042")
+  invoiceUrl  String?                   // SmartBill cloud viewer URL
+
+  // PDF storage — one of: S3 key, "db:{id}" marker, or null
+  pdfStorageKey  String?               // S3 object key (preferred)
+  pdfData        Bytes?                // inline DB storage fallback (< 1 MB)
+  pdfContentType String @default("application/pdf")
+
+  // Receipt / collection
+  collected        Boolean @default(false)
+  collectionSeries String?
+  collectionNumber String?
+
+  status    InvoiceStatus @default(CREATED)
+  error     String?
+
+  // Did we write the invoice URL back to the Shopify order?
+  shopifyUpdated Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([series, number])   // idempotency: never duplicate same invoice
+  @@index([orderId])
+  @@index([shopId])
+  @@index([status])
+}
+
+// AWB (courier label) record
+model Shipment {
+  id     String @id @default(uuid())
+  orderId String
+  shopId  String
+
+  // Courier
+  courier        String  // "gls" | "sameday"
+  trackingNumber String
+  trackingUrl    String?
+
+  // Label PDF
+  labelStorageKey  String?               // S3 object key (preferred)
+  labelData        Bytes?                // inline DB storage fallback
+  labelContentType String @default("application/pdf")
+
+  // Shopify fulfillment
+  fulfillmentId  String?                 // Shopify fulfillment GID (after creation)
+  shopifyUpdated Boolean @default(false)
+
+  status ShipmentStatus @default(CREATED)
+  error  String?
+
+  // Parcel details
+  weight   Decimal? @db.Decimal(8, 3)
+  parcels  Int      @default(1)
+  codAmount Decimal? @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([orderId, courier])  // one shipment per courier per order
+  @@index([orderId])
+  @@index([shopId])
+  @@index([trackingNumber])
+  @@index([status])
+}
+
+// Every incoming Shopify webhook, for deduplication and replay
+model WebhookEvent {
+  id             String  @id @default(uuid())
+  shopifyEventId String  @unique  // X-Shopify-Webhook-Id header (idempotency key)
+  topic          String           // "orders/create", "orders/paid", etc.
+  shopDomain     String
+  shopId         String?
+  orderId        String?          // FK set after order row is created
+
+  // Processing
+  processed   Boolean   @default(false)
+  processedAt DateTime?
+  attempts    Int       @default(0)
+  lastError   String?
+
+  // Full payload preserved for replay
+  payload     Json
+
+  createdAt DateTime @default(now())
+
+  shop  Shop?  @relation(fields: [shopId], references: [id])
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@index([shopDomain])
+  @@index([processed])
+  @@index([topic])
+  @@index([createdAt])
+}
+
+// BullMQ job audit log — one row per job lifecycle
+model JobLog {
+  id      String    @id @default(uuid())
+  jobId   String    // BullMQ job ID
+  queue   String    // "order-processing" | "invoice-generation" | "shipment-generation"
+  jobName String    // human label
+  status  JobStatus @default(PENDING)
+
+  orderId String?
+  shopId  String?
+
+  attempts    Int @default(0)
+  maxAttempts Int @default(3)
+
+  error      String?
+  inputData  Json?   // sanitized (no secrets)
+  outputData Json?
+
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([orderId])
+  @@index([queue])
+  @@index([status])
+  @@index([createdAt])
+}
