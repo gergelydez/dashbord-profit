@@ -151,9 +151,9 @@ export class GlsAdapter implements CourierAdapter {
     const { street: dStreet, houseNum: dHouseNum } = parseStreet(input.recipient.address);
     const zipCleaned = cleanZip(input.recipient.zip);
 
-    // Basic validation
-    if (!zipCleaned || zipCleaned.length !== 6) {
-      throw new Error(`GLS: invalid recipient zip "${input.recipient.zip}" — must be 6 digits`);
+    // Basic validation (RO = 6 digits, HU = 4 digits, other = 4–9)
+    if (!zipCleaned || zipCleaned.length < 4 || zipCleaned.length > 9) {
+      throw new Error(`GLS: invalid recipient zip "${input.recipient.zip}" — must be 4–9 digits`);
     }
 
     const parcelPayload = {
@@ -184,7 +184,7 @@ export class GlsAdapter implements CourierAdapter {
         CountyName:     (input.recipient.county || '').slice(0, 40),
         City:           input.recipient.city.slice(0, 40),
         ZipCode:        zipCleaned,
-        CountryIsoCode: 'RO',
+        CountryIsoCode: (input.recipient.country || 'RO').toUpperCase(),
         ContactName:    input.recipient.name.slice(0, 40),
         ContactPhone:   input.recipient.phone.replace(/\D/g, '').slice(-10),
         ContactEmail:   (input.recipient.email || '').slice(0, 100),
@@ -222,7 +222,8 @@ export class GlsAdapter implements CourierAdapter {
     const awb  = (info?.ParcelNumber ?? info?.ParcelId) as string | number | undefined;
     if (!awb) throw new Error(`GLS: AWB not found in response: ${JSON.stringify(data).slice(0, 300)}`);
 
-    const awbStr = String(awb);
+    const awbStr  = String(awb);
+    const country = (input.recipient.country || 'RO').toUpperCase();
 
     // Extract label PDF (may be base64 string or array)
     let labelBase64: string | null = null;
@@ -238,8 +239,10 @@ export class GlsAdapter implements CourierAdapter {
       labelBase64 = await fetchGlsLabel(baseReq, awbStr, log);
     }
 
-    const labelPdf = labelBase64 ? Buffer.from(labelBase64, 'base64') : null;
-    const trackingUrl = `https://gls-group.eu/RO/ro/urmarire-colet?match=${awbStr}`;
+    const labelPdf    = labelBase64 ? Buffer.from(labelBase64, 'base64') : null;
+    const trackingUrl = country === 'HU'
+      ? `https://gls-group.eu/HU/hu/csomagkovetes?match=${awbStr}`
+      : `https://gls-group.eu/RO/ro/urmarire-colet?match=${awbStr}`;
 
     log.info('GLS AWB created', { awb: awbStr, hasLabel: !!labelPdf });
 

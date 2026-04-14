@@ -219,8 +219,8 @@ function validateRecipientAddress(
   if (!recipient.city || recipient.city.trim().length < 2) {
     errors.push('city is missing');
   }
-  if (!recipient.zip || !/^\d{6}$/.test(recipient.zip.replace(/\s/g, ''))) {
-    errors.push(`zip "${recipient.zip}" is invalid (must be 6 digits for Romania)`);
+  if (!recipient.zip || !/^\d{4,9}$/.test(recipient.zip.replace(/\s/g, ''))) {
+    errors.push(`zip "${recipient.zip}" is invalid (must be 4–9 digits)`);
   }
 
   if (errors.length > 0) {

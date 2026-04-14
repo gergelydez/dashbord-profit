@@ -212,20 +212,20 @@ export async function processOrder(
 async function resolveShopifyCredentials(
   order: Order,
 ): Promise<{ shopifyDomain: string; shopifyAccessToken: string }> {
-  // Try env vars first (single-shop mode)
+  // Multi-shop: look up the shop record first (ensures HU orders use HU credentials)
+  const shop = await db.shop.findUnique({ where: { id: order.shopId } });
+  if (shop) {
+    return { shopifyDomain: shop.domain, shopifyAccessToken: shop.accessToken };
+  }
+
+  // Fallback: single-shop env vars
   const envDomain = process.env.SHOPIFY_DOMAIN        || '';
   const envToken  = process.env.SHOPIFY_ACCESS_TOKEN  || '';
-
   if (envDomain && envToken) {
     return { shopifyDomain: envDomain, shopifyAccessToken: envToken };
   }
 
-  // Multi-shop: look up the shop record
-  const shop = await db.shop.findUnique({ where: { id: order.shopId } });
-  if (!shop) {
-    throw new Error(`Shop ${order.shopId} not found in database`);
-  }
-  return { shopifyDomain: shop.domain, shopifyAccessToken: shop.accessToken };
+  throw new Error(`Shop ${order.shopId} not found in database`);
 }
 
 async function finalizeJobLog(
