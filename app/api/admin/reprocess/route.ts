@@ -130,7 +130,7 @@ export async function POST(request: Request) {
       const orderId = await upsertOrderFromWebhook(
         shopId,
         event.shopDomain,
-        event.payload as WebhookOrderPayload,
+        event.payload as unknown as WebhookOrderPayload,
       );
 
       await db.webhookEvent.update({
@@ -166,7 +166,7 @@ export async function POST(request: Request) {
           const orderId = await upsertOrderFromWebhook(
             shopId,
             event.shopDomain,
-            event.payload as WebhookOrderPayload,
+            event.payload as unknown as WebhookOrderPayload,
           );
           const jobId = await enqueueOrderProcessing({ orderId, shopId });
           await db.webhookEvent.update({
