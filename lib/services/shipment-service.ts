@@ -135,7 +135,7 @@ export async function ensureShipment(
     const pdfData = isDbKey(stored.key) ? shipResult.labelPdf : undefined;
     await db.shipment.update({
       where: { id: shipment.id },
-      data:  { labelStorageKey: stored.key, pdfData },
+      data:  { labelStorageKey: stored.key, labelData: pdfData ?? undefined },
     });
   } else {
     log.warn('Courier did not return label PDF', { awb: shipResult.trackingNumber });
