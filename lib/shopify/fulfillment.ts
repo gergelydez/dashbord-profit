@@ -166,24 +166,27 @@ export async function addInvoiceToOrder(
     invoiceNumber: string;
   },
 ): Promise<void> {
+  const fullNumber = `${params.invoiceSeries}${params.invoiceNumber}`;
   await updateOrderAttributes(
     opts,
     shopifyOrderId,
     [
-      { name: 'xconnector-invoice-url', value: params.invoiceUrl },
-      { name: 'invoice-short-url',      value: params.invoiceUrl },
-      { name: 'invoice-number',         value: params.invoiceNumber },
-      { name: 'invoice-series',         value: params.invoiceSeries },
+      // These appear in Shopify Admin → order → "Additional details"
+      { name: 'Factură',             value: fullNumber },
+      { name: 'Factură URL',         value: params.invoiceUrl },
+      { name: 'invoice-number',      value: fullNumber },
+      { name: 'invoice-series',      value: params.invoiceSeries },
+      { name: 'invoice-url',         value: params.invoiceUrl },
     ],
-    ['invoiced'],
+    ['invoiced', `factura-${fullNumber}`],
   );
 }
 
 // ─── Order timeline event ─────────────────────────────────────────────────────
 
-const ADD_EVENT_MUTATION = `
-  mutation orderCreateEvent($orderId: ID!, $message: String!) {
-    orderCreateNote(input: { id: $orderId, note: $message }) {
+const ADD_COMMENT_MUTATION = `
+  mutation orderAddComment($id: ID!, $message: String!) {
+    orderCreateNote(input: { id: $id, note: $message }) {
       order { id }
       userErrors { field message }
     }
@@ -191,8 +194,10 @@ const ADD_EVENT_MUTATION = `
 `;
 
 /**
- * Post a note to the Shopify order timeline.
+ * Post a note/comment to the Shopify order timeline.
  * Non-critical: errors are logged but not thrown.
+ * Note: orderCreateNote appends to the order's note field.
+ * The invoice URL is surfaced via note_attributes (visible in Admin under "Additional details").
  */
 export async function addTimelineEvent(
   opts: ShopifyClientOptions,
@@ -201,13 +206,13 @@ export async function addTimelineEvent(
 ): Promise<void> {
   const log = logger.child({ module: 'shopify/timeline', orderGid });
   try {
-    await shopifyGraphQL(opts, ADD_EVENT_MUTATION, {
-      orderId: orderGid,
+    await shopifyGraphQL(opts, ADD_COMMENT_MUTATION, {
+      id:      orderGid,
       message,
     });
-    log.info('Timeline event added', { message: message.slice(0, 80) });
+    log.info('Order note updated', { message: message.slice(0, 80) });
   } catch (err) {
-    // Timeline events are best-effort — don't fail the pipeline
-    log.warn('Timeline event failed (non-critical)', { error: (err as Error).message });
+    // Best-effort — don't fail the invoice pipeline over this
+    log.warn('Order note update failed (non-critical)', { error: (err as Error).message });
   }
 }

@@ -1,23 +1,33 @@
 /**
  * app/api/webhooks/shopify/route.ts — Shopify webhook receiver
  *
- * Handles: orders/create, orders/paid, orders/fulfilled
+ * ╔══════════════════════════════════════════════════════════════════╗
+ * ║  FACTURARE AUTOMATĂ — REGULA STRICTĂ                            ║
+ * ║                                                                  ║
+ * ║  Factura se generează AUTOMAT doar pentru:                       ║
+ * ║    → orders/create  (comandă nouă plasată de client)             ║
+ * ║                                                                  ║
+ * ║  NICIODATĂ automat pentru:                                       ║
+ * ║    → orders/updated  (sync, editare, note_attributes etc.)      ║
+ * ║    → orders/paid     (plată ulterioară)                          ║
+ * ║    → orders/fulfilled (expediere)                                ║
+ * ║    → orders/cancelled (anulare)                                  ║
+ * ║                                                                  ║
+ * ║  Factura manuală: buton "Generează factură" din xConnector UI   ║
+ * ╚══════════════════════════════════════════════════════════════════╝
  *
  * Flow:
- *  1. Read raw body (must NOT use req.json() here — we need it for HMAC verification)
+ *  1. Read raw body (must NOT use req.json() — needed for HMAC)
  *  2. Verify HMAC signature
  *  3. Deduplicate via WebhookEvent.shopifyEventId
  *  4. Upsert Order in DB
- *  5a. ASYNC: Push to BullMQ queue (preferred for self-hosted)
- *  5b. SYNC:  Process inline (fallback for Vercel / PROCESS_INLINE=true)
- *
- * IMPORTANT: Shopify expects a 200 within 5 seconds.
- * Always return 200 quickly and process async.
+ *  5. For orders/create ONLY: auto-generate invoice (async, non-blocking)
+ *  6. Return 200 immediately (Shopify requires < 5s)
  */
 
 import { NextResponse } from 'next/server';
-
 export const dynamic = 'force-dynamic';
+
 import { verifyShopifyWebhook, extractWebhookHeaders } from '@/lib/security/webhook';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
@@ -26,13 +36,21 @@ import {
   processOrder,
   type WebhookOrderPayload,
 } from '@/lib/services/order-processor';
-import { enqueueOrderProcessing } from '@/lib/queue/queues';
 import { SHOP_CONFIGS } from '@/lib/shops';
 
 const log = logger.child({ module: 'webhooks/shopify' });
 
-// Topics we actually process (others are acknowledged but ignored)
-const HANDLED_TOPICS = new Set(['orders/create', 'orders/paid', 'orders/fulfilled', 'orders/updated', 'orders/cancelled']);
+// Topics we handle (others are acknowledged and immediately ignored)
+const HANDLED_TOPICS = new Set([
+  'orders/create',
+  'orders/paid',
+  'orders/fulfilled',
+  'orders/updated',
+  'orders/cancelled',
+]);
+
+// The ONLY topic that triggers automatic invoice generation
+const AUTO_INVOICE_TOPIC = 'orders/create';
 
 export async function POST(request: Request) {
   // ── 1. Read raw body for HMAC verification ──────────────────────────────
@@ -77,11 +95,9 @@ export async function POST(request: Request) {
       topic,
       shopDomain,
       shopId,
-      payload:        payload as object,
+      payload: payload as object,
     },
-    update: {
-      attempts: { increment: 1 },
-    },
+    update: { attempts: { increment: 1 } },
   });
 
   // ── 7. Skip non-order topics ─────────────────────────────────────────────
@@ -99,14 +115,12 @@ export async function POST(request: Request) {
   try {
     orderId = await upsertOrderFromWebhook(shopId, shopDomain, payload);
 
-    // Link WebhookEvent → Order
     await db.webhookEvent.update({
       where: { id: webhookEvent.id },
       data:  { orderId },
     });
   } catch (err) {
     log.error('Failed to upsert order', { error: (err as Error).message });
-    // Mark event as failed so it can be retried
     await db.webhookEvent.update({
       where: { id: webhookEvent.id },
       data:  { lastError: (err as Error).message },
@@ -114,39 +128,55 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'DB error' }, { status: 500 });
   }
 
-  // ── 9. Mark webhook as processed (invoice/AWB generated manually via UI) ──
-  // Auto-processing is disabled — users generate invoices and AWBs manually
-  // from the xConnector dashboard. This avoids SmartBill/courier errors on
-  // stores where credentials differ or processing is not yet configured.
+  // ── 9. Mark webhook as processed ─────────────────────────────────────────
   await db.webhookEvent.update({
     where: { id: webhookEvent.id },
     data:  { processed: true, processedAt: new Date() },
   }).catch(() => {});
 
-  // Optional queue dispatch (only if PROCESS_INLINE=true and all services configured)
-  if (process.env.PROCESS_INLINE === 'true' && process.env.SMARTBILL_EMAIL) {
-    processOrderInline(orderId, shopId, webhookEvent.id).catch((err) => {
-      log.warn('Auto-processing skipped or failed', { orderId, error: (err as Error).message });
-    });
+  // ── 10. Auto-invoice ONLY for brand new orders ────────────────────────────
+  //
+  // STRICTLY: topic must be 'orders/create' AND PROCESS_INLINE must be enabled.
+  // orders/updated, orders/paid, etc. → NO auto-invoice, ever.
+  //
+  if (
+    topic === AUTO_INVOICE_TOPIC &&
+    process.env.PROCESS_INLINE === 'true' &&
+    process.env.SMARTBILL_EMAIL
+  ) {
+    // Check that the order doesn't already have an invoice (extra safety guard)
+    const hasInvoice = await db.invoice.findFirst({ where: { orderId } });
+    if (!hasInvoice) {
+      processOrderInline(orderId, shopId, webhookEvent.id).catch((err) => {
+        log.warn('Auto-invoice failed for new order', {
+          orderId, topic, error: (err as Error).message,
+        });
+      });
+    } else {
+      log.info('Order already has invoice — skipping auto-generation', { orderId });
+    }
   }
 
-  // ── 10. Acknowledge to Shopify immediately ───────────────────────────────
-  return NextResponse.json({ ok: true, orderId });
+  // ── 11. Acknowledge to Shopify ───────────────────────────────────────────
+  return NextResponse.json({ ok: true, orderId, topic });
 }
 
-// ─── Inline processing (serverless fallback) ─────────────────────────────────
+// ─── Inline processing (called only for orders/create) ───────────────────────
 
 async function processOrderInline(
   orderId:        string,
   shopId:         string,
   webhookEventId: string,
 ): Promise<void> {
+  const logInline = log.child({ orderId, shopId });
   try {
-    await processOrder(orderId);
+    logInline.info('Auto-generating invoice for new order');
+    await processOrder(orderId, { skipShipment: true }); // invoice only, AWB = manual
     await db.webhookEvent.update({
       where: { id: webhookEventId },
       data:  { processed: true, processedAt: new Date() },
     });
+    logInline.info('Auto-invoice complete');
   } catch (err) {
     await db.webhookEvent.update({
       where: { id: webhookEventId },
@@ -158,16 +188,10 @@ async function processOrderInline(
 
 // ─── Shop resolution ──────────────────────────────────────────────────────────
 
-/**
- * Find or create a Shop row for the incoming webhook.
- * In single-shop mode, use env vars for the access token.
- * In multi-shop mode (OAuth), the shop should already exist.
- */
 async function resolveShopId(domain: string): Promise<string> {
   const existing = await db.shop.findUnique({ where: { domain } });
   if (existing) return existing.id;
 
-  // Try multi-shop config (SHOPIFY_DOMAIN_RO/HU env vars)
   const shopCfg = SHOP_CONFIGS.find(s => s.domain === domain);
   if (shopCfg) {
     const shop = await db.shop.create({
@@ -177,7 +201,6 @@ async function resolveShopId(domain: string): Promise<string> {
     return shop.id;
   }
 
-  // Fallback: single-shop mode from generic env vars
   const envDomain = process.env.SHOPIFY_DOMAIN       || '';
   const envToken  = process.env.SHOPIFY_ACCESS_TOKEN || '';
 
@@ -198,5 +221,10 @@ async function resolveShopId(domain: string): Promise<string> {
 // ─── GET — health check ───────────────────────────────────────────────────────
 
 export async function GET() {
-  return NextResponse.json({ ok: true, endpoint: 'shopify-webhooks' });
+  return NextResponse.json({
+    ok: true,
+    endpoint: 'shopify-webhooks',
+    autoInvoiceTopic: AUTO_INVOICE_TOPIC,
+    processInlineEnabled: process.env.PROCESS_INLINE === 'true',
+  });
 }
