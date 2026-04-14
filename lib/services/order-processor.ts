@@ -237,7 +237,7 @@ async function finalizeJobLog(
     where: { id },
     data: {
       status,
-      outputData,
+      outputData: outputData as object,
       completedAt: new Date(),
     },
   });
