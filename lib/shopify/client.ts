@@ -7,7 +7,7 @@
 
 import { logger } from '@/lib/logger';
 
-const API_VERSION = '2024-01';
+const API_VERSION = '2026-07';
 
 export interface ShopifyClientOptions {
   domain: string;       // e.g. "your-store.myshopify.com"

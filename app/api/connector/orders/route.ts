@@ -10,7 +10,7 @@ import { db } from '@/lib/db';
 import { buildInvoiceUrl, buildShippingLabelUrl } from '@/lib/security/tokens';
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
 
-const API_VERSION = '2024-01';
+const API_VERSION = '2026-07';
 
 /* ── Shopify REST fetch ── */
 async function fetchShopifyOrders(

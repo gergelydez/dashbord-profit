@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
   const res = await fetch(
-    `https://${shopCfg.domain}/admin/api/2024-01/orders/${shopifyOrderId}.json`,
+    `https://${shopCfg.domain}/admin/api/2026-07/orders/${shopifyOrderId}.json`,
     {
       method: 'PUT',
       headers: {

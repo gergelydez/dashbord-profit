@@ -13,7 +13,7 @@ import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
 
 async function fetchShopifyOrder(shopifyId: string, domain: string, token: string) {
   const res = await fetch(
-    `https://${domain}/admin/api/2024-01/orders/${shopifyId}.json`,
+    `https://${domain}/admin/api/2026-07/orders/${shopifyId}.json`,
     { headers: { 'X-Shopify-Access-Token': token }, cache: 'no-store' },
   );
   if (!res.ok) throw new Error(`Shopify order fetch ${res.status}`);
