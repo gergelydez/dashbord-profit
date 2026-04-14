@@ -148,8 +148,17 @@ function Skeleton({ rows = 8 }: { rows?: number }) {
 /* ═══════════════════════════════════════════════════════════
    ORDER DRAWER
 ═══════════════════════════════════════════════════════════ */
+interface AddrValidation {
+  found: boolean;
+  zipMismatch: boolean;
+  correctZip: string | null;
+  inputZip: string;
+  streetMatched: string | null;
+  scores: { street: number | null; city: number | null; county: number | null; zip: number | null } | null;
+}
+
 function OrderDrawer({
-  order, onClose, onInvoice, onShipment, actionState, courier, setCourier,
+  order, onClose, onInvoice, onShipment, actionState, courier, setCourier, shop, onAddressFixed,
 }: {
   order: EnrichedOrder;
   onClose: () => void;
@@ -158,9 +167,69 @@ function OrderDrawer({
   actionState: RowActionState;
   courier: CourierName;
   setCourier: (c: CourierName) => void;
+  shop: string;
+  onAddressFixed: (orderId: string, newZip: string) => void;
 }) {
   const fmtPrice = (n: number, cur: string) =>
     n.toLocaleString('ro-RO', { minimumFractionDigits: 2 }) + ' ' + cur;
+
+  const [validating, setValidating]     = useState(false);
+  const [validation, setValidation]     = useState<AddrValidation | null>(null);
+  const [fixingZip, setFixingZip]       = useState(false);
+  const [fixMsg, setFixMsg]             = useState<string | null>(null);
+
+  /* Parse street name vs number from address1 */
+  const parseStreet = (addr1: string) => {
+    const m = addr1.match(/^(.*?)[\s,]+(\d+\w*)$/);
+    return m ? { street: m[1].trim(), number: m[2] } : { street: addr1.trim(), number: '' };
+  };
+
+  const validateAddress = async () => {
+    setValidating(true);
+    setValidation(null);
+    setFixMsg(null);
+    try {
+      const { street, number } = parseStreet(order.address.address1);
+      const res = await fetch('/api/connector/validate-address', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          county:  order.address.province,
+          city:    order.address.city,
+          zip:     order.address.zip,
+          street,
+          number,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setValidation(json);
+    } catch (e) {
+      setFixMsg('Eroare validare: ' + (e as Error).message);
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const fixZip = async (newZip: string) => {
+    setFixingZip(true);
+    try {
+      const res = await fetch('/api/connector/update-address', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopifyOrderId: order.id, zip: newZip, shop }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setFixMsg(`✓ ZIP actualizat în Shopify: ${newZip}`);
+      setValidation(v => v ? { ...v, zipMismatch: false, inputZip: newZip } : v);
+      onAddressFixed(order.id, newZip);
+    } catch (e) {
+      setFixMsg('Eroare: ' + (e as Error).message);
+    } finally {
+      setFixingZip(false);
+    }
+  };
 
   return (
     <>
@@ -205,9 +274,49 @@ function OrderDrawer({
 
           {/* ADDRESS */}
           <div style={S.section}>
-            <div style={S.sectionHead}>📍 Adresă livrare</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={S.sectionHead}>📍 Adresă livrare</div>
+              <button style={S.btnGhost} onClick={validateAddress} disabled={validating}>
+                {validating ? <><Spin /> Validez…</> : '🔍 Validează'}
+              </button>
+            </div>
             <div style={S.fieldValue}>{order.address.address1}{order.address.address2 ? `, ${order.address.address2}` : ''}</div>
             <div style={{ ...S.fieldValue, marginTop: 4 }}>{order.address.city}, {order.address.province} {order.address.zip}</div>
+
+            {/* Validation result */}
+            {validation && (
+              <div style={{ marginTop: 12 }}>
+                {validation.zipMismatch ? (
+                  <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '10px 12px', fontSize: 13 }}>
+                    <div style={{ color: '#f59e0b', fontWeight: 600, marginBottom: 6 }}>
+                      ⚠ ZIP incorect! Introdus: <strong>{validation.inputZip}</strong> → Corect: <strong>{validation.correctZip}</strong>
+                    </div>
+                    {validation.scores && (
+                      <div style={{ fontSize: 11, color: 'var(--c-text3)', marginBottom: 8 }}>
+                        Stradă {validation.scores.street}% · Oraș {validation.scores.city}% · Județ {validation.scores.county}%
+                      </div>
+                    )}
+                    <button
+                      style={fixingZip ? { ...S.btnPrimary, opacity: 0.6 } : S.btnPrimary}
+                      onClick={() => validation.correctZip && fixZip(validation.correctZip)}
+                      disabled={fixingZip}
+                    >
+                      {fixingZip ? <><Spin /> Se actualizează…</> : `✓ Setează ZIP ${validation.correctZip} în Shopify`}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 8, padding: '8px 12px', fontSize: 13, color: '#10b981' }}>
+                    ✓ Adresă validă · ZIP {validation.inputZip} corect
+                    {validation.scores && <span style={{ fontSize: 11, opacity: 0.8 }}> · Stradă {validation.scores.street}%</span>}
+                  </div>
+                )}
+              </div>
+            )}
+            {fixMsg && (
+              <div style={{ marginTop: 8, fontSize: 12, color: fixMsg.startsWith('✓') ? '#10b981' : 'var(--c-red)' }}>
+                {fixMsg}
+              </div>
+            )}
           </div>
 
           {/* PRODUCTS */}
@@ -694,6 +803,11 @@ export default function XConnectorPage() {
           actionState={getState(drawerOrder.id)}
           courier={drawerCourier}
           setCourier={setDrawerCourier}
+          shop={activeShop}
+          onAddressFixed={(orderId, newZip) => {
+            addToast('ok', `ZIP ${newZip} actualizat în Shopify`);
+            qc.invalidateQueries({ queryKey: ['connector-orders'] });
+          }}
         />
       )}
 
