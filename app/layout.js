@@ -66,6 +66,10 @@ export default function RootLayout({ children }) {
               <span>⚡</span>
               <span>Sales AI</span>
             </a>
+            <a href="/xconnector" className="bn-item">
+              <span>🔗</span>
+              <span>Connector</span>
+            </a>
           </div>
         </nav>
       </body>
