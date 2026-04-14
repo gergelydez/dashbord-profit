@@ -13,6 +13,8 @@
  */
 
 import { NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
 import { verifyToken } from '@/lib/security/tokens';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';

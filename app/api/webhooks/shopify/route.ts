@@ -16,6 +16,8 @@
  */
 
 import { NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
 import { verifyShopifyWebhook, extractWebhookHeaders } from '@/lib/security/webhook';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';

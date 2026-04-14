@@ -24,6 +24,8 @@
  */
 
 import { NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { processOrder } from '@/lib/services/order-processor';

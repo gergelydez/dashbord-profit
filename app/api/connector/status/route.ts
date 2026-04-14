@@ -16,6 +16,8 @@
  */
 
 import { NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
 import { db } from '@/lib/db';
 import { buildInvoiceUrl, buildShippingLabelUrl } from '@/lib/security/tokens';
 import { getQueueStats } from '@/lib/queue/queues';
