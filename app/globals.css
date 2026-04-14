@@ -790,3 +790,79 @@ td { padding:9px 10px; vertical-align:middle; max-width:150px; overflow:hidden; 
 }
 .aibtn:hover { opacity:.9; }
 
+
+/* ══════════════════════════════════════
+   SIDEBAR LAYOUT (new multi-store UI)
+══════════════════════════════════════ */
+
+/* Root layout: flex row — sidebar + main */
+.root-layout {
+  display: flex;
+  min-height: 100dvh;
+}
+
+/* Desktop sidebar — fixed left column */
+.sidebar {
+  width: 240px;
+  min-width: 240px;
+  position: fixed;
+  left: 0; top: 0; bottom: 0;
+  background: var(--c-bg2);
+  border-right: 1px solid var(--c-border);
+  display: flex;
+  flex-direction: column;
+  z-index: 60;
+  overflow: hidden;
+}
+
+/* Main content area — offset by sidebar width on desktop */
+.main-area {
+  flex: 1;
+  min-width: 0;
+  margin-left: 240px;
+}
+
+/* Global mobile top bar */
+.topbar-global {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  height: 52px;
+  background: rgba(7,9,14,.96);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--c-border2);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+/* Hide mobile top bar on desktop (sidebar handles it) */
+@media (min-width: 1024px) {
+  .sidebar        { display: flex; }
+  .topbar-global  { display: none; }
+  .main-area      { margin-left: 240px; }
+  .bottom-nav     { display: none !important; }
+}
+
+/* Mobile: hide sidebar, show top bar + bottom nav */
+@media (max-width: 1023px) {
+  .sidebar     { display: none; }
+  .main-area   { margin-left: 0; }
+  .topbar-global { display: flex; }
+}
+
+/* Sidebar nav link hover */
+.sidebar a:hover {
+  background: rgba(249,115,22,0.06) !important;
+  color: var(--c-text) !important;
+}
+
+/* Ensure xConnector page fills properly with sidebar */
+@media (min-width: 1024px) {
+  /* xConnector page: sticky topbar needs top=0 (no global topbar) */
+  .xconn-topbar {
+    top: 0 !important;
+  }
+}
