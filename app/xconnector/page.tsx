@@ -303,9 +303,27 @@ function OrderDrawer({
 /* ═══════════════════════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════════════════════ */
+type ShopInfo = { key: string; label: string; flag: string };
+
 export default function XConnectorPage() {
   const qc = useQueryClient();
   const { toasts, add: addToast } = useToast();
+
+  /* ── Shop selector ── */
+  const [activeShop, setActiveShop] = useState<string>(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('xconn_shop') || 'ro';
+    return 'ro';
+  });
+  const [shops, setShops] = useState<ShopInfo[]>([]);
+  useEffect(() => {
+    fetch('/api/connector/shops').then(r => r.json()).then(d => setShops(d.shops || [])).catch(() => {});
+  }, []);
+  const switchShop = (key: string) => {
+    setActiveShop(key);
+    localStorage.setItem('xconn_shop', key);
+    setCursor(null);
+    qc.invalidateQueries({ queryKey: ['connector-orders'] });
+  };
 
   /* ── Filters ── */
   const [search, setSearch]     = useState('');
@@ -322,11 +340,11 @@ export default function XConnectorPage() {
   }, [search]);
 
   /* ── Fetch orders ── */
-  const queryKey = ['connector-orders', debouncedSearch, finFilter, dateFrom, cursor];
+  const queryKey = ['connector-orders', activeShop, debouncedSearch, finFilter, dateFrom, cursor];
   const { data, isLoading, isError, error, refetch } = useQuery<OrdersResponse>({
     queryKey,
     queryFn: async () => {
-      const p = new URLSearchParams({ search: debouncedSearch, fin: finFilter, from: dateFrom, ...(cursor ? { cursor } : {}) });
+      const p = new URLSearchParams({ shop: activeShop, search: debouncedSearch, fin: finFilter, from: dateFrom, ...(cursor ? { cursor } : {}) });
       const res = await fetch(`/api/connector/orders?${p}`);
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Eroare server'); }
       return res.json();
@@ -359,7 +377,7 @@ export default function XConnectorPage() {
       const res = await fetch('/api/connector/invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shopifyOrderId }),
+        body: JSON.stringify({ shopifyOrderId, shop: activeShop }),
       });
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || 'Eroare generare factură');
@@ -383,7 +401,7 @@ export default function XConnectorPage() {
       const res = await fetch('/api/connector/shipment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shopifyOrderId, courier }),
+        body: JSON.stringify({ shopifyOrderId, courier, shop: activeShop }),
       });
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || 'Eroare generare AWB');
@@ -455,6 +473,26 @@ export default function XConnectorPage() {
       <div style={S.topbar}>
         <div style={S.topbarRow1}>
           <h1 style={S.h1}>⚡ xConnector</h1>
+
+          {/* Shop switcher */}
+          {shops.length > 1 && (
+            <div style={{ display: 'flex', gap: 4, background: 'var(--c-bg3)', border: '1px solid var(--c-border)', borderRadius: 10, padding: 3 }}>
+              {shops.map(s => (
+                <button
+                  key={s.key}
+                  onClick={() => switchShop(s.key)}
+                  style={{
+                    background: activeShop === s.key ? 'var(--c-orange)' : 'transparent',
+                    color: activeShop === s.key ? '#fff' : 'var(--c-text2)',
+                    border: 'none', borderRadius: 8, padding: '5px 12px',
+                    fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 150ms',
+                  }}
+                >
+                  {s.flag === 'RO' ? '🇷🇴' : s.flag === 'HU' ? '🇭🇺' : '🌐'} {s.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Search */}
           <div style={S.searchWrap}>

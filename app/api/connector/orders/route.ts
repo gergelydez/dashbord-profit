@@ -7,13 +7,14 @@ export const dynamic = 'force-dynamic';
 
 import { db } from '@/lib/db';
 import { buildInvoiceUrl, buildShippingLabelUrl } from '@/lib/security/tokens';
+import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
 
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN || '';
-const SHOPIFY_TOKEN  = process.env.SHOPIFY_ACCESS_TOKEN || '';
-const API_VERSION    = '2024-01';
+const API_VERSION = '2024-01';
 
 /* ── Shopify GraphQL fetch ── */
 async function fetchShopifyOrders(
+  domain: string,
+  token: string,
   cursor: string | null,
   filters: { search?: string; createdMin?: string; financialStatus?: string },
 ) {
@@ -44,9 +45,9 @@ async function fetchShopifyOrders(
     }
   }`;
 
-  const res = await fetch(`https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/graphql.json`, {
+  const res = await fetch(`https://${domain}/admin/api/${API_VERSION}/graphql.json`, {
     method: 'POST',
-    headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN, 'Content-Type': 'application/json' },
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),
     cache: 'no-store',
   });
@@ -57,10 +58,10 @@ async function fetchShopifyOrders(
 }
 
 /* ── Enrich with DB state ── */
-async function enrichWithDbState(shopifyIds: string[]) {
+async function enrichWithDbState(shopifyIds: string[], domain: string) {
   if (!shopifyIds.length) return { invoices: {}, shipments: {}, orders: {} };
 
-  const shop = await db.shop.findFirst({ where: { domain: SHOPIFY_DOMAIN } });
+  const shop = await db.shop.findFirst({ where: { domain } });
   if (!shop) return { invoices: {}, shipments: {}, orders: {} };
 
   const [dbOrders, invoices, shipments] = await Promise.all([
@@ -152,17 +153,18 @@ export async function GET(request: Request) {
   const finStatus = searchParams.get('fin')     ?? 'all';
   const dateFrom  = searchParams.get('from')    ?? new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
   const cursor    = searchParams.get('cursor')  ?? null;
+  const shopKey   = searchParams.get('shop')    ?? getDefaultShopKey();
 
-  if (!SHOPIFY_DOMAIN || !SHOPIFY_TOKEN) {
-    return NextResponse.json({ error: 'SHOPIFY_DOMAIN or SHOPIFY_ACCESS_TOKEN not set' }, { status: 500 });
-  }
+  let shopCfg;
+  try { shopCfg = getShopConfig(shopKey); }
+  catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
   try {
-    const shopifyData = await fetchShopifyOrders(cursor, { search, createdMin: dateFrom, financialStatus: finStatus });
+    const shopifyData = await fetchShopifyOrders(shopCfg.domain, shopCfg.accessToken, cursor, { search, createdMin: dateFrom, financialStatus: finStatus });
     const nodes = shopifyData.edges.map((e: { node: unknown }) => e.node) as Record<string, unknown>[];
     const ids   = nodes.map((n) => (n.id as string).replace(/\D/g, ''));
 
-    const enriched = await enrichWithDbState(ids);
+    const enriched = await enrichWithDbState(ids, shopCfg.domain);
     const orders   = nodes.map((n) => mapNode(n, enriched));
 
     return NextResponse.json({

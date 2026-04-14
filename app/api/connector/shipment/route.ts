@@ -9,14 +9,12 @@ import { db } from '@/lib/db';
 import { ensureShipment } from '@/lib/services/shipment-service';
 import { upsertOrderFromWebhook, type WebhookOrderPayload } from '@/lib/services/order-processor';
 import { buildShippingLabelUrl } from '@/lib/security/tokens';
+import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
 
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN       || '';
-const SHOPIFY_TOKEN  = process.env.SHOPIFY_ACCESS_TOKEN || '';
-
-async function fetchShopifyOrder(shopifyId: string) {
+async function fetchShopifyOrder(shopifyId: string, domain: string, token: string) {
   const res = await fetch(
-    `https://${SHOPIFY_DOMAIN}/admin/api/2024-01/orders/${shopifyId}.json`,
-    { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN }, cache: 'no-store' },
+    `https://${domain}/admin/api/2024-01/orders/${shopifyId}.json`,
+    { headers: { 'X-Shopify-Access-Token': token }, cache: 'no-store' },
   );
   if (!res.ok) throw new Error(`Shopify order fetch ${res.status}`);
   const { order } = await res.json();
@@ -28,9 +26,16 @@ export async function POST(request: Request) {
     shopifyOrderId,
     courier        = process.env.DEFAULT_COURIER || 'gls',
     courierOptions = {},
-  } = await request.json() as { shopifyOrderId: string; courier?: string; courierOptions?: Record<string, unknown> };
+    shop: shopKey  = getDefaultShopKey(),
+  } = await request.json() as { shopifyOrderId: string; courier?: string; courierOptions?: Record<string, unknown>; shop?: string };
 
   if (!shopifyOrderId) return NextResponse.json({ error: 'shopifyOrderId required' }, { status: 400 });
+
+  let shopCfg;
+  try { shopCfg = getShopConfig(shopKey); }
+  catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
+
+  const { domain: SHOPIFY_DOMAIN, accessToken: SHOPIFY_TOKEN } = shopCfg;
 
   try {
     let shop = await db.shop.findFirst({ where: { domain: SHOPIFY_DOMAIN } });
@@ -40,7 +45,7 @@ export async function POST(request: Request) {
 
     let order = await db.order.findFirst({ where: { shopId: shop.id, shopifyId: shopifyOrderId } });
     if (!order) {
-      const shopifyOrder = await fetchShopifyOrder(shopifyOrderId);
+      const shopifyOrder = await fetchShopifyOrder(shopifyOrderId, SHOPIFY_DOMAIN, SHOPIFY_TOKEN);
       const orderId = await upsertOrderFromWebhook(shop.id, SHOPIFY_DOMAIN, shopifyOrder as WebhookOrderPayload);
       order = await db.order.findUniqueOrThrow({ where: { id: orderId } });
     }
