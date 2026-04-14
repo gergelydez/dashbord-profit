@@ -71,7 +71,12 @@ async function enrichWithDbState(shopifyIds: string[], domain: string) {
   const [dbOrders, invoices, shipments] = await Promise.all([
     db.order.findMany({
       where: { shopId: shop.id, shopifyId: { in: shopifyIds } },
-      select: { id: true, shopifyId: true, status: true, processingError: true },
+      select: {
+        id: true, shopifyId: true, status: true, processingError: true,
+        customerName: true, customerEmail: true, customerPhone: true,
+        shippingAddress1: true, shippingAddress2: true,
+        shippingCity: true, shippingProvince: true, shippingZip: true,
+      },
     }),
     db.invoice.findMany({
       where: { shopId: shop.id, order: { shopifyId: { in: shopifyIds } } },
@@ -83,8 +88,17 @@ async function enrichWithDbState(shopifyIds: string[], domain: string) {
     }),
   ]);
 
-  const orderMap: Record<string, { id: string; status: string; error?: string | null }> = {};
-  for (const o of dbOrders) orderMap[o.shopifyId] = { id: o.id, status: o.status, error: o.processingError };
+  const orderMap: Record<string, {
+    id: string; status: string; error?: string | null;
+    customerName: string; customerEmail: string; customerPhone: string;
+    address1: string; address2: string; city: string; province: string; zip: string;
+  }> = {};
+  for (const o of dbOrders) orderMap[o.shopifyId] = {
+    id: o.id, status: o.status, error: o.processingError,
+    customerName: o.customerName, customerEmail: o.customerEmail, customerPhone: o.customerPhone,
+    address1: o.shippingAddress1, address2: o.shippingAddress2,
+    city: o.shippingCity, province: o.shippingProvince, zip: o.shippingZip,
+  };
 
   const invMap: Record<string, { id: string; series: string; number: string; status: string; url: string }> = {};
   for (const inv of invoices) {
@@ -141,17 +155,18 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
         || (o.customer ? `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim() : '')
         || o.billing_address?.name
         || `${o.billing_address?.first_name || ''} ${o.billing_address?.last_name || ''}`.trim()
+        || dbOrder?.customerName
         || ''
       ),
-      email: o.email || o.customer?.email || '',
-      phone: o.phone || addr.phone || o.customer?.phone || '',
+      email: o.email || o.customer?.email || dbOrder?.customerEmail || '',
+      phone: o.phone || addr.phone || o.customer?.phone || dbOrder?.customerPhone || '',
     },
     address: {
-      address1: addr.address1 || '',
-      address2: addr.address2 || '',
-      city:     addr.city     || '',
-      province: addr.province || addr.province_code || '',
-      zip:      addr.zip      || '',
+      address1: addr.address1 || dbOrder?.address1 || '',
+      address2: addr.address2 || dbOrder?.address2 || '',
+      city:     addr.city     || dbOrder?.city     || '',
+      province: addr.province || addr.province_code || dbOrder?.province || '',
+      zip:      addr.zip      || dbOrder?.zip      || '',
     },
     lineItems:         items,
     totalPrice:        parseFloat(o.total_price || '0'),
