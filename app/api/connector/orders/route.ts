@@ -135,9 +135,11 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
     createdAt: o.created_at,
     cancelled: !!(o.cancelled_at),
     customer: {
-      name:  addr.name  || o.customer?.first_name && `${o.customer.first_name} ${o.customer.last_name}` || '',
-      email: o.email    || '',
-      phone: o.phone    || addr.phone || '',
+      name:  addr.name
+          || (o.customer ? `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim() : '')
+          || (o.billing_address?.name || ''),
+      email: o.email || '',
+      phone: o.phone || addr.phone || o.customer?.phone || '',
     },
     address: {
       address1: addr.address1 || '',
