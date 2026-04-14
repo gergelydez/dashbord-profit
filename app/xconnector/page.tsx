@@ -410,6 +410,34 @@ function OrderDrawer({
 }
 
 /* ═══════════════════════════════════════════════════════════
+   SYNC BUTTON
+═══════════════════════════════════════════════════════════ */
+function SyncButton({ shop, onDone }: { shop: string; onDone: (msg: string) => void }) {
+  const [syncing, setSyncing] = useState(false);
+  const run = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch('/api/connector/sync-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop, limit: 50 }),
+      });
+      const json = await res.json();
+      onDone(json.message || 'Sync terminat');
+    } catch {
+      onDone('Eroare sync');
+    } finally {
+      setSyncing(false);
+    }
+  };
+  return (
+    <button style={S.iconBtn} onClick={run} disabled={syncing} title="Sincronizează datele clienților din Shopify">
+      {syncing ? <Spin /> : '⟳'} Sync clienți
+    </button>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════════════════════ */
 type ShopInfo = { key: string; label: string; flag: string };
@@ -639,6 +667,9 @@ export default function XConnectorPage() {
           <button style={S.iconBtn} onClick={() => refetch()}>
             {isLoading ? <Spin /> : '↻'} Refresh
           </button>
+
+          {/* Sync customer data */}
+          <SyncButton shop={activeShop} onDone={() => { addToast('ok', 'Sync trimis! Așteaptă 30s apoi Refresh.'); setTimeout(() => refetch(), 30000); }} />
         </div>
       </div>
 
