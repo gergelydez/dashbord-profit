@@ -114,27 +114,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'DB error' }, { status: 500 });
   }
 
-  // ── 9. Dispatch processing ───────────────────────────────────────────────
-  const processInline = process.env.PROCESS_INLINE === 'true';
+  // ── 9. Mark webhook as processed (invoice/AWB generated manually via UI) ──
+  // Auto-processing is disabled — users generate invoices and AWBs manually
+  // from the xConnector dashboard. This avoids SmartBill/courier errors on
+  // stores where credentials differ or processing is not yet configured.
+  await db.webhookEvent.update({
+    where: { id: webhookEvent.id },
+    data:  { processed: true, processedAt: new Date() },
+  }).catch(() => {});
 
-  if (processInline) {
-    // Serverless mode: process synchronously (best effort within timeout)
-    // Shopify gives us ~5s; we do async processing but catch errors
+  // Optional queue dispatch (only if PROCESS_INLINE=true and all services configured)
+  if (process.env.PROCESS_INLINE === 'true' && process.env.SMARTBILL_EMAIL) {
     processOrderInline(orderId, shopId, webhookEvent.id).catch((err) => {
-      log.error('Inline processing failed', { orderId, error: (err as Error).message });
+      log.warn('Auto-processing skipped or failed', { orderId, error: (err as Error).message });
     });
-  } else {
-    // Queue mode: hand off to BullMQ worker
-    try {
-      await enqueueOrderProcessing({ orderId, shopId });
-      log.info('Order enqueued for processing', { orderId });
-    } catch (err) {
-      // Queue unavailable? Fall back to inline
-      log.warn('Queue unavailable, falling back to inline processing', {
-        error: (err as Error).message,
-      });
-      processOrderInline(orderId, shopId, webhookEvent.id).catch(() => {});
-    }
   }
 
   // ── 10. Acknowledge to Shopify immediately ───────────────────────────────
