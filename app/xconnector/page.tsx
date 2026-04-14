@@ -407,7 +407,7 @@ export default function XConnectorPage() {
     setBulkLoading(true);
     addToast('info', `Generez facturi pentru ${selected.size} comenzi…`);
     let ok = 0, fail = 0;
-    for (const id of selected) {
+    for (const id of Array.from(selected)) {
       try { await invoiceMut.mutateAsync(id); ok++; } catch { fail++; }
     }
     setBulkLoading(false);
@@ -419,7 +419,7 @@ export default function XConnectorPage() {
     setBulkLoading(true);
     addToast('info', `Generez AWB-uri pentru ${selected.size} comenzi…`);
     let ok = 0, fail = 0;
-    for (const id of selected) {
+    for (const id of Array.from(selected)) {
       try { await shipmentMut.mutateAsync({ shopifyOrderId: id, courier: 'gls' }); ok++; } catch { fail++; }
     }
     setBulkLoading(false);
