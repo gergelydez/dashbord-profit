@@ -96,7 +96,7 @@ export async function GET(request: Request) {
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 function pdfResponse(buffer: Buffer, filename: string): Response {
-  return new Response(buffer, {
+  return new Response(buffer as unknown as BodyInit, {
     status: 200,
     headers: {
       'Content-Type':        'application/pdf',
