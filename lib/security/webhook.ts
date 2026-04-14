@@ -24,7 +24,7 @@ function getWebhookSecrets(): string[] {
   if (hu)      secrets.push(hu);
   if (generic) secrets.push(generic);
   // deduplicate
-  return [...new Set(secrets)];
+  return Array.from(new Set(secrets));
 }
 
 function verifyWithSecret(rawBody: Buffer, signature: string, secret: string): boolean {
