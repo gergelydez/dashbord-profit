@@ -10,42 +10,25 @@
 
 import { createHmac, timingSafeEqual } from 'crypto';
 
-const WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET || '';
-
-if (!WEBHOOK_SECRET && process.env.NODE_ENV === 'production') {
-  console.warn(
-    '[security/webhook] SHOPIFY_WEBHOOK_SECRET is not set — webhook verification disabled!',
-  );
+/**
+ * Returns all configured webhook secrets (one per shop).
+ * Tries shop-specific secrets first (SHOPIFY_WEBHOOK_SECRET_RO / _HU),
+ * then falls back to the generic SHOPIFY_WEBHOOK_SECRET.
+ */
+function getWebhookSecrets(): string[] {
+  const secrets: string[] = [];
+  const generic = process.env.SHOPIFY_WEBHOOK_SECRET || '';
+  const ro = process.env.SHOPIFY_WEBHOOK_SECRET_RO || '';
+  const hu = process.env.SHOPIFY_WEBHOOK_SECRET_HU || '';
+  if (ro)      secrets.push(ro);
+  if (hu)      secrets.push(hu);
+  if (generic) secrets.push(generic);
+  // deduplicate
+  return [...new Set(secrets)];
 }
 
-/**
- * Verify the HMAC signature on a Shopify webhook request.
- *
- * IMPORTANT: You must pass the raw request body as a Buffer (before JSON.parse).
- * Next.js App Router: use `await request.arrayBuffer()` then `Buffer.from(...)`.
- *
- * @returns true if signature is valid (or secret is not configured in dev)
- */
-export function verifyShopifyWebhook(
-  rawBody: Buffer,
-  signature: string,
-): boolean {
-  if (!WEBHOOK_SECRET) {
-    // Allow in development without secret — log a warning
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('[webhook] SHOPIFY_WEBHOOK_SECRET not set, skipping verification');
-      return true;
-    }
-    return false;
-  }
-
-  if (!signature) return false;
-
-  const computed = createHmac('sha256', WEBHOOK_SECRET)
-    .update(rawBody)
-    .digest('base64');
-
-  // Prevent timing attacks via constant-time comparison
+function verifyWithSecret(rawBody: Buffer, signature: string, secret: string): boolean {
+  const computed = createHmac('sha256', secret).update(rawBody).digest('base64');
   try {
     const a = Buffer.from(computed, 'base64');
     const b = Buffer.from(signature, 'base64');
@@ -54,6 +37,30 @@ export function verifyShopifyWebhook(
   } catch {
     return false;
   }
+}
+
+/**
+ * Verify the HMAC signature on a Shopify webhook request.
+ * Tries all configured secrets — supports multi-shop with different app secrets.
+ */
+export function verifyShopifyWebhook(
+  rawBody: Buffer,
+  signature: string,
+): boolean {
+  const secrets = getWebhookSecrets();
+
+  if (secrets.length === 0) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[webhook] No webhook secret set, skipping verification');
+      return true;
+    }
+    return false;
+  }
+
+  if (!signature) return false;
+
+  // Accept if ANY configured secret matches
+  return secrets.some(secret => verifyWithSecret(rawBody, signature, secret));
 }
 
 /**

@@ -27,6 +27,7 @@ import {
   type WebhookOrderPayload,
 } from '@/lib/services/order-processor';
 import { enqueueOrderProcessing } from '@/lib/queue/queues';
+import { SHOP_CONFIGS } from '@/lib/shops';
 
 const log = logger.child({ module: 'webhooks/shopify' });
 
@@ -173,25 +174,31 @@ async function resolveShopId(domain: string): Promise<string> {
   const existing = await db.shop.findUnique({ where: { domain } });
   if (existing) return existing.id;
 
-  // Single-shop mode: auto-create from env vars
+  // Try multi-shop config (SHOPIFY_DOMAIN_RO/HU env vars)
+  const shopCfg = SHOP_CONFIGS.find(s => s.domain === domain);
+  if (shopCfg) {
+    const shop = await db.shop.create({
+      data: { domain, accessToken: shopCfg.accessToken, active: true },
+    });
+    log.info('Auto-created shop from multi-shop config', { domain, shopId: shop.id });
+    return shop.id;
+  }
+
+  // Fallback: single-shop mode from generic env vars
   const envDomain = process.env.SHOPIFY_DOMAIN       || '';
   const envToken  = process.env.SHOPIFY_ACCESS_TOKEN || '';
 
   if (envDomain === domain && envToken) {
     const shop = await db.shop.create({
-      data: {
-        domain,
-        accessToken: envToken,
-        active:      true,
-      },
+      data: { domain, accessToken: envToken, active: true },
     });
     log.info('Auto-created shop from env vars', { domain, shopId: shop.id });
     return shop.id;
   }
 
   throw new Error(
-    `Shop "${domain}" not found. ` +
-    'Either set SHOPIFY_DOMAIN + SHOPIFY_ACCESS_TOKEN, or complete OAuth flow first.',
+    `Shop "${domain}" not found in DB or env vars. ` +
+    'Add SHOPIFY_DOMAIN_HU + SHOPIFY_ACCESS_TOKEN_HU to environment.',
   );
 }
 
