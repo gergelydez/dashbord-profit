@@ -348,7 +348,7 @@ export default function Dashboard() {
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [applyDateFilter]);
+  }, []); // applyDateFilter is stable (useCallback []) — safe to omit from deps
 
   const applyDateFilter = useCallback((ords, p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
