@@ -320,6 +320,35 @@ export default function Dashboard() {
     }
   }, []);
 
+  // ── Shop switch — reîncarcă credențialele și comenzile când se schimbă magazinul
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== 'glamx-shop') return;
+      const sk = getShopKey();
+      const t = ls.get(tokenKey(sk))  || (sk !== 'ro' ? null : ls.get('gx_t'));
+      const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
+      if (t) setToken(t); else setToken('');
+      if (d) setDomain(d);
+      const saved = ls.get(ordersKey(sk));
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          const withOv = applyTrackingOverrides(parsed);
+          setAllOrders(withOv);
+          setOrders(withOv);
+          setFiltered(withOv);
+          setConnected(true);
+          applyDateFilter(withOv, 'last_30', '', '');
+        } catch {}
+      } else {
+        // Magazin nou — fără date încă
+        setAllOrders([]); setOrders([]); setFiltered([]);
+        setConnected(false);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []); // applyDateFilter is stable (useCallback []) — safe to omit from deps
 
   const applyDateFilter = useCallback((ords, p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
@@ -334,32 +363,6 @@ export default function Dashboard() {
     setOrders(inRange);
     setRangeLabel(`${fmtD(from+'T00:00:00')} — ${fmtD(to+'T00:00:00')}`);
   }, []);
-
-  // ── Shop switch via CustomEvent (fired by TopBar / StoreSwitcher) ──────────
-  useEffect(() => {
-    const handler = (e) => {
-      const sk = e.detail; // 'ro' | 'hu'
-      const t = ls.get(tokenKey(sk))  || (sk !== 'ro' ? null : ls.get('gx_t'));
-      const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
-      if (t) setToken(t); else setToken('');
-      if (d) setDomain(d);
-      const saved = ls.get(ordersKey(sk));
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          const withOv = applyTrackingOverrides(parsed);
-          setAllOrders(withOv);
-          setConnected(true);
-          applyDateFilter(withOv, 'last_30', '', '');
-        } catch {}
-      } else {
-        setAllOrders([]); setOrders([]); setFiltered([]);
-        setConnected(false);
-      }
-    };
-    window.addEventListener('glamx:shop', handler);
-    return () => window.removeEventListener('glamx:shop', handler);
-  }, [applyDateFilter]);
 
   const applyFilters = useCallback((ords, f, q, sc, sd, cf) => {
     let result = ords.filter(o => {
@@ -1169,7 +1172,16 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
         {!connected && !loading && (
           <div className="setup">
             <h2>🔌 Conectare Shopify</h2>
-            <p>Introdu datele magazinului pentru a vedea comenzile live.</p>
+            {(() => {
+              try {
+                const s = localStorage.getItem('glamx-shop');
+                const p = s ? JSON.parse(s) : null;
+                const sk = p?.state?.currentShop || 'ro';
+                const label = sk === 'ro' ? '🇷🇴 Romania' : sk === 'hu' ? '🇭🇺 Ungaria' : sk.toUpperCase();
+                if (sk !== 'ro') return <p style={{background:'rgba(249,115,22,.1)',border:'1px solid rgba(249,115,22,.3)',borderRadius:8,padding:'8px 12px',fontSize:13,color:'#f97316',marginBottom:8}}>Magazin activ: <strong>{label}</strong> — introdu credențialele pentru acest magazin.</p>;
+              } catch {}
+              return <p>Introdu datele magazinului pentru a vedea comenzile live.</p>;
+            })()}
             <div className="info">🔒 Tokenul e trimis doar la Shopify prin serverul Next.js — fără CORS.</div>
             <label className="lbl">Domeniu magazin</label>
             <input type="text" value={domain} onChange={e=>setDomain(e.target.value)} placeholder="glamxonline.myshopify.com" />
@@ -2102,7 +2114,3 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     </>
   );
 }
-
-
-
-
