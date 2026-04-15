@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useShopStore } from '@/lib/store/shop-store';
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
@@ -327,6 +328,7 @@ function importCostsFromXLSX(file, onSuccess) {
 }
 
 export default function ProfitPage() {
+  const { currentShop: activeShop } = useShopStore();
   const [preset, setPreset] = useState('month');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -577,8 +579,7 @@ export default function ProfitPage() {
     const ssc = g('glamx_shopify_costs'); if (ssc) setShopifyCosts(JSON.parse(ssc));
     const svc = g('glamx_shopify_variant_costs'); if (svc) setShopifyVariantCosts(JSON.parse(svc));
     const ssku = g('glamx_shopify_sku_costs'); if (ssku) setShopifySkuCosts(JSON.parse(ssku));
-    const sk = getShopKey();
-    const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
+    const sord = g(ordersKey(activeShop)) || (activeShop === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
     if (sord) {
       try {
         const p = JSON.parse(sord);
@@ -587,8 +588,6 @@ export default function ProfitPage() {
         const retur   = getReturInPeriod(withOv, preset, customFrom, customTo);
         setAllShopifyOrders(withOv);
         if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
-        // Debug: log ce s-a gasit
-        console.log('[ProfitPage] Shop:', sk, 'Livrate:', livrate.length, 'Retur:', retur.length, 'Total:', withOv.length);
       } catch(e) { console.error('[ProfitPage] Load error:', e); }
     }
     fetch(COSTS_JSON_URL)
@@ -605,32 +604,14 @@ export default function ProfitPage() {
       })
       .catch(() => {});
 
-    // Shop switch listener
-    const onStorage = (e) => {
-      if (e.key !== 'glamx-shop') return;
-      const g2 = (key) => localStorage.getItem(key);
-      const sk2 = getShopKey();
-      const sord2 = g2(ordersKey(sk2));
-      if (!sord2) { setAllShopifyOrders([]); setShopifyOrders([]); setShopifyDone(false); return; }
-      try {
-        const p2 = JSON.parse(sord2);
-        const withOv2 = recomputeStatuses(applyTrackingOverrides(p2));
-        const livrate2 = getLivrateInPeriod(withOv2, preset, customFrom, customTo);
-        setAllShopifyOrders(withOv2); setShopifyOrders(livrate2); setShopifyDone(livrate2.length > 0);
-      } catch {}
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
+  // Reactive to Zustand shop switch + preset changes
   useEffect(() => {
-    if (!preset) return;
-    // Custom: nu aplica dacă nu sunt ambele date completate
     if (preset === 'custom' && (!customFrom || !customTo)) return;
     const g = (key) => localStorage.getItem(key);
-    const sk = getShopKey();
-    const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
-    if (!sord) return;
+    const sord = g(ordersKey(activeShop)) || (activeShop === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
+    if (!sord) { setAllShopifyOrders([]); setShopifyOrders([]); setShopifyDone(false); return; }
     try {
       const p = JSON.parse(sord);
       const withOv = recomputeStatuses(applyTrackingOverrides(p));
@@ -639,7 +620,7 @@ export default function ProfitPage() {
       setShopifyOrders(livrate);
       setShopifyDone(livrate.length > 0);
     } catch {}
-  }, [preset, customFrom, customTo]);
+  }, [activeShop, preset, customFrom, customTo]);
 
   const fetchShopify = async () => {
     const domain = localStorage.getItem('gx_d');

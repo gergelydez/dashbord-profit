@@ -1,5 +1,6 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useShopStore } from '@/lib/store/shop-store';
 
 const ls = {
   get: (k) => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
@@ -78,6 +79,7 @@ const PRESETS = [
 ];
 
 export default function Stats() {
+  const { currentShop: activeShop } = useShopStore();
   const [allOrders, setAllOrders] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
   const [preset, setPreset] = useState('month');
@@ -86,31 +88,30 @@ export default function Stats() {
   const [shopifyFeePercent, setShopifyFeePercent] = useState(() => parseFloat(ls.get('sp_fee_pct') || '1.9'));
   const [shopifyFeeFixed, setShopifyFeeFixed]     = useState(() => parseFloat(ls.get('sp_fee_fix') || '1.25'));
 
+  // Reload from localStorage when shop changes (reactive to Zustand)
   useEffect(() => {
-    const load = (sk) => {
-      const key = sk || getShopKey();
-      const saved = ls.get(ordersKey(key));
-      if (!saved) { setAllOrders([]); return; }
-      try {
-        const parsed = JSON.parse(saved);
-        const ts = ls.get('gx_fetch_time');
-        if (ts) setLastFetch(new Date(ts));
-        setAllOrders(applyOverrides(parsed));
-      } catch {}
-    };
+    const saved = ls.get(ordersKey(activeShop));
+    if (!saved) { setAllOrders([]); return; }
+    try {
+      const parsed = JSON.parse(saved);
+      const ts = ls.get('gx_fetch_time');
+      if (ts) setLastFetch(new Date(ts));
+      setAllOrders(applyOverrides(parsed));
+    } catch {}
+  }, [activeShop]);
 
-    load();
-
-    // Re-încarcă când Dashboard actualizează localStorage sau se schimbă magazinul
+  useEffect(() => {
+    // Re-încarcă când Dashboard scrie noi comenzi în localStorage (tracking, fetch)
     const onStorage = (e) => {
-      if (e.key === 'gx_track_ov') { load(); return; }
-      if (e.key === 'glamx-shop') { load(getShopKey()); return; }
-      // gx_orders_all sau gx_orders_all_*
-      if (e.key && (e.key === 'gx_orders_all' || e.key.startsWith('gx_orders_all_'))) load();
+      if (e.key === 'gx_track_ov' || (e.key && e.key.startsWith('gx_orders_all'))) {
+        const saved = ls.get(ordersKey(activeShop));
+        if (!saved) { setAllOrders([]); return; }
+        try { setAllOrders(applyOverrides(JSON.parse(saved))); } catch {}
+      }
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, []);
+  }, [activeShop]);
 
   const [from, to] = useMemo(() => {
     const p = PRESETS.find(p => p.id === preset);

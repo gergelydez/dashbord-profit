@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useShopStore } from '@/lib/store/shop-store';
 
 // Helper safe pentru localStorage — returnează null pe server (SSR/prerender)
 const ls = {
@@ -196,6 +197,7 @@ const fmtD = d => { if (!d) return '—'; try { const p=d.split('T')[0].split('-
 const pct = (a,b) => b ? Math.round(a/b*100) : 0;
 
 export default function Dashboard() {
+  const { currentShop: activeShop } = useShopStore();
   const [orders, setOrders]     = useState([]);
   const [filtered, setFiltered] = useState([]);
   const [loading, setLoading]   = useState(false);
@@ -320,35 +322,6 @@ export default function Dashboard() {
     }
   }, []);
 
-  // ── Shop switch — reîncarcă credențialele și comenzile când se schimbă magazinul
-  useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key !== 'glamx-shop') return;
-      const sk = getShopKey();
-      const t = ls.get(tokenKey(sk))  || (sk !== 'ro' ? null : ls.get('gx_t'));
-      const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
-      if (t) setToken(t); else setToken('');
-      if (d) setDomain(d);
-      const saved = ls.get(ordersKey(sk));
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          const withOv = applyTrackingOverrides(parsed);
-          setAllOrders(withOv);
-          setOrders(withOv);
-          setFiltered(withOv);
-          setConnected(true);
-          applyDateFilter(withOv, 'last_30', '', '');
-        } catch {}
-      } else {
-        // Magazin nou — fără date încă
-        setAllOrders([]); setOrders([]); setFiltered([]);
-        setConnected(false);
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []); // applyDateFilter is stable (useCallback []) — safe to omit from deps
 
   const applyDateFilter = useCallback((ords, p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
@@ -363,6 +336,34 @@ export default function Dashboard() {
     setOrders(inRange);
     setRangeLabel(`${fmtD(from+'T00:00:00')} — ${fmtD(to+'T00:00:00')}`);
   }, []);
+
+  // ── Zustand shop switch — reacționează direct la schimbarea magazinului activ
+  const prevShopRef = useRef(null);
+  useEffect(() => {
+    // Skip initial mount — init useEffect handles the first load
+    if (prevShopRef.current === null) { prevShopRef.current = activeShop; return; }
+    if (prevShopRef.current === activeShop) return;
+    prevShopRef.current = activeShop;
+
+    const sk = activeShop;
+    const t = ls.get(tokenKey(sk))  || (sk !== 'ro' ? null : ls.get('gx_t'));
+    const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
+    if (t) setToken(t); else setToken('');
+    if (d) setDomain(d);
+    const saved = ls.get(ordersKey(sk));
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        const withOv = applyTrackingOverrides(parsed);
+        setAllOrders(withOv);
+        setConnected(true);
+        applyDateFilter(withOv, preset, customFrom, customTo);
+      } catch {}
+    } else {
+      setAllOrders([]); setOrders([]); setFiltered([]);
+      setConnected(false);
+    }
+  }, [activeShop, applyDateFilter]);
 
   const applyFilters = useCallback((ords, f, q, sc, sd, cf) => {
     let result = ords.filter(o => {
