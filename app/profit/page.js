@@ -12,7 +12,9 @@ function getShopKey() {
     return p?.state?.currentShop || 'ro';
   } catch { return 'ro'; }
 }
-const ordersKey = (sk) => sk === 'ro' ? 'gx_orders_all' : `gx_orders_all_${sk}`;
+const ordersKey = (sk) => sk === 'ro' ? 'gx_orders_all'    : `gx_orders_all_${sk}`;
+const tokenKey  = (sk) => sk === 'ro' ? 'gx_t'             : `gx_t_${sk}`;
+const domainKey = (sk) => sk === 'ro' ? 'gx_d'             : `gx_d_${sk}`;
 
 function splitCSV(line) {
   const res = []; let cur = '', q = false;
@@ -577,8 +579,8 @@ export default function ProfitPage() {
     const ssc = g('glamx_shopify_costs'); if (ssc) setShopifyCosts(JSON.parse(ssc));
     const svc = g('glamx_shopify_variant_costs'); if (svc) setShopifyVariantCosts(JSON.parse(svc));
     const ssku = g('glamx_shopify_sku_costs'); if (ssku) setShopifySkuCosts(JSON.parse(ssku));
-    const sk0 = getShopKey();
-    const sord = g(ordersKey(sk0)) || (sk0 === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
+    const sk = getShopKey();
+    const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
     if (sord) {
       try {
         const p = JSON.parse(sord);
@@ -587,6 +589,8 @@ export default function ProfitPage() {
         const retur   = getReturInPeriod(withOv, preset, customFrom, customTo);
         setAllShopifyOrders(withOv);
         if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
+        // Debug: log ce s-a gasit
+        console.log('[ProfitPage] Shop:', sk, 'Livrate:', livrate.length, 'Retur:', retur.length, 'Total:', withOv.length);
       } catch(e) { console.error('[ProfitPage] Load error:', e); }
     }
     fetch(COSTS_JSON_URL)
@@ -603,16 +607,32 @@ export default function ProfitPage() {
       })
       .catch(() => {});
 
+    // Shop switch listener
+    const onStorage = (e) => {
+      if (e.key !== 'glamx-shop') return;
+      const g2 = (key) => localStorage.getItem(key);
+      const sk2 = getShopKey();
+      const sord2 = g2(ordersKey(sk2));
+      if (!sord2) { setAllShopifyOrders([]); setShopifyOrders([]); setShopifyDone(false); return; }
+      try {
+        const p2 = JSON.parse(sord2);
+        const withOv2 = recomputeStatuses(applyTrackingOverrides(p2));
+        const livrate2 = getLivrateInPeriod(withOv2, preset, customFrom, customTo);
+        setAllShopifyOrders(withOv2); setShopifyOrders(livrate2); setShopifyDone(livrate2.length > 0);
+      } catch {}
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
-  // Reactive to Zustand shop switch + preset changes
-  // Reload when preset/date range changes
   useEffect(() => {
+    if (!preset) return;
+    // Custom: nu aplica dacă nu sunt ambele date completate
     if (preset === 'custom' && (!customFrom || !customTo)) return;
     const g = (key) => localStorage.getItem(key);
     const sk = getShopKey();
     const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
-    if (!sord) { setAllShopifyOrders([]); setShopifyOrders([]); setShopifyDone(false); return; }
+    if (!sord) return;
     try {
       const p = JSON.parse(sord);
       const withOv = recomputeStatuses(applyTrackingOverrides(p));
@@ -623,27 +643,10 @@ export default function ProfitPage() {
     } catch {}
   }, [preset, customFrom, customTo]);
 
-  // Shop switch via CustomEvent (fired by TopBar / StoreSwitcher)
-  useEffect(() => {
-    const handler = (e) => {
-      const sk = e.detail;
-      const g = (key) => localStorage.getItem(key);
-      const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
-      if (!sord) { setAllShopifyOrders([]); setShopifyOrders([]); setShopifyDone(false); return; }
-      try {
-        const p = JSON.parse(sord);
-        const withOv = recomputeStatuses(applyTrackingOverrides(p));
-        const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
-        setAllShopifyOrders(withOv); setShopifyOrders(livrate); setShopifyDone(livrate.length > 0);
-      } catch {}
-    };
-    window.addEventListener('glamx:shop', handler);
-    return () => window.removeEventListener('glamx:shop', handler);
-  }, [preset, customFrom, customTo]);
-
   const fetchShopify = async () => {
-    const domain = localStorage.getItem('gx_d');
-    const token = localStorage.getItem('gx_t');
+    const sk = getShopKey();
+    const domain = localStorage.getItem(domainKey(sk)) || (sk === 'ro' ? localStorage.getItem('gx_d') : null);
+    const token  = localStorage.getItem(tokenKey(sk))  || (sk === 'ro' ? localStorage.getItem('gx_t') : null);
     if (!domain || !token) { alert('Conectează-te mai întâi la Shopify din pagina principală!'); return; }
     setShopifyLoading(true);
     try {
@@ -2737,5 +2740,3 @@ export default function ProfitPage() {
     </>
   );
 }
-
-
