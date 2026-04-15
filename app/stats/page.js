@@ -1,6 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { useShopStore } from '@/lib/store/shop-store';
+import { useState, useEffect, useMemo } from 'react';
 
 const ls = {
   get: (k) => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
@@ -79,7 +78,6 @@ const PRESETS = [
 ];
 
 export default function Stats() {
-  const { currentShop: activeShop } = useShopStore();
   const [allOrders, setAllOrders] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
   const [preset, setPreset] = useState('month');
@@ -88,30 +86,38 @@ export default function Stats() {
   const [shopifyFeePercent, setShopifyFeePercent] = useState(() => parseFloat(ls.get('sp_fee_pct') || '1.9'));
   const [shopifyFeeFixed, setShopifyFeeFixed]     = useState(() => parseFloat(ls.get('sp_fee_fix') || '1.25'));
 
-  // Reload from localStorage when shop changes (reactive to Zustand)
   useEffect(() => {
-    const saved = ls.get(ordersKey(activeShop));
-    if (!saved) { setAllOrders([]); return; }
-    try {
-      const parsed = JSON.parse(saved);
-      const ts = ls.get('gx_fetch_time');
-      if (ts) setLastFetch(new Date(ts));
-      setAllOrders(applyOverrides(parsed));
-    } catch {}
-  }, [activeShop]);
+    const loadForShop = (sk) => {
+      const saved = ls.get(ordersKey(sk));
+      if (!saved) { setAllOrders([]); return; }
+      try {
+        const parsed = JSON.parse(saved);
+        const ts = ls.get('gx_fetch_time');
+        if (ts) setLastFetch(new Date(ts));
+        setAllOrders(applyOverrides(parsed));
+      } catch {}
+    };
 
-  useEffect(() => {
-    // Re-încarcă când Dashboard scrie noi comenzi în localStorage (tracking, fetch)
+    // Initial load
+    loadForShop(getShopKey());
+
+    // Shop switch via CustomEvent
+    const onShopChange = (e) => loadForShop(e.detail);
+    window.addEventListener('glamx:shop', onShopChange);
+
+    // Re-încarcă când Dashboard scrie noi comenzi în localStorage
     const onStorage = (e) => {
       if (e.key === 'gx_track_ov' || (e.key && e.key.startsWith('gx_orders_all'))) {
-        const saved = ls.get(ordersKey(activeShop));
-        if (!saved) { setAllOrders([]); return; }
-        try { setAllOrders(applyOverrides(JSON.parse(saved))); } catch {}
+        loadForShop(getShopKey());
       }
     };
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [activeShop]);
+
+    return () => {
+      window.removeEventListener('glamx:shop', onShopChange);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   const [from, to] = useMemo(() => {
     const p = PRESETS.find(p => p.id === preset);

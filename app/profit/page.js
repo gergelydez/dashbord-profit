@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useShopStore } from '@/lib/store/shop-store';
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
@@ -328,7 +327,6 @@ function importCostsFromXLSX(file, onSuccess) {
 }
 
 export default function ProfitPage() {
-  const { currentShop: activeShop } = useShopStore();
   const [preset, setPreset] = useState('month');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -579,7 +577,8 @@ export default function ProfitPage() {
     const ssc = g('glamx_shopify_costs'); if (ssc) setShopifyCosts(JSON.parse(ssc));
     const svc = g('glamx_shopify_variant_costs'); if (svc) setShopifyVariantCosts(JSON.parse(svc));
     const ssku = g('glamx_shopify_sku_costs'); if (ssku) setShopifySkuCosts(JSON.parse(ssku));
-    const sord = g(ordersKey(activeShop)) || (activeShop === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
+    const sk0 = getShopKey();
+    const sord = g(ordersKey(sk0)) || (sk0 === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
     if (sord) {
       try {
         const p = JSON.parse(sord);
@@ -607,10 +606,12 @@ export default function ProfitPage() {
   }, []);
 
   // Reactive to Zustand shop switch + preset changes
+  // Reload when preset/date range changes
   useEffect(() => {
     if (preset === 'custom' && (!customFrom || !customTo)) return;
     const g = (key) => localStorage.getItem(key);
-    const sord = g(ordersKey(activeShop)) || (activeShop === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
+    const sk = getShopKey();
+    const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
     if (!sord) { setAllShopifyOrders([]); setShopifyOrders([]); setShopifyDone(false); return; }
     try {
       const p = JSON.parse(sord);
@@ -620,7 +621,25 @@ export default function ProfitPage() {
       setShopifyOrders(livrate);
       setShopifyDone(livrate.length > 0);
     } catch {}
-  }, [activeShop, preset, customFrom, customTo]);
+  }, [preset, customFrom, customTo]);
+
+  // Shop switch via CustomEvent (fired by TopBar / StoreSwitcher)
+  useEffect(() => {
+    const handler = (e) => {
+      const sk = e.detail;
+      const g = (key) => localStorage.getItem(key);
+      const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
+      if (!sord) { setAllShopifyOrders([]); setShopifyOrders([]); setShopifyDone(false); return; }
+      try {
+        const p = JSON.parse(sord);
+        const withOv = recomputeStatuses(applyTrackingOverrides(p));
+        const livrate = getLivrateInPeriod(withOv, preset, customFrom, customTo);
+        setAllShopifyOrders(withOv); setShopifyOrders(livrate); setShopifyDone(livrate.length > 0);
+      } catch {}
+    };
+    window.addEventListener('glamx:shop', handler);
+    return () => window.removeEventListener('glamx:shop', handler);
+  }, [preset, customFrom, customTo]);
 
   const fetchShopify = async () => {
     const domain = localStorage.getItem('gx_d');

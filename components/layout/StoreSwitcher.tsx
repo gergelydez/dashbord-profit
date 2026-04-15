@@ -46,6 +46,7 @@ export function SidebarStoreSwitcher() {
     setOpen(false);
     setSearch('');
     qc.invalidateQueries(); // invalidate ALL queries → auto-refetch
+    window.dispatchEvent(new CustomEvent('glamx:shop', { detail: key }));
   }
 
   if (shops.length === 0) {
@@ -129,6 +130,7 @@ export function TopBarStoreSwitcher() {
     setCurrentShop(key);
     setOpen(false);
     qc.invalidateQueries();
+    window.dispatchEvent(new CustomEvent('glamx:shop', { detail: key }));
   }
 
   if (!current || shops.length <= 1) {

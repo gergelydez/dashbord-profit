@@ -22,11 +22,8 @@ export function TopBar() {
     setCurrentShop(key);
     setOpen(false);
     qc.invalidateQueries();
-    // Trigger storage event so legacy pages pick up the change
-    window.dispatchEvent(new StorageEvent('storage', {
-      key: 'glamx-shop',
-      newValue: JSON.stringify({ state: { currentShop: key }, version: 0 }),
-    }));
+    // CustomEvent fires reliably on the same window/tab (StorageEvent does not)
+    window.dispatchEvent(new CustomEvent('glamx:shop', { detail: key }));
   }
 
   return (
