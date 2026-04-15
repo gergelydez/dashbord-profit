@@ -5,6 +5,15 @@ const ls = {
   get: (k) => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
 };
 
+function getShopKey() {
+  try {
+    const s = typeof window !== 'undefined' ? localStorage.getItem('glamx-shop') : null;
+    const p = s ? JSON.parse(s) : null;
+    return p?.state?.currentShop || 'ro';
+  } catch { return 'ro'; }
+}
+const ordersKey = (sk) => sk === 'ro' ? 'gx_orders_all' : `gx_orders_all_${sk}`;
+
 // Overrides din localStorage — sursa de adevăr, actualizată de Dashboard după GLS API
 function getLocalOverrides() {
   try { const s = localStorage.getItem('gx_track_ov'); return s ? JSON.parse(s) : {}; } catch { return {}; }
@@ -78,9 +87,10 @@ export default function Stats() {
   const [shopifyFeeFixed, setShopifyFeeFixed]     = useState(() => parseFloat(ls.get('sp_fee_fix') || '1.25'));
 
   useEffect(() => {
-    const load = () => {
-      const saved = ls.get('gx_orders_all');
-      if (!saved) return;
+    const load = (sk) => {
+      const key = sk || getShopKey();
+      const saved = ls.get(ordersKey(key));
+      if (!saved) { setAllOrders([]); return; }
       try {
         const parsed = JSON.parse(saved);
         const ts = ls.get('gx_fetch_time');
@@ -91,9 +101,12 @@ export default function Stats() {
 
     load();
 
-    // Re-încarcă când Dashboard actualizează localStorage după tracking
+    // Re-încarcă când Dashboard actualizează localStorage sau se schimbă magazinul
     const onStorage = (e) => {
-      if (e.key === 'gx_orders_all' || e.key === 'gx_track_ov') load();
+      if (e.key === 'gx_track_ov') { load(); return; }
+      if (e.key === 'glamx-shop') { load(getShopKey()); return; }
+      // gx_orders_all sau gx_orders_all_*
+      if (e.key && (e.key === 'gx_orders_all' || e.key.startsWith('gx_orders_all_'))) load();
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);

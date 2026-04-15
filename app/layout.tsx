@@ -10,6 +10,7 @@ import './globals.css';
 import { Providers } from '@/components/providers';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
+import { BottomNav } from '@/components/layout/BottomNav';
 
 export const metadata: Metadata = {
   title: 'GLAMX Dashboard',
@@ -56,34 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
 
           {/* Mobile bottom nav — hidden on desktop */}
-          <nav className="bottom-nav">
-            <div className="bottom-nav-items">
-              <a href="/" className="bn-item">
-                <span className="bn-icon">📦</span>
-                <span>Comenzi</span>
-              </a>
-              <a href="/xconnector" className="bn-item">
-                <span className="bn-icon">⚡</span>
-                <span>Connector</span>
-              </a>
-              <a href="/stats" className="bn-item">
-                <span className="bn-icon">📊</span>
-                <span>Statistici</span>
-              </a>
-              <a href="/whatsapp" className="bn-item">
-                <span className="bn-icon">📱</span>
-                <span>WhatsApp</span>
-              </a>
-              <a href="/profit" className="bn-item">
-                <span className="bn-icon">💹</span>
-                <span>Profit</span>
-              </a>
-              <a href="/sales-engine-pro" className="bn-item">
-                <span className="bn-icon">🤖</span>
-                <span>Sales AI</span>
-              </a>
-            </div>
-          </nav>
+          <BottomNav />
         </Providers>
       </body>
     </html>

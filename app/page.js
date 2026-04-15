@@ -8,6 +8,19 @@ const ls = {
   del: (k) => { try { if (typeof window !== 'undefined') localStorage.removeItem(k); } catch {} },
 };
 
+// ── MULTI-SHOP HELPERS ─────────────────────────────────────────────────────
+function getShopKey() {
+  try {
+    const s = typeof window !== 'undefined' ? localStorage.getItem('glamx-shop') : null;
+    const p = s ? JSON.parse(s) : null;
+    return p?.state?.currentShop || 'ro';
+  } catch { return 'ro'; }
+}
+// Per-shop localStorage keys — RO uses legacy keys for backward compat
+const ordersKey = (sk) => sk === 'ro' ? 'gx_orders_all'    : `gx_orders_all_${sk}`;
+const tokenKey  = (sk) => sk === 'ro' ? 'gx_t'             : `gx_t_${sk}`;
+const domainKey = (sk) => sk === 'ro' ? 'gx_d'             : `gx_d_${sk}`;
+
 const PS = 25;
 const STATUS_MAP = {
   livrat:  { label: '✅ Livrat' },
@@ -284,12 +297,13 @@ export default function Dashboard() {
   const [bgLoading, setBgLoading]   = useState(false);  // loading background
 
   useEffect(() => {
-    const t = ls.get('gx_t');
-    const d = ls.get('gx_d');
+    const sk = getShopKey();
+    const t = ls.get(tokenKey(sk))  || (sk !== 'ro' ? null : ls.get('gx_t'));
+    const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
     if (t) setToken(t);
     if (d) setDomain(d);
     setTimeout(loadSbSeries, 500);
-    const saved = ls.get('gx_orders_all') || ls.get('gx_orders_60');
+    const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -305,6 +319,36 @@ export default function Dashboard() {
       } catch {}
     }
   }, []);
+
+  // ── Shop switch — reîncarcă credențialele și comenzile când se schimbă magazinul
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== 'glamx-shop') return;
+      const sk = getShopKey();
+      const t = ls.get(tokenKey(sk))  || (sk !== 'ro' ? null : ls.get('gx_t'));
+      const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
+      if (t) setToken(t); else setToken('');
+      if (d) setDomain(d);
+      const saved = ls.get(ordersKey(sk));
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          const withOv = applyTrackingOverrides(parsed);
+          setAllOrders(withOv);
+          setOrders(withOv);
+          setFiltered(withOv);
+          setConnected(true);
+          applyDateFilter(withOv, 'last_30', '', '');
+        } catch {}
+      } else {
+        // Magazin nou — fără date încă
+        setAllOrders([]); setOrders([]); setFiltered([]);
+        setConnected(false);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [applyDateFilter]);
 
   const applyDateFilter = useCallback((ords, p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
@@ -362,8 +406,11 @@ export default function Dashboard() {
 
   const fetchOrders = async (forceMode) => {
     if (!domain || !token) { setError('Completează domeniul și tokenul!'); return; }
-    ls.set('gx_d', domain);
-    ls.set('gx_t', token);
+    const sk = getShopKey();
+    ls.set(domainKey(sk), domain);
+    ls.set(tokenKey(sk), token);
+    // Backward compat — RO credentials also saved under legacy keys
+    if (sk === 'ro') { ls.set('gx_d', domain); ls.set('gx_t', token); }
     setLoading(true); setError('');
 
     // FAZA 1: Ultimele 30 zile — rapid, eroarea e vizibilă
@@ -404,7 +451,7 @@ export default function Dashboard() {
         const toAdd = applyTrackingOverrides(midNew.filter(o => !prevIds.has(o.id)));
         if (!toAdd.length) return prev;
         const merged60 = [...prev, ...toAdd];
-        ls.set('gx_orders_all', JSON.stringify(merged60));
+        ls.set(ordersKey(getShopKey()), JSON.stringify(merged60));
         ls.set('gx_fetched_from', d60);
         return merged60;
       });
@@ -420,7 +467,7 @@ export default function Dashboard() {
           const toAdd = applyTrackingOverrides(oldOrders.filter(o => !prevIds.has(o.id)));
           if (!toAdd.length) return prev;
           const merged = [...prev, ...toAdd];
-          ls.set('gx_orders_all', JSON.stringify(merged));
+          ls.set(ordersKey(getShopKey()), JSON.stringify(merged));
           ls.set('gx_fetched_from', d365);
           return merged;
         });
@@ -628,8 +675,8 @@ export default function Dashboard() {
           email: sbEmail, token: sbToken, cif: sbCif,
           seriesName: order._seriesOverride || sbInvSeries || undefined,
           paymentSeries: sbPaySeries || undefined,
-          shopifyDomain: ls.get('gx_d') || '',
-          shopifyToken:  ls.get('gx_t') || '',
+          shopifyDomain: ls.get(domainKey(getShopKey())) || ls.get('gx_d') || '',
+          shopifyToken:  ls.get(tokenKey(getShopKey()))  || ls.get('gx_t') || '',
           order: {
             id: order.id, name: order.name, client: order.client,
             address: order.address || '', city: order.oras || '',
@@ -693,7 +740,7 @@ export default function Dashboard() {
     } catch {}
   };
 
-  const disconnect = () => { setOrders([]); setConnected(false); setError(''); ls.del('gx_t'); };
+  const disconnect = () => { setOrders([]); setConnected(false); setError(''); const sk=getShopKey(); ls.del(tokenKey(sk)); if(sk==='ro') ls.del('gx_t'); };
 
   // ── ADDRESS CORRECTION FUNCTIONS ──────────────────────────────────────
   const openAddrModal = (order) => {
@@ -752,8 +799,8 @@ export default function Dashboard() {
     setAddrModal(prev => ({ ...prev, saving: true }));
     const { order, editFields, updateCustomer } = addrModal;
     try {
-      const shopDomain = ls.get('gx_d');
-      const shopToken  = ls.get('gx_t');
+      const shopDomain = ls.get(domainKey(getShopKey())) || ls.get('gx_d');
+      const shopToken  = ls.get(tokenKey(getShopKey()))  || ls.get('gx_t');
       const res = await fetch(`https://${shopDomain}/admin/api/2024-01/orders/${order.id}.json`, {
         method: 'PUT',
         headers: { 'X-Shopify-Access-Token': shopToken, 'Content-Type': 'application/json' },
@@ -850,10 +897,9 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               : o.fulfilledAt,
           };
         });
-        // Salvăm în AMBELE cache-uri ca să persiste după refresh
+        // Salvăm în cache-ul per-shop ca să persiste după refresh
         try {
-          ls.set('gx_orders_all', JSON.stringify(updated));
-          ls.set('gx_orders_60', JSON.stringify(updated));
+          ls.set(ordersKey(getShopKey()), JSON.stringify(updated));
         } catch(e) {}
         return updated;
       });

@@ -5,6 +5,15 @@ const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFrac
 const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
 const today = new Date();
 
+function getShopKey() {
+  try {
+    const s = typeof window !== 'undefined' ? localStorage.getItem('glamx-shop') : null;
+    const p = s ? JSON.parse(s) : null;
+    return p?.state?.currentShop || 'ro';
+  } catch { return 'ro'; }
+}
+const ordersKey = (sk) => sk === 'ro' ? 'gx_orders_all' : `gx_orders_all_${sk}`;
+
 function splitCSV(line) {
   const res = []; let cur = '', q = false;
   for (const c of line) { if (c === '"') q = !q; else if ((c === ',' || c === ';') && !q) { res.push(cur); cur = ''; } else cur += c; }
@@ -568,7 +577,8 @@ export default function ProfitPage() {
     const ssc = g('glamx_shopify_costs'); if (ssc) setShopifyCosts(JSON.parse(ssc));
     const svc = g('glamx_shopify_variant_costs'); if (svc) setShopifyVariantCosts(JSON.parse(svc));
     const ssku = g('glamx_shopify_sku_costs'); if (ssku) setShopifySkuCosts(JSON.parse(ssku));
-    const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
+    const sk = getShopKey();
+    const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
     if (sord) {
       try {
         const p = JSON.parse(sord);
@@ -578,7 +588,7 @@ export default function ProfitPage() {
         setAllShopifyOrders(withOv);
         if (livrate.length > 0) { setShopifyOrders(livrate); setShopifyDone(true); }
         // Debug: log ce s-a gasit
-        console.log('[ProfitPage] Livrate:', livrate.length, 'Retur:', retur.length, 'Total:', withOv.length);
+        console.log('[ProfitPage] Shop:', sk, 'Livrate:', livrate.length, 'Retur:', retur.length, 'Total:', withOv.length);
       } catch(e) { console.error('[ProfitPage] Load error:', e); }
     }
     fetch(COSTS_JSON_URL)
@@ -594,6 +604,23 @@ export default function ProfitPage() {
         if (lastUpd) setCostsLastUpdated(lastUpd);
       })
       .catch(() => {});
+
+    // Shop switch listener
+    const onStorage = (e) => {
+      if (e.key !== 'glamx-shop') return;
+      const g2 = (key) => localStorage.getItem(key);
+      const sk2 = getShopKey();
+      const sord2 = g2(ordersKey(sk2));
+      if (!sord2) { setAllShopifyOrders([]); setShopifyOrders([]); setShopifyDone(false); return; }
+      try {
+        const p2 = JSON.parse(sord2);
+        const withOv2 = recomputeStatuses(applyTrackingOverrides(p2));
+        const livrate2 = getLivrateInPeriod(withOv2, preset, customFrom, customTo);
+        setAllShopifyOrders(withOv2); setShopifyOrders(livrate2); setShopifyDone(livrate2.length > 0);
+      } catch {}
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   useEffect(() => {
@@ -601,7 +628,8 @@ export default function ProfitPage() {
     // Custom: nu aplica dacă nu sunt ambele date completate
     if (preset === 'custom' && (!customFrom || !customTo)) return;
     const g = (key) => localStorage.getItem(key);
-    const sord = g('gx_orders_all') || g('gx_orders_60') || g('gx_orders');
+    const sk = getShopKey();
+    const sord = g(ordersKey(sk)) || (sk === 'ro' ? g('gx_orders_60') || g('gx_orders') : null);
     if (!sord) return;
     try {
       const p = JSON.parse(sord);
