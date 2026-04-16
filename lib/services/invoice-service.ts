@@ -45,7 +45,7 @@ export async function ensureInvoice(
 
   // ── Idempotency: return if invoice already exists ──────────────────────────
   const existing = await db.invoice.findFirst({
-    where: { orderId: order.id, status: { in: ['CREATED', 'COLLECTED'] } },
+    where: { orderId: order.id, shopId: order.shopId, status: { in: ['CREATED', 'COLLECTED'] } },
   });
   if (existing) {
     log.info('Invoice already exists — skipping creation', { invoiceId: existing.id });
@@ -121,6 +121,7 @@ export async function ensureInvoice(
     const collectResult = await collectInvoice(
       cfg, result.series, result.number,
       Number(order.totalPrice), order.customerName,
+      order.currency,
     );
     collected = collectResult.ok;
     await db.invoice.update({
