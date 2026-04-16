@@ -339,7 +339,7 @@ function OrderRow({ order, onAction }: { order: any; onAction: (type: string, or
   );
 }
 
-function btnStyle(bg, outline = false) {
+function btnStyle(bg: string, outline = false) {
   return {
     display: 'inline-flex', alignItems: 'center', gap: 5,
     padding: '7px 12px', borderRadius: 8, cursor: 'pointer',
