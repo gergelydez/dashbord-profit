@@ -147,7 +147,7 @@ function StatusBadge({ exists, label, type }: { exists: boolean; label: string; 
 
 // ─── Processing status dot ───────────────────────────────────────────────────
 function ProcDot({ status }: { status: string }) {
-  const cfg = {
+  const cfg: Record<string, { color: string; label: string }> = {
     fulfilled:  { color: '#22C55E', label: 'Complet' },
     partial:    { color: '#F97316', label: 'Parțial' },
     pending:    { color: '#6B7280', label: 'În așteptare' },
@@ -155,7 +155,7 @@ function ProcDot({ status }: { status: string }) {
     failed:     { color: '#EF4444', label: 'Eroare' },
     cancelled:  { color: '#6B7280', label: 'Anulat' },
   };
-  const c = cfg[status] || cfg.pending;
+  const c = cfg[status] ?? cfg.pending;
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 5,
