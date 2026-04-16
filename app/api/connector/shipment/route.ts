@@ -21,13 +21,41 @@ async function fetchShopifyOrder(shopifyId: string, domain: string, token: strin
   return order;
 }
 
+/**
+ * Wizard override fields — when the user edits the AWB form before confirming,
+ * these values are passed in and applied on top of the order data in the DB.
+ */
+interface ShipmentWizardOverrides {
+  recipientName?:    string;
+  recipientPhone?:   string;
+  recipientEmail?:   string;
+  recipientAddress?: string;
+  recipientCity?:    string;
+  recipientCounty?:  string;
+  recipientZip?:     string;
+  productName?:      string;   // AWB content / description
+  weight?:           number;
+  parcels?:          number;
+  isCOD?:            boolean;
+  codAmount?:        number;
+  notifyCustomer?:   boolean;
+  observations?:     string;
+}
+
 export async function POST(request: Request) {
   const {
     shopifyOrderId,
     courier        = process.env.DEFAULT_COURIER || 'gls',
     courierOptions = {},
     shop: shopKey  = getDefaultShopKey(),
-  } = await request.json() as { shopifyOrderId: string; courier?: string; courierOptions?: Record<string, unknown>; shop?: string };
+    overrides      = {} as ShipmentWizardOverrides,
+  } = await request.json() as {
+    shopifyOrderId: string;
+    courier?: string;
+    courierOptions?: Record<string, unknown>;
+    shop?: string;
+    overrides?: ShipmentWizardOverrides;
+  };
 
   if (!shopifyOrderId) return NextResponse.json({ error: 'shopifyOrderId required' }, { status: 400 });
 
@@ -50,7 +78,34 @@ export async function POST(request: Request) {
       order = await db.order.findUniqueOrThrow({ where: { id: orderId } });
     }
 
-    const result = await ensureShipment(order, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, courier, courierOptions);
+    // Build merged courierOptions from wizard overrides + caller-supplied options
+    const mergedCourierOptions: Record<string, unknown> = {
+      ...courierOptions,
+      ...(overrides.notifyCustomer !== undefined ? { notifyCustomer: overrides.notifyCustomer } : {}),
+      ...(overrides.observations   ? { observations: overrides.observations }   : {}),
+      ...(overrides.productName    ? { content: overrides.productName }          : {}),
+      ...(overrides.weight         !== undefined ? { weight: overrides.weight }  : {}),
+      ...(overrides.parcels        !== undefined ? { parcels: overrides.parcels }: {}),
+    };
+
+    // If wizard overrides are present, patch the order in-memory so
+    // shipment-service uses the edited values (no DB write — DB stays authoritative)
+    const effectiveOrder = overrides.recipientName || overrides.recipientAddress ? {
+      ...order,
+      customerName:      overrides.recipientName    ?? order.customerName,
+      customerPhone:     overrides.recipientPhone   ?? order.customerPhone,
+      customerEmail:     overrides.recipientEmail   ?? order.customerEmail,
+      shippingAddress1:  overrides.recipientAddress ?? order.shippingAddress1,
+      shippingCity:      overrides.recipientCity    ?? order.shippingCity,
+      shippingProvince:  overrides.recipientCounty  ?? order.shippingProvince,
+      shippingZip:       overrides.recipientZip     ?? order.shippingZip,
+      isPaid:            overrides.isCOD === false   ? true  : (overrides.isCOD === true ? false : order.isPaid),
+      totalPrice:        overrides.isCOD && overrides.codAmount !== undefined
+                           ? overrides.codAmount as unknown as typeof order.totalPrice
+                           : order.totalPrice,
+    } : order;
+
+    const result = await ensureShipment(effectiveOrder, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, courier, mergedCourierOptions);
 
     return NextResponse.json({
       ok:             true,
