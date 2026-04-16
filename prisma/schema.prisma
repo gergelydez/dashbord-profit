@@ -161,7 +161,7 @@ model Invoice {
 
   order Order @relation(fields: [orderId], references: [id])
 
-  @@unique([series, number])   // idempotency: never duplicate same invoice
+  @@unique([shopId, series, number])   // idempotency: never duplicate same invoice per shop
   @@index([orderId])
   @@index([shopId])
   @@index([status])
