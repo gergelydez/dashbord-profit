@@ -3,7 +3,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useShopStore } from '@/lib/store/shop-store';
-import type { EnrichedOrder, OrdersResponse, RowActionState, ProcessingStatus, CourierName } from './types';
+import type {
+  EnrichedOrder, OrdersResponse, RowActionState,
+  ProcessingStatus, CourierName, AwbWizardData,
+} from './types';
 
 /* ═══════════════════════════════════════════════════════════
    STYLES
@@ -49,6 +52,9 @@ const S: Record<string, React.CSSProperties> = {
   empty:       { padding: '60px 20px', textAlign: 'center' as const, color: 'var(--c-text3)' },
   spinner:     { width: 14, height: 14, border: '2px solid transparent', borderTopColor: 'currentColor', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.6s linear infinite' },
   checkbox:    { width: 15, height: 15, cursor: 'pointer', accentColor: 'var(--c-orange)' },
+  input:       { width: '100%', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: 8, padding: '7px 10px', color: 'var(--c-text)', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const },
+  inputLabel:  { fontSize: 11, color: 'var(--c-text3)', marginBottom: 4, display: 'block' },
+  stepDot:     { width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0 },
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -117,9 +123,6 @@ function Toasts({ toasts }: { toasts: Toast[] }) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SPINNER / SKELETON
-═══════════════════════════════════════════════════════════ */
 function Spin() { return <span style={S.spinner} />; }
 
 function Skeleton({ rows = 8 }: { rows?: number }) {
@@ -139,6 +142,432 @@ function Skeleton({ rows = 8 }: { rows?: number }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   INPUT FIELD helper
+═══════════════════════════════════════════════════════════ */
+function Field({
+  label, value, onChange, type = 'text', placeholder, disabled,
+}: {
+  label: string; value: string | number; onChange: (v: string) => void;
+  type?: string; placeholder?: string; disabled?: boolean;
+}) {
+  return (
+    <div>
+      <label style={S.inputLabel}>{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+        style={{ ...S.input, ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+      />
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INVOICE SECTION — handles both DB invoices and xconnector
+   note_attributes (xconnector-invoice-url etc.)
+═══════════════════════════════════════════════════════════ */
+function InvoiceSection({
+  order, actionState, onInvoice,
+}: {
+  order: EnrichedOrder;
+  actionState: RowActionState;
+  onInvoice: (id: string) => void;
+}) {
+  // Extract from DB invoice first
+  if (order.invoice) {
+    return (
+      <div style={S.section}>
+        <div style={S.sectionHead}>🧾 Factură</div>
+        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+          <div style={S.row2col}>
+            <div><div style={S.fieldLabel}>Serie/Număr</div><div style={S.fieldValue}>{order.invoice.series}{order.invoice.number}</div></div>
+            <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice.status} color="green" /></div></div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <a href={order.invoice.url} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none', width: 'fit-content' }}>
+              📥 Descarcă PDF
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Extract from Shopify note_attributes (for RO shop / xconnector legacy)
+  const attrs = order.noteAttributes ?? {};
+  const xcInvUrl      = attrs['xconnector-invoice-url']       || attrs['invoice-url']       || '';
+  const xcInvShortUrl = attrs['xconnector-invoice-short-url'] || '';
+  const xcInvNum      = attrs['invoice-number']               || attrs['Factură']            || '';
+
+  if (xcInvUrl || xcInvShortUrl) {
+    return (
+      <div style={S.section}>
+        <div style={S.sectionHead}>🧾 Factură (xConnector)</div>
+        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+          {xcInvNum && (
+            <div>
+              <div style={S.fieldLabel}>Număr factură</div>
+              <div style={S.fieldValue}>{xcInvNum}</div>
+            </div>
+          )}
+          {xcInvUrl && (
+            <div>
+              <div style={S.fieldLabel}>URL complet</div>
+              <div style={{ fontSize: 11, color: 'var(--c-text3)', wordBreak: 'break-all' as const, marginBottom: 6 }}>{xcInvUrl}</div>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {xcInvUrl && (
+              <a href={xcInvUrl} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none' }}>
+                📥 Descarcă PDF
+              </a>
+            )}
+            {xcInvShortUrl && (
+              <a href={xcInvShortUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>
+                🔗 Link scurt
+              </a>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // No invoice anywhere — show generate button
+  return (
+    <div style={S.section}>
+      <div style={S.sectionHead}>🧾 Factură</div>
+      <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+        <div style={{ fontSize: 13, color: 'var(--c-text3)' }}>Nicio factură generată.</div>
+        <button
+          style={actionState.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6 } : S.btnPrimary}
+          onClick={() => onInvoice(order.id)}
+          disabled={actionState.invoiceLoading || order.cancelled}
+        >
+          {actionState.invoiceLoading ? <><Spin /> Se generează…</> : '🧾 Generează factură'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   AWB WIZARD — multi-step modal
+═══════════════════════════════════════════════════════════ */
+type WizardStep = 1 | 2 | 3;
+
+const STEP_LABELS: Record<WizardStep, string> = {
+  1: '👤 Date client',
+  2: '📦 Colet & produs',
+  3: '🚚 Opțiuni livrare',
+};
+
+function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWizardData {
+  // Determine COD: order is COD if financialStatus is 'pending' (ramburs)
+  const isCOD = order.financialStatus === 'pending';
+  // Product name: first line item name or fallback
+  const productName = order.lineItems.length > 0
+    ? order.lineItems.map(li => li.quantity > 1 ? `${li.quantity}x ${li.name}` : li.name).join(', ')
+    : 'Colet';
+
+  return {
+    recipientName:    order.customer.name,
+    recipientPhone:   order.customer.phone,
+    recipientEmail:   order.customer.email,
+    recipientAddress: order.address.address1 + (order.address.address2 ? `, ${order.address.address2}` : ''),
+    recipientCity:    order.address.city,
+    recipientCounty:  order.address.province,
+    recipientZip:     order.address.zip,
+    productName,
+    weight:           1,
+    parcels:          1,
+    isCOD,
+    codAmount:        isCOD ? order.totalPrice : 0,
+    courier,
+    notifyCustomer:   false,
+    observations:     '',
+  };
+}
+
+function validateStep(step: WizardStep, data: AwbWizardData): string[] {
+  const errs: string[] = [];
+  if (step === 1) {
+    if (!data.recipientName.trim())    errs.push('Numele destinatarului este obligatoriu');
+    if (!data.recipientPhone.replace(/\D/g, '') || data.recipientPhone.replace(/\D/g, '').length < 9)
+      errs.push('Telefonul trebuie să aibă minim 9 cifre');
+    if (!data.recipientAddress.trim()) errs.push('Adresa este obligatorie');
+    if (!data.recipientCity.trim())    errs.push('Orașul este obligatoriu');
+    if (!data.recipientZip.trim())     errs.push('Codul poștal este obligatoriu');
+  }
+  if (step === 2) {
+    if (!data.productName.trim())      errs.push('Denumirea produsului / conținutului este obligatorie');
+    if (data.weight <= 0)              errs.push('Greutatea trebuie să fie mai mare de 0');
+    if (data.parcels < 1)              errs.push('Numărul de colete trebuie să fie minim 1');
+    if (data.isCOD && data.codAmount <= 0) errs.push('Suma ramburs trebuie să fie mai mare de 0');
+  }
+  return errs;
+}
+
+function AwbWizard({
+  order,
+  initialCourier,
+  onClose,
+  onConfirm,
+  loading,
+}: {
+  order:         EnrichedOrder;
+  initialCourier: CourierName;
+  onClose:       () => void;
+  onConfirm:     (data: AwbWizardData) => void;
+  loading:       boolean;
+}) {
+  const [step, setStep]   = useState<WizardStep>(1);
+  const [data, setData]   = useState<AwbWizardData>(() => buildDefaultWizard(order, initialCourier));
+  const [errors, setErrors] = useState<string[]>([]);
+
+  const set = (key: keyof AwbWizardData) => (val: string) => {
+    setData(p => ({ ...p, [key]: val }));
+    setErrors([]);
+  };
+  const setNum = (key: keyof AwbWizardData) => (val: string) => {
+    const n = parseFloat(val);
+    setData(p => ({ ...p, [key]: isNaN(n) ? 0 : n }));
+    setErrors([]);
+  };
+
+  const next = () => {
+    const errs = validateStep(step, data);
+    if (errs.length > 0) { setErrors(errs); return; }
+    setErrors([]);
+    setStep(s => (s < 3 ? (s + 1) as WizardStep : s));
+  };
+  const prev = () => { setErrors([]); setStep(s => (s > 1 ? (s - 1) as WizardStep : s)); };
+
+  const stepActive: React.CSSProperties  = { ...S.stepDot, background: 'var(--c-orange)', color: '#fff' };
+  const stepDone: React.CSSProperties    = { ...S.stepDot, background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.4)' };
+  const stepPending: React.CSSProperties = { ...S.stepDot, background: 'var(--c-bg3)', color: 'var(--c-text4)', border: '1px solid var(--c-border)' };
+
+  return (
+    <>
+      <div style={S.overlay} onClick={onClose} />
+      <div style={{ ...S.drawer, maxWidth: 580 }}>
+        {/* Head */}
+        <div style={S.drawerHead}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>🚚 Generare AWB — {order.name}</div>
+            <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 2 }}>Completează datele și confirmă la pasul 3</div>
+          </div>
+          <button onClick={onClose} style={{ ...S.iconBtn, padding: '6px 10px' }}>✕</button>
+        </div>
+
+        {/* Step indicator */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {([1, 2, 3] as WizardStep[]).map((s, i) => (
+            <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 8, flex: i < 2 ? 1 : undefined }}>
+              <div style={step === s ? stepActive : step > s ? stepDone : stepPending}>
+                {step > s ? '✓' : s}
+              </div>
+              <span style={{ fontSize: 12, fontWeight: step === s ? 700 : 400, color: step === s ? 'var(--c-text)' : 'var(--c-text3)', whiteSpace: 'nowrap' as const }}>
+                {STEP_LABELS[s]}
+              </span>
+              {i < 2 && <div style={{ flex: 1, height: 1, background: step > s ? 'rgba(16,185,129,0.4)' : 'var(--c-border)' }} />}
+            </div>
+          ))}
+        </div>
+
+        {/* Errors */}
+        {errors.length > 0 && (
+          <div style={{ margin: '12px 20px 0', background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 10, padding: '10px 14px' }}>
+            {errors.map((e, i) => <div key={i} style={{ fontSize: 12, color: 'var(--c-red)' }}>• {e}</div>)}
+          </div>
+        )}
+
+        {/* Step content */}
+        <div style={S.drawerBody}>
+
+          {/* ── Step 1: Client ── */}
+          {step === 1 && (
+            <>
+              <div style={S.section}>
+                <div style={S.sectionHead}>👤 Informații destinatar</div>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
+                  <Field label="Nume complet *" value={data.recipientName} onChange={set('recipientName')} placeholder="Ion Popescu" />
+                  <div style={S.row2col}>
+                    <Field label="Telefon *" value={data.recipientPhone} onChange={set('recipientPhone')} placeholder="07xxxxxxxx" type="tel" />
+                    <Field label="Email" value={data.recipientEmail} onChange={set('recipientEmail')} placeholder="client@email.com" type="email" />
+                  </div>
+                </div>
+              </div>
+              <div style={S.section}>
+                <div style={S.sectionHead}>📍 Adresă livrare</div>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
+                  <Field label="Stradă + număr *" value={data.recipientAddress} onChange={set('recipientAddress')} placeholder="Str. Exemplu nr. 10" />
+                  <div style={S.row2col}>
+                    <Field label="Oraș *" value={data.recipientCity} onChange={set('recipientCity')} placeholder="București" />
+                    <Field label="Județ" value={data.recipientCounty} onChange={set('recipientCounty')} placeholder="Ilfov" />
+                  </div>
+                  <Field label="Cod poștal *" value={data.recipientZip} onChange={set('recipientZip')} placeholder="077160" />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── Step 2: Parcel ── */}
+          {step === 2 && (
+            <>
+              <div style={S.section}>
+                <div style={S.sectionHead}>📦 Conținut colet</div>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
+                  <div>
+                    <label style={S.inputLabel}>Denumire produs / conținut AWB * <span style={{ color: 'var(--c-orange)', fontStyle: 'italic' }}>(apare pe etichetă!)</span></label>
+                    <input
+                      type="text"
+                      value={data.productName}
+                      onChange={e => { setData(p => ({ ...p, productName: e.target.value })); setErrors([]); }}
+                      placeholder="ex: Bluză damă albă, mărime M"
+                      style={S.input}
+                    />
+                    <div style={{ fontSize: 11, color: 'var(--c-text4)', marginTop: 4 }}>
+                      ℹ Acest text va apărea pe AWB la câmpul „Conținut". Editează dacă produsul are un nume diferit față de Shopify.
+                    </div>
+                  </div>
+                  <div style={S.row2col}>
+                    <Field label="Greutate (kg) *" value={data.weight} onChange={setNum('weight')} type="number" placeholder="1" />
+                    <Field label="Nr. colete *" value={data.parcels} onChange={setNum('parcels')} type="number" placeholder="1" />
+                  </div>
+                </div>
+              </div>
+              <div style={S.section}>
+                <div style={S.sectionHead}>💰 Ramburs (COD)</div>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <input
+                      type="checkbox"
+                      id="isCOD"
+                      checked={data.isCOD}
+                      onChange={e => setData(p => ({ ...p, isCOD: e.target.checked, codAmount: e.target.checked ? p.codAmount || order.totalPrice : 0 }))}
+                      style={{ width: 16, height: 16, accentColor: 'var(--c-orange)', cursor: 'pointer' }}
+                    />
+                    <label htmlFor="isCOD" style={{ fontSize: 13, cursor: 'pointer' }}>
+                      Comandă ramburs (COD) — colectare numerar la livrare
+                    </label>
+                  </div>
+                  {data.isCOD && (
+                    <Field
+                      label={`Suma de colectat (${order.currency}) *`}
+                      value={data.codAmount}
+                      onChange={setNum('codAmount')}
+                      type="number"
+                      placeholder={String(order.totalPrice)}
+                    />
+                  )}
+                </div>
+              </div>
+              {/* Products summary for reference */}
+              <div style={{ ...S.section, borderColor: 'rgba(249,115,22,0.25)', background: 'rgba(249,115,22,0.04)' }}>
+                <div style={{ fontSize: 11, color: 'var(--c-text3)', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 8 }}>
+                  📋 Produse din comandă (referință)
+                </div>
+                {order.lineItems.map((item, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', borderBottom: i < order.lineItems.length - 1 ? '1px solid var(--c-border2)' : 'none' }}>
+                    <span style={{ color: 'var(--c-text2)' }}>{item.quantity}× {item.name}</span>
+                    <span style={{ color: 'var(--c-text3)' }}>{item.sku ? `SKU: ${item.sku}` : ''}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── Step 3: Options + Confirm ── */}
+          {step === 3 && (
+            <>
+              <div style={S.section}>
+                <div style={S.sectionHead}>🚚 Curier & opțiuni</div>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
+                  <div>
+                    <label style={S.inputLabel}>Curier *</label>
+                    <select
+                      value={data.courier}
+                      onChange={e => setData(p => ({ ...p, courier: e.target.value as CourierName }))}
+                      style={{ ...S.input, cursor: 'pointer' }}
+                    >
+                      <option value="gls">GLS</option>
+                      <option value="sameday">Sameday</option>
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <input
+                      type="checkbox"
+                      id="notifyCustomer"
+                      checked={data.notifyCustomer}
+                      onChange={e => setData(p => ({ ...p, notifyCustomer: e.target.checked }))}
+                      style={{ width: 16, height: 16, accentColor: 'var(--c-orange)', cursor: 'pointer' }}
+                    />
+                    <label htmlFor="notifyCustomer" style={{ fontSize: 13, cursor: 'pointer' }}>
+                      Notifică clientul la expediere (email/SMS Shopify)
+                    </label>
+                  </div>
+                  <div>
+                    <label style={S.inputLabel}>Observații pentru curier (opțional)</label>
+                    <textarea
+                      value={data.observations}
+                      onChange={e => setData(p => ({ ...p, observations: e.target.value }))}
+                      placeholder="ex: Sună înainte de livrare, interfon 12..."
+                      rows={3}
+                      style={{ ...S.input, resize: 'vertical' as const, fontFamily: 'inherit' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary */}
+              <div style={{ ...S.section, background: 'rgba(249,115,22,0.04)', borderColor: 'rgba(249,115,22,0.3)' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--c-orange)', textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 12 }}>
+                  ✅ Sumar AWB — verifică înainte de confirmare
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', fontSize: 13 }}>
+                  <div><span style={{ color: 'var(--c-text3)' }}>Destinatar:</span> <strong>{data.recipientName}</strong></div>
+                  <div><span style={{ color: 'var(--c-text3)' }}>Telefon:</span> <strong>{data.recipientPhone}</strong></div>
+                  <div style={{ gridColumn: '1/-1' }}><span style={{ color: 'var(--c-text3)' }}>Adresă:</span> <strong>{data.recipientAddress}, {data.recipientCity} {data.recipientZip}</strong></div>
+                  <div><span style={{ color: 'var(--c-text3)' }}>Conținut:</span> <strong style={{ color: 'var(--c-orange)' }}>{data.productName}</strong></div>
+                  <div><span style={{ color: 'var(--c-text3)' }}>Greutate:</span> <strong>{data.weight} kg × {data.parcels} colet(e)</strong></div>
+                  <div><span style={{ color: 'var(--c-text3)' }}>COD:</span> <strong>{data.isCOD ? `Da — ${data.codAmount} ${order.currency}` : 'Nu (plătit online)'}</strong></div>
+                  <div><span style={{ color: 'var(--c-text3)' }}>Curier:</span> <strong style={{ textTransform: 'uppercase' as const }}>{data.courier}</strong></div>
+                </div>
+              </div>
+            </>
+          )}
+
+        </div>
+
+        {/* Footer navigation */}
+        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', gap: 10, background: 'var(--c-bg2)', position: 'sticky' as const, bottom: 0 }}>
+          <button style={S.btnGhost} onClick={step === 1 ? onClose : prev} disabled={loading}>
+            {step === 1 ? '✕ Anulează' : '← Înapoi'}
+          </button>
+          {step < 3 ? (
+            <button style={S.btnPrimary} onClick={next}>
+              Următor →
+            </button>
+          ) : (
+            <button
+              style={loading ? { ...S.btnPrimary, opacity: 0.6, fontSize: 13, padding: '8px 18px' } : { ...S.btnPrimary, fontSize: 13, padding: '8px 18px', background: '#10b981' }}
+              onClick={() => { const errs = validateStep(3, data); if (errs.length) { setErrors(errs); return; } onConfirm(data); }}
+              disabled={loading}
+            >
+              {loading ? <><Spin /> Se generează AWB…</> : '✅ Confirmă și generează AWB'}
+            </button>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
    ORDER DRAWER
 ═══════════════════════════════════════════════════════════ */
 interface AddrValidation {
@@ -148,20 +577,21 @@ interface AddrValidation {
 }
 
 function OrderDrawer({
-  order, onClose, onInvoice, onShipment, actionState, courier, setCourier, shop, onAddressFixed,
+  order, onClose, onInvoice, onShipmentWizard, actionState, shop, onAddressFixed,
 }: {
   order: EnrichedOrder; onClose: () => void;
-  onInvoice: (id: string) => void; onShipment: (id: string) => void;
-  actionState: RowActionState; courier: CourierName; setCourier: (c: CourierName) => void;
-  shop: string; onAddressFixed: (orderId: string, newZip: string) => void;
+  onInvoice: (id: string) => void;
+  onShipmentWizard: (order: EnrichedOrder) => void;
+  actionState: RowActionState; shop: string;
+  onAddressFixed: (orderId: string, newZip: string) => void;
 }) {
   const fmtPrice = (n: number, cur: string) =>
     n.toLocaleString('ro-RO', { minimumFractionDigits: 2 }) + ' ' + cur;
 
-  const [validating, setValidating] = useState(false);
-  const [validation, setValidation] = useState<AddrValidation | null>(null);
-  const [fixingZip, setFixingZip]   = useState(false);
-  const [fixMsg, setFixMsg]         = useState<string | null>(null);
+  const [validating, setValidating]   = useState(false);
+  const [validation, setValidation]   = useState<AddrValidation | null>(null);
+  const [fixingZip, setFixingZip]     = useState(false);
+  const [fixMsg, setFixMsg]           = useState<string | null>(null);
 
   const parseStreet = (addr1: string) => {
     const m = addr1.match(/^(.*?)[\s,]+(\d+\w*)$/);
@@ -293,29 +723,8 @@ function OrderDrawer({
             ))}
           </div>
 
-          {/* INVOICE */}
-          <div style={S.section}>
-            <div style={S.sectionHead}>🧾 Factură</div>
-            {order.invoice ? (
-              <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
-                <div style={S.row2col}>
-                  <div><div style={S.fieldLabel}>Serie/Număr</div><div style={S.fieldValue}>{order.invoice.series}{order.invoice.number}</div></div>
-                  <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice.status} color="green" /></div></div>
-                </div>
-                <a href={order.invoice.url} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none', width: 'fit-content' }}>
-                  📥 Descarcă PDF
-                </a>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
-                <div style={{ fontSize: 13, color: 'var(--c-text3)' }}>Nicio factură generată.</div>
-                <button style={actionState.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6 } : S.btnPrimary}
-                  onClick={() => onInvoice(order.id)} disabled={actionState.invoiceLoading || order.cancelled}>
-                  {actionState.invoiceLoading ? <><Spin /> Se generează…</> : '🧾 Generează factură'}
-                </button>
-              </div>
-            )}
-          </div>
+          {/* INVOICE — smart: shows DB invoice OR xconnector note_attributes OR generate button */}
+          <InvoiceSection order={order} actionState={actionState} onInvoice={onInvoice} />
 
           {/* AWB */}
           <div style={S.section}>
@@ -337,15 +746,17 @@ function OrderDrawer({
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
                 <div style={{ fontSize: 13, color: 'var(--c-text3)' }}>Niciun AWB generat.</div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <select value={courier} onChange={e => setCourier(e.target.value as CourierName)} style={{ ...S.select, flex: 1 }}>
-                    <option value="gls">GLS</option>
-                    <option value="sameday">Sameday</option>
-                  </select>
-                  <button style={actionState.shipmentLoading ? { ...S.btnPrimary, opacity: 0.6, flex: 2 } : { ...S.btnPrimary, flex: 2 }}
-                    onClick={() => onShipment(order.id)} disabled={actionState.shipmentLoading || order.cancelled}>
-                    {actionState.shipmentLoading ? <><Spin /> Se generează…</> : '🚚 Generează AWB'}
-                  </button>
+                <button
+                  style={actionState.shipmentLoading
+                    ? { ...S.btnPrimary, opacity: 0.6 }
+                    : S.btnPrimary}
+                  onClick={() => onShipmentWizard(order)}
+                  disabled={actionState.shipmentLoading || order.cancelled}
+                >
+                  {actionState.shipmentLoading ? <><Spin /> Se procesează…</> : '🚚 Generează AWB (wizard)'}
+                </button>
+                <div style={{ fontSize: 11, color: 'var(--c-text4)' }}>
+                  Vei putea edita toate datele înainte de confirmare.
                 </div>
               </div>
             )}
@@ -408,10 +819,9 @@ export default function XConnectorPage() {
     searchTimer.current = setTimeout(() => { setDebounced(search); setCursor(null); }, 400);
   }, [search]);
 
-  /* Reset cursor when shop changes */
   useEffect(() => { setCursor(null); setPrev([]); }, [activeShop]);
 
-  /* ── Fetch orders — key includes activeShop so switching triggers refetch ── */
+  /* ── Fetch orders ── */
   const queryKey = ['connector-orders', activeShop, debouncedSearch, finFilter, dateFrom, cursor];
   const { data, isLoading, isError, error, refetch } = useQuery<OrdersResponse>({
     queryKey,
@@ -434,7 +844,10 @@ export default function XConnectorPage() {
 
   /* ── Drawer ── */
   const [drawerOrder, setDrawerOrder] = useState<EnrichedOrder | null>(null);
-  const [drawerCourier, setDrawerCourier] = useState<CourierName>('gls');
+
+  /* ── AWB Wizard state ── */
+  const [wizardOrder, setWizardOrder]     = useState<EnrichedOrder | null>(null);
+  const [wizardLoading, setWizardLoading] = useState(false);
 
   /* ── Per-row action state ── */
   const [actionStates, setActionStates] = useState<Record<string, RowActionState>>({});
@@ -465,28 +878,64 @@ export default function XConnectorPage() {
     },
   });
 
-  /* ── Shipment mutation ── */
-  const shipmentMut = useMutation({
-    mutationFn: async ({ shopifyOrderId, courier }: { shopifyOrderId: string; courier: string }) => {
-      setAS(shopifyOrderId, { shipmentLoading: true, error: null });
+  /* ── AWB wizard confirm ── */
+  const handleWizardConfirm = async (wizData: AwbWizardData) => {
+    if (!wizardOrder) return;
+    const orderId = wizardOrder.id;
+    setWizardLoading(true);
+    setAS(orderId, { shipmentLoading: true, error: null });
+    try {
       const res = await fetch('/api/connector/shipment', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shopifyOrderId, courier, shop: activeShop }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopifyOrderId: orderId,
+          courier:        wizData.courier,
+          shop:           activeShop,
+          courierOptions: {
+            notifyCustomer: wizData.notifyCustomer,
+            observations:   wizData.observations,
+          },
+          overrides: {
+            recipientName:    wizData.recipientName,
+            recipientPhone:   wizData.recipientPhone,
+            recipientEmail:   wizData.recipientEmail,
+            recipientAddress: wizData.recipientAddress,
+            recipientCity:    wizData.recipientCity,
+            recipientCounty:  wizData.recipientCounty,
+            recipientZip:     wizData.recipientZip,
+            productName:      wizData.productName,
+            weight:           wizData.weight,
+            parcels:          wizData.parcels,
+            isCOD:            wizData.isCOD,
+            codAmount:        wizData.codAmount,
+            notifyCustomer:   wizData.notifyCustomer,
+            observations:     wizData.observations,
+          },
+        }),
       });
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || 'Eroare generare AWB');
-      return json;
-    },
-    onSuccess: (data, { shopifyOrderId }) => {
-      setAS(shopifyOrderId, { shipmentLoading: false });
-      addToast('ok', `AWB ${data.trackingNumber} generat!`);
+      addToast('ok', `AWB ${json.trackingNumber} generat cu succes!`);
+      setAS(orderId, { shipmentLoading: false });
+      setWizardOrder(null);
+      setWizardLoading(false);
+      // Close the drawer too and refresh
+      setDrawerOrder(null);
       qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
-    },
-    onError: (err: Error, { shopifyOrderId }) => {
-      setAS(shopifyOrderId, { shipmentLoading: false, error: err.message });
-      addToast('err', err.message);
-    },
-  });
+    } catch (err) {
+      const msg = (err as Error).message;
+      setAS(orderId, { shipmentLoading: false, error: msg });
+      addToast('err', msg);
+      setWizardLoading(false);
+      // Keep wizard open so user can fix
+    }
+  };
+
+  /* ── Quick AWB from table (also opens wizard) ── */
+  const openWizardForOrder = (order: EnrichedOrder) => {
+    setWizardOrder(order);
+  };
 
   /* ── Bulk actions ── */
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -501,28 +950,26 @@ export default function XConnectorPage() {
     addToast(fail === 0 ? 'ok' : 'err', `${ok} facturi generate${fail ? `, ${fail} erori` : ''}`);
     setSelected(new Set());
   };
-  const bulkShipment = async () => {
-    setBulkLoading(true);
-    addToast('info', `Generez AWB-uri pentru ${selected.size} comenzi…`);
-    let ok = 0, fail = 0;
-    for (const id of Array.from(selected)) {
-      try { await shipmentMut.mutateAsync({ shopifyOrderId: id, courier: 'gls' }); ok++; } catch { fail++; }
-    }
-    setBulkLoading(false);
-    addToast(fail === 0 ? 'ok' : 'err', `${ok} AWB-uri generate${fail ? `, ${fail} erori` : ''}`);
-    setSelected(new Set());
-  };
 
   /* ── Stats ── */
   const orders   = data?.orders ?? [];
   const statPaid = orders.filter(o => o.financialStatus === 'paid').length;
-  const statInv  = orders.filter(o => o.invoice).length;
+  const statInv  = orders.filter(o => o.invoice || o.noteAttributes?.['xconnector-invoice-url'] || o.noteAttributes?.['invoice-url']).length;
   const statShip = orders.filter(o => o.shipment).length;
   const statFail = orders.filter(o => o.processingStatus === 'failed').length;
 
-  const [tableCourier, setTableCourier] = useState<CourierName>('gls');
   const fmtPrice = (n: number, cur: string) => n.toLocaleString('ro-RO', { minimumFractionDigits: 2 }) + ' ' + cur;
   const fmtDate  = (s: string) => new Date(s).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short' });
+
+  /* Helper: resolve best invoice link for table cell */
+  const getInvoiceLink = (order: EnrichedOrder): { label: string; url: string } | null => {
+    if (order.invoice) return { label: `${order.invoice.series}${order.invoice.number}`, url: order.invoice.url };
+    const attrs = order.noteAttributes ?? {};
+    const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
+    const num = attrs['invoice-number'] || attrs['Factură'] || 'Factură';
+    if (url) return { label: num, url };
+    return null;
+  };
 
   return (
     <div style={S.page}>
@@ -530,16 +977,14 @@ export default function XConnectorPage() {
         @keyframes spin  { to { transform: rotate(360deg); } }
         @keyframes pulse { 0%,100%{opacity:.6} 50%{opacity:1} }
         tr:hover td { background: rgba(255,255,255,0.02) !important; }
+        select option { background: var(--c-bg2); }
       `}</style>
 
       {/* ── TOP BAR ── */}
       <div style={S.topbar} className="xconn-topbar">
         <div style={S.topbarRow1}>
-          <h1 style={S.h1}>
-            ⚡ xConnector
-          </h1>
+          <h1 style={S.h1}>⚡ xConnector</h1>
 
-          {/* Current store badge — shows globally selected store */}
           {currentShopInfo && (
             <div style={S.shopBadge}>
               <span>{FLAG[currentShopInfo.flag?.toUpperCase()] ?? '🌐'}</span>
@@ -547,13 +992,11 @@ export default function XConnectorPage() {
             </div>
           )}
 
-          {/* Search */}
           <div style={S.searchWrap}>
             <span style={S.searchIcon}>🔍</span>
             <input style={S.searchInput} placeholder="Caută comandă, client…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
 
-          {/* Filters */}
           <select value={finFilter} onChange={e => { setFinFilter(e.target.value); setCursor(null); }} style={S.select}>
             <option value="all">Toate</option>
             <option value="paid">Plătit</option>
@@ -562,11 +1005,6 @@ export default function XConnectorPage() {
           </select>
 
           <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setCursor(null); }} style={S.select} />
-
-          <select value={tableCourier} onChange={e => setTableCourier(e.target.value as CourierName)} style={S.select}>
-            <option value="gls">GLS</option>
-            <option value="sameday">Sameday</option>
-          </select>
 
           <button style={S.iconBtn} onClick={() => refetch()}>
             {isLoading ? <Spin /> : '↻'} Refresh
@@ -590,7 +1028,6 @@ export default function XConnectorPage() {
         <div style={S.bulkBar}>
           <span style={S.bulkLabel}>✓ {selected.size} selectate</span>
           <button style={S.btnPrimary} onClick={bulkInvoice} disabled={bulkLoading}>{bulkLoading ? <Spin /> : '🧾'} Facturi</button>
-          <button style={S.btnGhost}   onClick={bulkShipment} disabled={bulkLoading}>{bulkLoading ? <Spin /> : '🚚'} AWB-uri</button>
           <button style={S.btnDisabled} onClick={() => setSelected(new Set())}>✕ Deselectează</button>
         </div>
       )}
@@ -630,8 +1067,9 @@ export default function XConnectorPage() {
               </td></tr>
             ) : orders.map(order => {
               const as = getState(order.id);
+              const invLink = getInvoiceLink(order);
               return (
-                <tr key={order.id} onClick={() => { setDrawerOrder(order); setDrawerCourier('gls'); }} style={{ cursor: 'pointer' }}>
+                <tr key={order.id} onClick={() => setDrawerOrder(order)} style={{ cursor: 'pointer' }}>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
                     <input type="checkbox" style={S.checkbox} checked={selected.has(order.id)} onChange={() => toggleSelect(order.id)} />
                   </td>
@@ -651,14 +1089,23 @@ export default function XConnectorPage() {
                   <td style={S.td}>{finBadge(order.financialStatus)}</td>
                   <td style={S.td}>{fulBadge(order.fulfillmentStatus)}</td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
-                    {order.invoice ? (
-                      <a href={order.invoice.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 11 }}>
-                        📥 {order.invoice.series}{order.invoice.number}
+                    {invLink ? (
+                      <a
+                        href={invLink.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 11 }}
+                        title={invLink.url}
+                      >
+                        📥 {invLink.label}
                       </a>
                     ) : (
-                      <button style={as.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6, fontSize: 11 } : { ...S.btnPrimary, fontSize: 11 }}
+                      <button
+                        style={as.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6, fontSize: 11 } : { ...S.btnPrimary, fontSize: 11 }}
                         disabled={as.invoiceLoading || order.cancelled}
-                        onClick={e => { e.stopPropagation(); invoiceMut.mutate(order.id); }}>
+                        onClick={e => { e.stopPropagation(); invoiceMut.mutate(order.id); }}
+                      >
                         {as.invoiceLoading ? <Spin /> : '🧾'} Factură
                       </button>
                     )}
@@ -669,9 +1116,11 @@ export default function XConnectorPage() {
                         🖨 {order.shipment.tracking.slice(-8)}
                       </a>
                     ) : (
-                      <button style={as.shipmentLoading ? { ...S.btnGhost, opacity: 0.6, fontSize: 11 } : { ...S.btnGhost, fontSize: 11 }}
+                      <button
+                        style={as.shipmentLoading ? { ...S.btnGhost, opacity: 0.6, fontSize: 11 } : { ...S.btnGhost, fontSize: 11 }}
                         disabled={as.shipmentLoading || order.cancelled}
-                        onClick={e => { e.stopPropagation(); shipmentMut.mutate({ shopifyOrderId: order.id, courier: tableCourier }); }}>
+                        onClick={e => { e.stopPropagation(); openWizardForOrder(order); }}
+                      >
                         {as.shipmentLoading ? <Spin /> : '🚚'} AWB
                       </button>
                     )}
@@ -703,21 +1152,30 @@ export default function XConnectorPage() {
         </div>
       )}
 
-      {/* ── DRAWER ── */}
-      {drawerOrder && (
+      {/* ── ORDER DRAWER ── */}
+      {drawerOrder && !wizardOrder && (
         <OrderDrawer
           order={drawerOrder}
           onClose={() => setDrawerOrder(null)}
           onInvoice={id => invoiceMut.mutate(id)}
-          onShipment={id => shipmentMut.mutate({ shopifyOrderId: id, courier: drawerCourier })}
+          onShipmentWizard={order => { openWizardForOrder(order); }}
           actionState={getState(drawerOrder.id)}
-          courier={drawerCourier}
-          setCourier={setDrawerCourier}
           shop={activeShop}
           onAddressFixed={(orderId, newZip) => {
             addToast('ok', `ZIP ${newZip} actualizat în Shopify`);
             qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
           }}
+        />
+      )}
+
+      {/* ── AWB WIZARD ── */}
+      {wizardOrder && (
+        <AwbWizard
+          order={wizardOrder}
+          initialCourier="gls"
+          onClose={() => { setWizardOrder(null); setWizardLoading(false); }}
+          onConfirm={handleWizardConfirm}
+          loading={wizardLoading}
         />
       )}
 
