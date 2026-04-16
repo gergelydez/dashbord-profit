@@ -266,6 +266,7 @@ export async function collectInvoice(
   invoiceNumber: string,
   value: number,
   clientName: string,
+  currency = 'RON',
 ): Promise<CollectResult> {
   const log = logger.child({ module: 'invoicing/smartbill', action: 'collect' });
   const auth = makeAuth(cfg.email, cfg.token);
@@ -284,7 +285,7 @@ export async function collectInvoice(
       saveToDb:   false,
     },
     issueDate,
-    currency:          'RON',
+    currency,
     precision:         2,
     value:             Math.round(value * 100) / 100,
     isDraft:           false,
