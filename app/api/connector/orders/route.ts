@@ -177,6 +177,11 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
     shipment,
     processingStatus: procStatus,
     processingError:  dbOrder?.error ?? null,
+    // Flatten Shopify note_attributes to key→value map
+    // This includes xconnector-invoice-url, xconnector-invoice-short-url etc.
+    noteAttributes: Object.fromEntries(
+      (o.note_attributes || []).map((a: { name: string; value: string }) => [a.name, a.value])
+    ),
   };
 }
 
