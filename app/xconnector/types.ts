@@ -24,6 +24,9 @@ export interface LineItem {
 
 export type ProcessingStatus = 'pending' | 'processing' | 'partial' | 'fulfilled' | 'failed' | 'cancelled';
 
+/** Flat key→value map from Shopify note_attributes */
+export type NoteAttributes = Record<string, string>;
+
 export interface EnrichedOrder {
   id:        string;   // Shopify numeric ID
   gid:       string;   // Shopify GID
@@ -42,6 +45,8 @@ export interface EnrichedOrder {
   shipment:  OrderShipment | null;
   processingStatus: ProcessingStatus;
   processingError:  string | null;
+  /** Raw Shopify note_attributes as key→value map (includes xconnector-invoice-url etc.) */
+  noteAttributes: NoteAttributes;
 }
 
 export interface OrdersResponse {
@@ -62,3 +67,26 @@ export interface RowActionState {
 }
 
 export type CourierName = 'gls' | 'sameday';
+
+/* ─── AWB Wizard ──────────────────────────────────────────────────────────── */
+
+export interface AwbWizardData {
+  /** Step 1 — Client */
+  recipientName:    string;
+  recipientPhone:   string;
+  recipientEmail:   string;
+  recipientAddress: string;
+  recipientCity:    string;
+  recipientCounty:  string;
+  recipientZip:     string;
+  /** Step 2 — Parcel */
+  productName:      string;   // printed on AWB content field
+  weight:           number;   // kg
+  parcels:          number;
+  isCOD:            boolean;
+  codAmount:        number;
+  /** Step 3 — Options */
+  courier:          CourierName;
+  notifyCustomer:   boolean;
+  observations:     string;   // extra notes for courier
+}
