@@ -118,7 +118,7 @@ const IconBolt = () => (
 );
 
 // ─── Badge: starea facturii / AWB ────────────────────────────────────────────
-function StatusBadge({ exists, label, type }) {
+function StatusBadge({ exists, label, type }: { exists: boolean; label: string; type: string }) {
   if (exists) {
     return (
       <span style={{
@@ -146,7 +146,7 @@ function StatusBadge({ exists, label, type }) {
 }
 
 // ─── Processing status dot ───────────────────────────────────────────────────
-function ProcDot({ status }) {
+function ProcDot({ status }: { status: string }) {
   const cfg = {
     fulfilled:  { color: '#22C55E', label: 'Complet' },
     partial:    { color: '#F97316', label: 'Parțial' },
@@ -174,7 +174,7 @@ function ProcDot({ status }) {
 }
 
 // ─── Order Row ───────────────────────────────────────────────────────────────
-function OrderRow({ order, onAction }) {
+function OrderRow({ order, onAction }: { order: any; onAction: (type: string, order: any) => void }) {
   const [expanded, setExpanded] = useState(false);
 
   const dateStr = new Date(order.createdAt).toLocaleTimeString('ro-RO', {
