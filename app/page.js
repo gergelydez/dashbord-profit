@@ -504,14 +504,20 @@ export default function Dashboard() {
   const fetchOrdersRange = async (fromDate, force=false, useServerApi=false, sk=null) => {
     let url;
     if (useServerApi && sk) {
-      url = `/api/orders-server?shop=${encodeURIComponent(sk)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
+      // DB-based fetch — datele vin deja transformate din webhook (nu mai trec prin procOrder)
+      url = `/api/orders-server?shop=${encodeURIComponent(sk)}&created_at_min=${fromDate}${force?'&force=1':''}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok || !data.orders) throw new Error(data.error || data.warning || 'Răspuns invalid');
+      // Ordinele din DB sunt deja în formatul dashboard — aplicam doar applyTrackingOverrides
+      return data.orders;
     } else {
       url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
+      return data.orders.map(procOrder);
     }
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
-    return data.orders.map(procOrder);
   };
 
   const fetchOrders = async (forceMode) => {
@@ -526,11 +532,35 @@ export default function Dashboard() {
     }
     setLoading(true); setError('');
 
-    // FAZA 1: Ultimele 30 zile — rapid, eroarea e vizibilă
+    if (useServer) {
+      // ── SERVER SHOP (HU etc.) — citim direct din DB (webhook data) ──────────
+      // DB-ul are TOATE comenzile, facem un singur fetch cu 1 an
+      try {
+        const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
+        const allFromDb = await fetchOrdersRange(d365, !!forceMode, true, sk);
+        const withOv = applyTrackingOverrides(allFromDb);
+        setAllOrders(withOv);
+        setConnected(true);
+        const now = new Date();
+        setLastFetch(now);
+        setFetchedFrom(d365);
+        ls.set(ordersKey(sk), JSON.stringify(withOv));
+        ls.set('gx_fetch_time_' + sk, now.toISOString());
+        ls.set('gx_fetched_from_' + sk, d365);
+        applyDateFilter(withOv, preset, customFrom, customTo);
+      } catch (e) {
+        setError('Eroare DB: ' + e.message);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // ── MANUAL SHOP (RO cu credențiale) — 3 faze: 30 → 60 → 365 zile ────────
     let fast = [];
     try {
       const d30 = toISO(new Date(Date.now() - 30*24*60*60*1000));
-      fast = await fetchOrdersRange(d30, !!forceMode, useServer, sk);
+      fast = await fetchOrdersRange(d30, !!forceMode, false, sk);
       const fastWithOverrides = applyTrackingOverrides(fast);
       setAllOrders(fastWithOverrides);
       setConnected(true);
@@ -544,21 +574,17 @@ export default function Dashboard() {
     } catch (e) {
       setError('Eroare: ' + e.message);
       setLoading(false);
-      return; // Oprим dacă faza 1 eșuează
+      return;
     } finally {
       setLoading(false);
     }
 
-    // FAZA 2 + 3: Background silențios — erorile nu se afișează
-    // IMPORTANT: mergem comenzile noi cu ts-urile DIN STATE (nu din Shopify raw)
-    // ca să nu pierdem rezultatele de tracking GLS
     setBgLoading(true);
     try {
       const d60 = toISO(new Date(Date.now() - 60*24*60*60*1000));
-      const mid = await fetchOrdersRange(d60, false, useServer, sk);
+      const mid = await fetchOrdersRange(d60, false, false, sk);
       const fastIds = new Set(fast.map(o => o.id));
       const midNew = mid.filter(o => !fastIds.has(o.id));
-      // Adăugăm doar comenzile NOI (nu suprascrim cele existente din state)
       setAllOrders(prev => {
         const prevIds = new Set(prev.map(o => o.id));
         const toAdd = applyTrackingOverrides(midNew.filter(o => !prevIds.has(o.id)));
@@ -570,11 +596,9 @@ export default function Dashboard() {
       });
       setFetchedFrom(d60);
 
-      // Faza 3 — 1 an
       try {
         const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
-        const oldOrders = await fetchOrdersRange(d365, false, useServer, sk);
-        // Adăugăm doar comenzile NOI — nu atingem cele existente cu ts corect
+        const oldOrders = await fetchOrdersRange(d365, false, false, sk);
         setAllOrders(prev => {
           const prevIds = new Set(prev.map(o => o.id));
           const toAdd = applyTrackingOverrides(oldOrders.filter(o => !prevIds.has(o.id)));
