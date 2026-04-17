@@ -36,10 +36,11 @@ const S: Record<string, React.CSSProperties> = {
   btnGhost:    { background: 'var(--c-surface)', color: 'var(--c-text2)', border: '1px solid var(--c-border)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4 },
   btnDisabled: { background: 'var(--c-bg3)', color: 'var(--c-text4)', border: '1px solid var(--c-border2)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'not-allowed', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5 },
   btnDanger:   { background: 'rgba(244,63,94,0.12)', color: 'var(--c-red)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const },
-  overlay:     { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100 },
-  drawer:      { position: 'fixed' as const, right: 0, top: 0, bottom: 0, width: '100%', maxWidth: 560, background: 'var(--c-bg2)', borderLeft: '1px solid var(--c-border)', zIndex: 101, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, paddingBottom: 'env(safe-area-inset-bottom)' },
-  drawerHead:  { padding: '16px 20px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky' as const, top: 0, background: 'var(--c-bg2)', zIndex: 1 },
+  overlay:     { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', backdropFilter: 'blur(4px)' },
+  drawer:      { position: 'relative' as const, width: '100%', maxWidth: 560, maxHeight: 'calc(95vh - env(safe-area-inset-bottom))', background: 'var(--c-bg2)', border: '1px solid var(--c-border)', borderRadius: '14px 14px 0 0', zIndex: 101, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const },
+  drawerHead:  { padding: '16px 20px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky' as const, top: 0, background: 'var(--c-bg2)', zIndex: 10 },
   drawerBody:  { padding: '20px', flex: 1, display: 'flex', flexDirection: 'column' as const, gap: 18 },
+  drawerFoot:  { padding: '12px 20px', paddingBottom: 'max(12px, env(safe-area-inset-bottom))', borderTop: '1px solid var(--c-border)', display: 'flex', justifyContent: 'flex-end', gap: 10, background: 'var(--c-bg2)', position: 'sticky' as const, bottom: 0, zIndex: 10 },
   section:     { background: 'var(--c-bg3)', border: '1px solid var(--c-border)', borderRadius: 12, padding: '14px 16px' },
   sectionHead: { fontSize: 11, fontWeight: 700, color: 'var(--c-text3)', textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 12 },
   row2col:     { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
@@ -178,56 +179,30 @@ function InvoiceSection({
   actionState: RowActionState;
   onInvoice: (id: string) => void;
 }) {
-  // Extract from DB invoice first
-  if (order.invoice) {
+  // Extract from Shopify note_attributes (for RO shop / xconnector legacy)
+  const attrs = order.noteAttributes ?? {};
+  const xcInvUrl      = attrs['xconnector-invoice-url']       || attrs['invoice-url']       || attrs['Factură URL'] || '';
+  const xcInvShortUrl = attrs['xconnector-invoice-short-url'] || '';
+  const xcInvNum      = attrs['invoice-number'] || attrs['Factură'] || '';
+
+  if (order.invoice || xcInvUrl || xcInvShortUrl) {
+    const invUrl  = order.invoice?.url  || xcInvUrl  || xcInvShortUrl;
+    const invNum  = order.invoice ? `${order.invoice.series}${order.invoice.number}` : (xcInvNum || 'Factură');
     return (
       <div style={S.section}>
         <div style={S.sectionHead}>🧾 Factură</div>
         <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
           <div style={S.row2col}>
-            <div><div style={S.fieldLabel}>Serie/Număr</div><div style={S.fieldValue}>{order.invoice.series}{order.invoice.number}</div></div>
-            <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice.status} color="green" /></div></div>
+            <div><div style={S.fieldLabel}>Serie/Număr</div><div style={S.fieldValue}>{invNum}</div></div>
+            <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice?.status || 'generată'} color="green" /></div></div>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <a href={order.invoice.url} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none', width: 'fit-content' }}>
-              📥 Descarcă PDF
-            </a>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Extract from Shopify note_attributes (for RO shop / xconnector legacy)
-  const attrs = order.noteAttributes ?? {};
-  const xcInvUrl      = attrs['xconnector-invoice-url']       || attrs['invoice-url']       || '';
-  const xcInvShortUrl = attrs['xconnector-invoice-short-url'] || '';
-  const xcInvNum      = attrs['invoice-number']               || attrs['Factură']            || '';
-
-  if (xcInvUrl || xcInvShortUrl) {
-    return (
-      <div style={S.section}>
-        <div style={S.sectionHead}>🧾 Factură (xConnector)</div>
-        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
-          {xcInvNum && (
-            <div>
-              <div style={S.fieldLabel}>Număr factură</div>
-              <div style={S.fieldValue}>{xcInvNum}</div>
-            </div>
-          )}
-          {xcInvUrl && (
-            <div>
-              <div style={S.fieldLabel}>URL complet</div>
-              <div style={{ fontSize: 11, color: 'var(--c-text3)', wordBreak: 'break-all' as const, marginBottom: 6 }}>{xcInvUrl}</div>
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {xcInvUrl && (
-              <a href={xcInvUrl} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
+            {invUrl && (
+              <a href={invUrl} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none' }}>
                 📥 Descarcă PDF
               </a>
             )}
-            {xcInvShortUrl && (
+            {xcInvShortUrl && xcInvShortUrl !== invUrl && (
               <a href={xcInvShortUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>
                 🔗 Link scurt
               </a>
@@ -279,7 +254,7 @@ function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWiza
     recipientName:    (order.customer.name || '').trim() || 'Client',
     recipientPhone:   (order.customer.phone || '').replace(/\D/g, '').slice(-10) || '',
     recipientEmail:   order.customer.email || '',
-    recipientAddress: (order.address.address1 || '').trim() + (order.address.address2 ? `, ${order.address.address2}` : ''),
+    recipientAddress: ((order.address.address1 || '') + (order.address.address2 ? `, ${order.address.address2}` : '')).trim(),
     recipientCity:    (order.address.city || '').trim(),
     recipientCounty:  (order.address.province || '').trim(),
     recipientZip:     (order.address.zip || '').replace(/\s/g, ''),
@@ -354,8 +329,8 @@ function AwbWizard({
 
   return (
     <>
-      <div style={S.overlay} onClick={onClose} />
-      <div style={{ ...S.drawer, maxWidth: 580 }}>
+      <div style={S.overlay} className="xc-overlay" onClick={onClose} />
+      <div style={{ ...S.drawer, maxWidth: 580 }} className="xc-drawer">
         {/* Head */}
         <div style={S.drawerHead}>
           <div>
@@ -546,7 +521,7 @@ function AwbWizard({
         </div>
 
         {/* Footer navigation */}
-        <div style={{ padding: '14px 20px', paddingBottom: 'max(14px, env(safe-area-inset-bottom))', borderTop: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', gap: 10, background: 'var(--c-bg2)', position: 'sticky' as const, bottom: 0, zIndex: 20 }}>
+        <div style={S.drawerFoot}>
           <button style={S.btnGhost} onClick={step === 1 ? onClose : prev} disabled={loading}>
             {step === 1 ? '✕ Anulează' : '← Înapoi'}
           </button>
@@ -633,8 +608,8 @@ function OrderDrawer({
 
   return (
     <>
-      <div style={S.overlay} onClick={onClose} />
-      <div style={S.drawer}>
+      <div style={S.overlay} className="xc-overlay" onClick={onClose} />
+      <div style={S.drawer} className="xc-drawer">
         <div style={S.drawerHead}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700 }}>{order.name}</div>
@@ -843,11 +818,12 @@ export default function XConnectorPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shop: activeShop, autoInvoice: next }),
       });
-      if (!res.ok) throw new Error('Eroare salvare');
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error || 'Eroare salvare');
       setAutoInvoice(next);
       addToast('ok', next ? '🧾 Facturare automată ACTIVATĂ' : '⏸ Facturare automată DEZACTIVATĂ');
-    } catch {
-      addToast('err', 'Nu s-a putut salva setarea');
+    } catch (err) {
+      addToast('err', 'Nu s-a putut salva: ' + (err as Error).message);
     } finally {
       setAutoInvLoading(false);
     }
@@ -986,7 +962,11 @@ export default function XConnectorPage() {
   /* ── Stats ── */
   const orders   = data?.orders ?? [];
   const statPaid = orders.filter(o => o.financialStatus === 'paid').length;
-  const statInv  = orders.filter(o => o.invoice || o.noteAttributes?.['xconnector-invoice-url'] || o.noteAttributes?.['invoice-url']).length;
+  const statInv  = orders.filter(o => {
+    if (o.invoice) return true;
+    const a = o.noteAttributes ?? {};
+    return !!(a['xconnector-invoice-url'] || a['invoice-url'] || a['xconnector-invoice-short-url'] || a['Factură URL']);
+  }).length;
   const statShip = orders.filter(o => o.shipment).length;
   const statFail = orders.filter(o => o.processingStatus === 'failed').length;
 
@@ -997,7 +977,7 @@ export default function XConnectorPage() {
   const getInvoiceLink = (order: EnrichedOrder): { label: string; url: string } | null => {
     if (order.invoice) return { label: `${order.invoice.series}${order.invoice.number}`, url: order.invoice.url };
     const attrs = order.noteAttributes ?? {};
-    const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
+    const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || attrs['xconnector-invoice-short-url'] || attrs['Factură URL'] || '';
     const num = attrs['invoice-number'] || attrs['Factură'] || 'Factură';
     if (url) return { label: num, url };
     return null;
@@ -1010,6 +990,10 @@ export default function XConnectorPage() {
         @keyframes pulse { 0%,100%{opacity:.6} 50%{opacity:1} }
         tr:hover td { background: rgba(255,255,255,0.02) !important; }
         select option { background: var(--c-bg2); }
+        @media(min-width:640px){
+          .xc-overlay { align-items: center !important; }
+          .xc-drawer  { border-radius: 14px !important; max-height: 90vh !important; }
+        }
       `}</style>
 
       {/* ── TOP BAR ── */}
