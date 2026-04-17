@@ -374,7 +374,6 @@ export default function Dashboard() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Aplicăm overrides direct în o.ts la încărcare — stabile imediat
         const parsedWithOv = applyTrackingOverrides(parsed);
         setAllOrders(parsedWithOv);
         setConnected(true);
@@ -383,14 +382,32 @@ export default function Dashboard() {
         const ff = ls.get('gx_fetched_from');
         if (ff) setFetchedFrom(ff);
         applyDateFilter(parsedWithOv, 'last_30', '', '');
+        // Auto-refresh: dacă cache-ul e mai vechi de 1h SAU are sub 30 comenzi → refetch automat
+        const fetchTime = ts ? new Date(ts) : null;
+        const cacheAgeHours = fetchTime ? (Date.now() - fetchTime.getTime()) / 3600000 : 999;
+        const hasToken = !!(ls.get(tokenKey(sk)) || ls.get('gx_t'));
+        if (cacheAgeHours > 1 || parsed.length < 30) {
+          // RO: are token salvat → fetch direct
+          // HU: e server-configured → fetch din DB
+          if (hasToken) {
+            setTimeout(() => fetchOrders(), 1000);
+          } else {
+            getServerConfiguredShops().then(serverShops => {
+              if (serverShops.includes(sk)) setTimeout(() => fetchOrders(), 1000);
+            });
+          }
+        }
       } catch {}
     } else {
-      // No cached orders — check if shop is server-configured (HU) and auto-fetch
-      getServerConfiguredShops().then(serverShops => {
-        if (serverShops.includes(sk)) {
-          fetchOrders();
-        }
-      });
+      // No cached orders — fetch automat (RO cu token salvat SAU HU server-configured)
+      const hasToken = !!(ls.get(tokenKey(sk)) || ls.get('gx_t'));
+      if (hasToken) {
+        fetchOrders();
+      } else {
+        getServerConfiguredShops().then(serverShops => {
+          if (serverShops.includes(sk)) fetchOrders();
+        });
+      }
     }
   }, []);
 
