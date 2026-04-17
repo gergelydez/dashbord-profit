@@ -511,7 +511,7 @@ export default function Dashboard() {
     }
   }, [deliveryMode, preset, customFrom, customTo, getLivrateInPeriod, search, sortCol, sortDir, courierFilter, applyFilters]);
 
-  const fetchOrdersRange = async (fromDate, force=false, useServerApi=false, sk=null) => {
+  const fetchOrdersRange = async (fromDate, force=false, useServerApi=false, sk=null, explicitDomain=null, explicitToken=null) => {
     if (useServerApi && sk) {
       const url = `/api/orders-server?shop=${encodeURIComponent(sk)}&created_at_min=${fromDate}${force?'&force=1':''}`;
       const res = await fetch(url);
@@ -519,7 +519,9 @@ export default function Dashboard() {
       if (!res.ok || !data.orders) throw new Error(data.error || data.warning || 'Răspuns invalid');
       return data.orders;
     } else {
-      const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
+      const d = explicitDomain || domain;
+      const t = explicitToken  || token;
+      const url = `/api/orders?domain=${encodeURIComponent(d)}&token=${encodeURIComponent(t)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
@@ -556,19 +558,24 @@ export default function Dashboard() {
       return;
     }
 
-    // ── MANUAL SHOP (RO cu credențiale) — exact ca v21 ──────────────────────
-    if (!domain || !token) { setError('Completează domeniul și tokenul!'); return; }
-    ls.set(domainKey(sk), domain);
-    ls.set(tokenKey(sk), token);
-    // Backward compat — RO credentials also saved under legacy keys
-    if (sk === 'ro') { ls.set('gx_d', domain); ls.set('gx_t', token); }
+    // ── MANUAL SHOP (RO cu credențiale) ────────────────────────────────────
+    // Citim din localStorage direct (nu din state React — poate fi gol la auto-fetch)
+    const lsDomain = ls.get(domainKey(sk)) || ls.get('gx_d') || domain;
+    const lsToken  = ls.get(tokenKey(sk))  || ls.get('gx_t') || token;
+    if (!lsDomain || !lsToken) { setError('Completează domeniul și tokenul!'); return; }
+    // Actualizăm state-ul cu valorile din LS (pentru UI)
+    if (lsDomain !== domain) setDomain(lsDomain);
+    if (lsToken  !== token)  setToken(lsToken);
+    ls.set(domainKey(sk), lsDomain);
+    ls.set(tokenKey(sk), lsToken);
+    if (sk === 'ro') { ls.set('gx_d', lsDomain); ls.set('gx_t', lsToken); }
     setLoading(true); setError('');
 
     // FAZA 1: Ultimele 30 zile — rapid, eroarea e vizibilă
     let fast = [];
     try {
       const d30 = toISO(new Date(Date.now() - 30*24*60*60*1000));
-      fast = await fetchOrdersRange(d30, !!forceMode);
+      fast = await fetchOrdersRange(d30, !!forceMode, false, sk, lsDomain, lsToken);
       const fastWithOverrides = applyTrackingOverrides(fast);
       setAllOrders(fastWithOverrides);
       setConnected(true);
@@ -593,7 +600,7 @@ export default function Dashboard() {
     setBgLoading(true);
     try {
       const d60 = toISO(new Date(Date.now() - 60*24*60*60*1000));
-      const mid = await fetchOrdersRange(d60, false);
+      const mid = await fetchOrdersRange(d60, false, false, sk, lsDomain, lsToken);
       const fastIds = new Set(fast.map(o => o.id));
       const midNew = mid.filter(o => !fastIds.has(o.id));
       // Adăugăm doar comenzile NOI (nu suprascrim cele existente din state)
@@ -611,7 +618,7 @@ export default function Dashboard() {
       // Faza 3 — 1 an
       try {
         const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
-        const oldOrders = await fetchOrdersRange(d365, false);
+        const oldOrders = await fetchOrdersRange(d365, false, false, sk, lsDomain, lsToken);
         // Adăugăm doar comenzile NOI — nu atingem cele existente cu ts corect
         setAllOrders(prev => {
           const prevIds = new Set(prev.map(o => o.id));
