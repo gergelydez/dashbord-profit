@@ -55,6 +55,8 @@ const S: Record<string, React.CSSProperties> = {
   input:       { width: '100%', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: 8, padding: '7px 10px', color: 'var(--c-text)', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const },
   inputLabel:  { fontSize: 11, color: 'var(--c-text3)', marginBottom: 4, display: 'block' },
   stepDot:     { width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0 },
+  toggleOn:    { background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 10, padding: '6px 12px', color: '#10b981', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, whiteSpace: 'nowrap' as const },
+  toggleOff:   { background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 10, padding: '6px 12px', color: 'var(--c-text3)', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, whiteSpace: 'nowrap' as const },
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -821,6 +823,36 @@ export default function XConnectorPage() {
 
   useEffect(() => { setCursor(null); setPrev([]); }, [activeShop]);
 
+  /* ── Auto-invoice toggle ── */
+  const [autoInvoice, setAutoInvoice]           = useState(false);
+  const [autoInvoiceLoading, setAutoInvLoading] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/connector/settings?shop=${activeShop}`)
+      .then(r => r.json())
+      .then(d => setAutoInvoice(Boolean(d.autoInvoice)))
+      .catch(() => {});
+  }, [activeShop]);
+
+  const toggleAutoInvoice = async () => {
+    const next = !autoInvoice;
+    setAutoInvLoading(true);
+    try {
+      const res = await fetch('/api/connector/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop: activeShop, autoInvoice: next }),
+      });
+      if (!res.ok) throw new Error('Eroare salvare');
+      setAutoInvoice(next);
+      addToast('ok', next ? '🧾 Facturare automată ACTIVATĂ' : '⏸ Facturare automată DEZACTIVATĂ');
+    } catch {
+      addToast('err', 'Nu s-a putut salva setarea');
+    } finally {
+      setAutoInvLoading(false);
+    }
+  };
+
   /* ── Fetch orders ── */
   const queryKey = ['connector-orders', activeShop, debouncedSearch, finFilter, dateFrom, cursor];
   const { data, isLoading, isError, error, refetch } = useQuery<OrdersResponse>({
@@ -1011,6 +1043,24 @@ export default function XConnectorPage() {
           </button>
 
           <SyncButton shop={activeShop} onDone={() => { addToast('ok', 'Sync trimis! Refresh în 30s.'); setTimeout(() => refetch(), 30000); }} />
+
+          {/* ── Auto-invoice toggle ── */}
+          <button
+            style={autoInvoiceLoading
+              ? { ...S.toggleOff, opacity: 0.6, cursor: 'not-allowed' }
+              : autoInvoice ? S.toggleOn : S.toggleOff}
+            onClick={toggleAutoInvoice}
+            disabled={autoInvoiceLoading}
+            title={autoInvoice
+              ? 'Facturare automată ACTIVĂ — click pentru a dezactiva'
+              : 'Facturare automată INACTIVĂ — click pentru a activa'}
+          >
+            {autoInvoiceLoading
+              ? <><Spin /> Factură auto…</>
+              : autoInvoice
+                ? <>🧾 <span style={{ width: 28, height: 16, background: '#10b981', borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 3px', flexShrink: 0 }}><span style={{ width: 10, height: 10, background: '#fff', borderRadius: '50%' }} /></span> Factură auto</>
+                : <>🧾 <span style={{ width: 28, height: 16, background: 'var(--c-border)', borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-start', padding: '0 3px', flexShrink: 0 }}><span style={{ width: 10, height: 10, background: '#fff', borderRadius: '50%' }} /></span> Factură auto</>}
+          </button>
         </div>
       </div>
 
