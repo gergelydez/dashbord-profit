@@ -147,6 +147,20 @@ export class GlsAdapter implements CourierAdapter {
     };
 
     const pickup = await resolvePickup(cfg, baseReq);
+
+    // ── Validate pickup completeness — GLS error 1000 = null reference in API ──
+    const missingPickup: string[] = [];
+    if (!pickup.name)   missingPickup.push('GLS_PICKUP_NAME');
+    if (!pickup.city)   missingPickup.push('GLS_PICKUP_CITY');
+    if (!pickup.zip)    missingPickup.push('GLS_PICKUP_ZIP');
+    if (!pickup.street) missingPickup.push('GLS_PICKUP_STREET');
+    if (missingPickup.length > 0) {
+      throw new Error(
+        `GLS: adresa de pickup incomplete — setează în .env: ${missingPickup.join(', ')}. ` +
+        `Fără acestea, GLS returnează eroarea 1000 (Object reference not set).`
+      );
+    }
+
     const { street: pStreet, houseNum: pHouseNum } = parseStreet(pickup.street);
     const { street: dStreet, houseNum: dHouseNum } = parseStreet(input.recipient.address);
     const zipCleaned = cleanZip(input.recipient.zip);
