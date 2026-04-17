@@ -4,37 +4,47 @@
  * GET  /api/connector/settings?shop=ro   → { autoInvoice: boolean }
  * POST /api/connector/settings           → { shop, autoInvoice } → saves setting
  *
- * Settings sunt stocate in fisier JSON persistent langa proiect.
+ * Settings sunt stocate in Redis (nu in filesystem — Vercel e read-only).
+ * Fallback: daca Redis nu e disponibil, returneaza default fara a crasha.
  */
 import { NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
 
 export const dynamic = 'force-dynamic';
 
-const SETTINGS_FILE = path.join(process.cwd(), 'xconnector-settings.json');
+const KEY = (shop) => `xconnector:settings:${shop}`;
 
-async function readSettings() {
+async function getRedis() {
   try {
-    const raw = await fs.readFile(SETTINGS_FILE, 'utf8');
-    return JSON.parse(raw);
+    const { getRedisConnection } = await import('@/lib/redis');
+    return getRedisConnection();
   } catch {
-    return {};
+    return null;
   }
 }
 
-async function writeSettings(settings) {
-  await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+async function readSettings(shop) {
+  try {
+    const redis = await getRedis();
+    if (!redis) return { autoInvoice: false };
+    const raw = await redis.get(KEY(shop));
+    if (!raw) return { autoInvoice: false };
+    return JSON.parse(raw);
+  } catch {
+    return { autoInvoice: false };
+  }
+}
+
+async function writeSettings(shop, settings) {
+  const redis = await getRedis();
+  if (!redis) throw new Error('Redis nu este disponibil. Verifica REDIS_URL in Vercel env.');
+  await redis.set(KEY(shop), JSON.stringify(settings));
 }
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const shop = searchParams.get('shop') || 'ro';
-
-  const settings = await readSettings();
-  const shopSettings = settings[shop] ?? { autoInvoice: false };
-
-  return NextResponse.json({ ok: true, shop, ...shopSettings });
+  const settings = await readSettings(shop);
+  return NextResponse.json({ ok: true, shop, ...settings });
 }
 
 export async function POST(request) {
@@ -42,13 +52,10 @@ export async function POST(request) {
     const body = await request.json();
     const shop = body.shop || 'ro';
     const autoInvoice = Boolean(body.autoInvoice);
-
-    const settings = await readSettings();
-    settings[shop] = { ...settings[shop], autoInvoice };
-    await writeSettings(settings);
-
+    const current = await readSettings(shop);
+    await writeSettings(shop, { ...current, autoInvoice });
     return NextResponse.json({ ok: true, shop, autoInvoice });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
   }
 }
