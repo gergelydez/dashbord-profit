@@ -580,13 +580,14 @@ interface AddrValidation {
 }
 
 function OrderDrawer({
-  order, onClose, onInvoice, onShipmentWizard, actionState, shop, onAddressFixed,
+  order, onClose, onInvoice, onShipmentWizard, actionState, shop, onAddressFixed, awbResult,
 }: {
   order: EnrichedOrder; onClose: () => void;
   onInvoice: (id: string) => void;
   onShipmentWizard: (order: EnrichedOrder) => void;
   actionState: RowActionState; shop: string;
   onAddressFixed: (orderId: string, newZip: string) => void;
+  awbResult?: { awb: string; courier: string; labelBase64?: string | null; trackUrl?: string; myglsUrl?: string } | null;
 }) {
   const fmtPrice = (n: number, cur: string) =>
     n.toLocaleString('ro-RO', { minimumFractionDigits: 2 }) + ' ' + cur;
@@ -732,17 +733,29 @@ function OrderDrawer({
           {/* AWB */}
           <div style={S.section}>
             <div style={S.sectionHead}>🚚 AWB / Livrare</div>
-            {order.shipment ? (
+            {(order.shipment || awbResult) ? (
               <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
                 <div style={S.row2col}>
-                  <div><div style={S.fieldLabel}>Curier</div><div style={{ ...S.fieldValue, textTransform: 'uppercase' as const }}>{order.shipment.courier}</div></div>
-                  <div><div style={S.fieldLabel}>AWB</div><div style={S.fieldValue}>{order.shipment.tracking}</div></div>
-                  <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.shipment.status} color="blue" /></div></div>
+                  <div><div style={S.fieldLabel}>Curier</div><div style={{ ...S.fieldValue, textTransform: 'uppercase' as const }}>{awbResult?.courier || order.shipment?.courier}</div></div>
+                  <div><div style={S.fieldLabel}>AWB</div><div style={{ ...S.fieldValue, fontFamily: 'monospace', fontWeight: 700, color: '#10b981' }}>{awbResult?.awb || order.shipment?.tracking}</div></div>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <a href={order.shipment.labelUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>🖨 Etichetă</a>
-                  {order.shipment.trackingUrl && (
-                    <a href={order.shipment.trackingUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>🔍 Tracking</a>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
+                  {awbResult?.labelBase64 && (
+                    <button style={S.btnPrimary} onClick={() => {
+                      const bin = atob(awbResult.labelBase64!);
+                      const arr = new Uint8Array(bin.length);
+                      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+                      const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+                      const a = document.createElement('a');
+                      a.href = url; a.download = `AWB_GLS_${awbResult.awb}.pdf`; a.click();
+                      URL.revokeObjectURL(url);
+                    }}>🖨 Descarcă etichetă PDF</button>
+                  )}
+                  {(awbResult?.myglsUrl || order.shipment?.labelUrl) && (
+                    <a href={awbResult?.myglsUrl || order.shipment?.labelUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>🔍 Tracking</a>
+                  )}
+                  {(awbResult?.trackUrl || order.shipment?.trackingUrl) && (
+                    <a href={awbResult?.trackUrl || order.shipment?.trackingUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>📦 MyGLS</a>
                   )}
                 </div>
               </div>
@@ -750,17 +763,12 @@ function OrderDrawer({
               <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
                 <div style={{ fontSize: 13, color: 'var(--c-text3)' }}>Niciun AWB generat.</div>
                 <button
-                  style={actionState.shipmentLoading
-                    ? { ...S.btnPrimary, opacity: 0.6 }
-                    : S.btnPrimary}
+                  style={actionState.shipmentLoading ? { ...S.btnPrimary, opacity: 0.6 } : S.btnPrimary}
                   onClick={() => onShipmentWizard(order)}
                   disabled={actionState.shipmentLoading || order.cancelled}
                 >
-                  {actionState.shipmentLoading ? <><Spin /> Se procesează…</> : '🚚 Generează AWB (wizard)'}
+                  {actionState.shipmentLoading ? <><Spin /> Se generează…</> : '🚚 Generează AWB'}
                 </button>
-                <div style={{ fontSize: 11, color: 'var(--c-text4)' }}>
-                  Vei putea edita toate datele înainte de confirmare.
-                </div>
               </div>
             )}
           </div>
@@ -890,6 +898,12 @@ export default function XConnectorPage() {
   const [wizardOrder, setWizardOrder]     = useState<EnrichedOrder | null>(null);
   const [wizardLoading, setWizardLoading] = useState(false);
 
+  /* ── AWB Results (pentru label PDF descarcabil) ── */
+  const [awbResults, setAwbResults] = useState<Record<string, {
+    awb: string; courier: string; labelBase64?: string | null;
+    trackUrl?: string; myglsUrl?: string;
+  }>>({});
+
   /* ── Per-row action state ── */
   const [actionStates, setActionStates] = useState<Record<string, RowActionState>>({});
   const getState = (id: string): RowActionState => actionStates[id] ?? { invoiceLoading: false, shipmentLoading: false, error: null };
@@ -919,57 +933,89 @@ export default function XConnectorPage() {
     },
   });
 
-  /* ── AWB wizard confirm ── */
+  /* ── AWB wizard confirm — cheama direct /api/gls sau /api/sameday-awb ca in fulfillment ── */
   const handleWizardConfirm = async (wizData: AwbWizardData) => {
     if (!wizardOrder) return;
-    const orderId = wizardOrder.id;
+    const order = wizardOrder;
+    const orderId = order.id;
     setWizardLoading(true);
     setAS(orderId, { shipmentLoading: true, error: null });
     try {
-      const res = await fetch('/api/connector/shipment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shopifyOrderId: orderId,
-          courier:        wizData.courier,
-          shop:           activeShop,
-          courierOptions: {
-            notifyCustomer: wizData.notifyCustomer,
-            observations:   wizData.observations,
-          },
-          overrides: {
-            recipientName:    wizData.recipientName,
-            recipientPhone:   wizData.recipientPhone,
-            recipientEmail:   wizData.recipientEmail,
-            recipientAddress: wizData.recipientAddress,
-            recipientCity:    wizData.recipientCity,
-            recipientCounty:  wizData.recipientCounty,
-            recipientZip:     wizData.recipientZip,
-            productName:      wizData.productName,
-            weight:           wizData.weight,
-            parcels:          wizData.parcels,
-            isCOD:            wizData.isCOD,
-            codAmount:        wizData.codAmount,
-            notifyCustomer:   wizData.notifyCustomer,
-            observations:     wizData.observations,
-          },
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error || 'Eroare generare AWB');
-      addToast('ok', `AWB ${json.trackingNumber} generat cu succes!`);
-      setAS(orderId, { shipmentLoading: false });
-      setWizardOrder(null);
-      setWizardLoading(false);
-      // Close the drawer too and refresh
-      setDrawerOrder(null);
-      qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
+      if (wizData.courier === 'gls') {
+        const body = {
+          // credentials din env (goale = le ia serverul din process.env)
+          username: '', password: '', clientNumber: '',
+          recipientName:  (wizData.recipientName  || '').trim() || 'Client',
+          phone:          (wizData.recipientPhone || '').replace(/\D/g, '').slice(-10) || '0700000000',
+          email:           wizData.recipientEmail  || '',
+          address:        (wizData.recipientAddress || '').trim(),
+          city:           (wizData.recipientCity   || '').trim(),
+          county:         (wizData.recipientCounty || '').trim(),
+          zip:            (wizData.recipientZip    || '').replace(/\s/g, ''),
+          weight:          parseFloat(String(wizData.weight))  || 1,
+          parcels:         parseInt(String(wizData.parcels))   || 1,
+          content:        (wizData.productName || order.name || 'Colet').slice(0, 100),
+          codAmount:       wizData.isCOD ? wizData.codAmount : 0,
+          codCurrency:    'RON',
+          orderName:       order.name,
+          orderId:         orderId,
+          selectedServices: {},
+        };
+        const res  = await fetch('/api/gls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (data.ok) {
+          setAwbResults(p => ({ ...p, [orderId]: {
+            awb: data.awb, courier: 'gls',
+            labelBase64: data.labelBase64 || null,
+            trackUrl:    data.trackUrl    || `https://gls-group.eu/RO/ro/urmarire-colet?match=${data.awb}`,
+            myglsUrl:    data.myglsUrl    || `https://mygls.ro/Parcel/Detail/${data.awb}`,
+          }}));
+          setAS(orderId, { shipmentLoading: false });
+          setWizardOrder(null);
+          setWizardLoading(false);
+          addToast('ok', `AWB GLS ${data.awb} generat!`);
+          qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
+        } else {
+          throw new Error(data.error || 'Eroare GLS');
+        }
+      } else {
+        // Sameday
+        const body = {
+          username: '', password: '',
+          recipientName:  wizData.recipientName,
+          phone:          wizData.recipientPhone,
+          email:          wizData.recipientEmail  || '',
+          address:        wizData.recipientAddress,
+          city:           wizData.recipientCity,
+          county:         wizData.recipientCounty,
+          zip:           (wizData.recipientZip || '').replace(/\s/g, ''),
+          weight:          parseFloat(String(wizData.weight))  || 1,
+          parcels:         parseInt(String(wizData.parcels))   || 1,
+          content:        (wizData.productName || order.name || 'Colet').slice(0, 100),
+          isCOD:           wizData.isCOD,
+          total:           wizData.codAmount,
+          orderName:       order.name,
+          orderId:         orderId,
+          observations:    wizData.observations || '',
+        };
+        const res  = await fetch('/api/sameday-awb', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (data.ok) {
+          setAwbResults(p => ({ ...p, [orderId]: { awb: data.awb, courier: 'sameday' } }));
+          setAS(orderId, { shipmentLoading: false });
+          setWizardOrder(null);
+          setWizardLoading(false);
+          addToast('ok', `AWB Sameday ${data.awb} generat!`);
+          qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
+        } else {
+          throw new Error(data.error || 'Eroare Sameday');
+        }
+      }
     } catch (err) {
       const msg = (err as Error).message;
       setAS(orderId, { shipmentLoading: false, error: msg });
       addToast('err', msg);
       setWizardLoading(false);
-      // Keep wizard open so user can fix
     }
   };
 
@@ -1177,19 +1223,46 @@ export default function XConnectorPage() {
                     )}
                   </td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
-                    {order.shipment ? (
-                      <a href={order.shipment.labelUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 11 }}>
-                        🖨 {order.shipment.tracking.slice(-8)}
-                      </a>
-                    ) : (
-                      <button
-                        style={as.shipmentLoading ? { ...S.btnGhost, opacity: 0.6, fontSize: 11 } : { ...S.btnGhost, fontSize: 11 }}
-                        disabled={as.shipmentLoading || order.cancelled}
-                        onClick={e => { e.stopPropagation(); openWizardForOrder(order); }}
-                      >
-                        {as.shipmentLoading ? <Spin /> : '🚚'} AWB
-                      </button>
-                    )}
+                    {(() => {
+                      const awbRes = awbResults[order.id];
+                      const existingAwb = order.shipment?.tracking || awbRes?.awb;
+                      if (existingAwb) {
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#10b981', fontWeight: 700 }}>{existingAwb}</div>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                              {awbRes?.labelBase64 && (
+                                <button style={{ ...S.btnPrimary, fontSize: 10, padding: '3px 7px' }} onClick={e => {
+                                  e.stopPropagation();
+                                  const bin = atob(awbRes.labelBase64!);
+                                  const arr = new Uint8Array(bin.length);
+                                  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+                                  const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+                                  const a = document.createElement('a');
+                                  a.href = url; a.download = `AWB_GLS_${existingAwb}.pdf`; a.click();
+                                  URL.revokeObjectURL(url);
+                                }}>🖨 PDF</button>
+                              )}
+                              {(awbRes?.myglsUrl || order.shipment?.labelUrl) && (
+                                <a href={awbRes?.myglsUrl || order.shipment?.labelUrl} target="_blank" rel="noreferrer"
+                                  onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>
+                                  🔍 Track
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
+                        <button
+                          style={as.shipmentLoading ? { ...S.btnGhost, opacity: 0.6, fontSize: 11 } : { ...S.btnGhost, fontSize: 11 }}
+                          disabled={as.shipmentLoading || order.cancelled}
+                          onClick={e => { e.stopPropagation(); openWizardForOrder(order); }}
+                        >
+                          {as.shipmentLoading ? <Spin /> : '🚚'} AWB
+                        </button>
+                      );
+                    })()}
                   </td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
                     <div style={S.actionsCell}>
@@ -1227,6 +1300,7 @@ export default function XConnectorPage() {
           onShipmentWizard={order => { openWizardForOrder(order); }}
           actionState={getState(drawerOrder.id)}
           shop={activeShop}
+          awbResult={awbResults[drawerOrder.id] || null}
           onAddressFixed={(orderId, newZip) => {
             addToast('ok', `ZIP ${newZip} actualizat în Shopify`);
             qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
