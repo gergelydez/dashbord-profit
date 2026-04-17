@@ -190,8 +190,6 @@ async function generateInvoiceAsync(orderId: string, shopDomain: string): Promis
     invoiceNumber: `${result.invoice.series}${result.invoice.number}`,
   });
 }
-  }
-}
 
 // ─── Shop resolution ──────────────────────────────────────────────────────────
 
