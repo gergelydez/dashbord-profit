@@ -37,6 +37,24 @@ import {
   type WebhookOrderPayload,
 } from '@/lib/services/order-processor';
 import { SHOP_CONFIGS } from '@/lib/shops';
+import { promises as fs } from 'fs';
+import path from 'path';
+
+const SETTINGS_FILE = path.join(process.cwd(), 'xconnector-settings.json');
+
+async function isAutoInvoiceEnabled(shopDomain: string): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(SETTINGS_FILE, 'utf8');
+    const settings = JSON.parse(raw);
+    // Map domain → shop key
+    const shopCfg = SHOP_CONFIGS.find(s => s.domain === shopDomain);
+    const key = shopCfg?.key ?? 'ro';
+    return Boolean(settings[key]?.autoInvoice);
+  } catch {
+    // Fallback to env var if settings file doesn't exist yet
+    return process.env.PROCESS_INLINE === 'true';
+  }
+}
 
 const log = logger.child({ module: 'webhooks/shopify' });
 
@@ -136,24 +154,23 @@ export async function POST(request: Request) {
 
   // ── 10. Auto-invoice ONLY for brand new orders ────────────────────────────
   //
-  // STRICTLY: topic must be 'orders/create' AND PROCESS_INLINE must be enabled.
+  // STRICT: topic must be 'orders/create' AND auto-invoice must be enabled
+  // in xConnector settings (per shop toggle) OR via PROCESS_INLINE env var.
   // orders/updated, orders/paid, etc. → NO auto-invoice, ever.
   //
-  if (
-    topic === AUTO_INVOICE_TOPIC &&
-    process.env.PROCESS_INLINE === 'true' &&
-    process.env.SMARTBILL_EMAIL
-  ) {
-    // Check that the order doesn't already have an invoice (extra safety guard)
-    const hasInvoice = await db.invoice.findFirst({ where: { orderId } });
-    if (!hasInvoice) {
-      processOrderInline(orderId, shopId, webhookEvent.id).catch((err) => {
-        log.warn('Auto-invoice failed for new order', {
-          orderId, topic, error: (err as Error).message,
+  if (topic === AUTO_INVOICE_TOPIC && process.env.SMARTBILL_EMAIL) {
+    const autoEnabled = await isAutoInvoiceEnabled(shopDomain);
+    if (autoEnabled) {
+      const hasInvoice = await db.invoice.findFirst({ where: { orderId } });
+      if (!hasInvoice) {
+        processOrderInline(orderId, shopId, webhookEvent.id).catch((err) => {
+          log.warn('Auto-invoice failed for new order', {
+            orderId, topic, error: (err as Error).message,
+          });
         });
-      });
-    } else {
-      log.info('Order already has invoice — skipping auto-generation', { orderId });
+      } else {
+        log.info('Order already has invoice — skipping auto-generation', { orderId });
+      }
     }
   }
 
