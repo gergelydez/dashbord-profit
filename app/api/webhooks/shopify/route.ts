@@ -37,21 +37,19 @@ import {
   type WebhookOrderPayload,
 } from '@/lib/services/order-processor';
 import { SHOP_CONFIGS } from '@/lib/shops';
-import { promises as fs } from 'fs';
-import path from 'path';
 
-const SETTINGS_FILE = path.join(process.cwd(), 'xconnector-settings.json');
-
+// Citeste autoInvoice din Redis (identic cu settings/route.js)
 async function isAutoInvoiceEnabled(shopDomain: string): Promise<boolean> {
   try {
-    const raw = await fs.readFile(SETTINGS_FILE, 'utf8');
-    const settings = JSON.parse(raw);
-    // Map domain → shop key
+    const { getRedisConnection } = await import('@/lib/redis');
+    const redis = getRedisConnection();
     const shopCfg = SHOP_CONFIGS.find(s => s.domain === shopDomain);
     const key = shopCfg?.key ?? 'ro';
-    return Boolean(settings[key]?.autoInvoice);
+    const raw = await redis.get(`xconnector:settings:${key}`);
+    if (!raw) return process.env.PROCESS_INLINE === 'true';
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed.autoInvoice);
   } catch {
-    // Fallback to env var if settings file doesn't exist yet
     return process.env.PROCESS_INLINE === 'true';
   }
 }
