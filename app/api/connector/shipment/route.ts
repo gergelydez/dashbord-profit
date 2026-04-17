@@ -78,32 +78,34 @@ export async function POST(request: Request) {
       order = await db.order.findUniqueOrThrow({ where: { id: orderId } });
     }
 
-    // Build merged courierOptions from wizard overrides + caller-supplied options
+    // Build merged courierOptions
     const mergedCourierOptions: Record<string, unknown> = {
       ...courierOptions,
       ...(overrides.notifyCustomer !== undefined ? { notifyCustomer: overrides.notifyCustomer } : {}),
-      ...(overrides.observations   ? { observations: overrides.observations }   : {}),
-      ...(overrides.productName    ? { content: overrides.productName }          : {}),
-      ...(overrides.weight         !== undefined ? { weight: overrides.weight }  : {}),
-      ...(overrides.parcels        !== undefined ? { parcels: overrides.parcels }: {}),
+      ...(overrides.observations   ? { observations: overrides.observations } : {}),
+      ...(overrides.productName    ? { content: overrides.productName }       : {}),
+      ...(overrides.weight         !== undefined ? { weight: overrides.weight }   : {}),
+      ...(overrides.parcels        !== undefined ? { parcels: overrides.parcels } : {}),
     };
 
-    // If wizard overrides are present, patch the order in-memory so
-    // shipment-service uses the edited values (no DB write — DB stays authoritative)
-    const effectiveOrder = overrides.recipientName || overrides.recipientAddress ? {
+    // Aplica INTOTDEAUNA overrides din wizard (nu conditionat)
+    // Sanitizeaza ZIP — scoate spatii si caractere non-numerice
+    const cleanZip = (z: string) => (z || '').replace(/\D/g, '');
+
+    const effectiveOrder = {
       ...order,
-      customerName:      overrides.recipientName    ?? order.customerName,
-      customerPhone:     overrides.recipientPhone   ?? order.customerPhone,
-      customerEmail:     overrides.recipientEmail   ?? order.customerEmail,
-      shippingAddress1:  overrides.recipientAddress ?? order.shippingAddress1,
-      shippingCity:      overrides.recipientCity    ?? order.shippingCity,
-      shippingProvince:  overrides.recipientCounty  ?? order.shippingProvince,
-      shippingZip:       overrides.recipientZip     ?? order.shippingZip,
-      isPaid:            overrides.isCOD === false   ? true  : (overrides.isCOD === true ? false : order.isPaid),
-      totalPrice:        overrides.isCOD && overrides.codAmount !== undefined
+      customerName:      (overrides.recipientName    || order.customerName    || '').trim() || 'Client',
+      customerPhone:     (overrides.recipientPhone   || order.customerPhone   || '').replace(/\D/g, '').slice(-10),
+      customerEmail:     overrides.recipientEmail    ?? order.customerEmail   ?? '',
+      shippingAddress1:  (overrides.recipientAddress || order.shippingAddress1 || '').trim(),
+      shippingCity:      (overrides.recipientCity    || order.shippingCity    || '').trim(),
+      shippingProvince:  (overrides.recipientCounty  || order.shippingProvince || '').trim(),
+      shippingZip:       cleanZip(overrides.recipientZip || order.shippingZip || ''),
+      isPaid:            overrides.isCOD === false ? true : (overrides.isCOD === true ? false : order.isPaid),
+      totalPrice:        (overrides.isCOD && overrides.codAmount !== undefined)
                            ? overrides.codAmount as unknown as typeof order.totalPrice
                            : order.totalPrice,
-    } : order;
+    };
 
     const result = await ensureShipment(effectiveOrder, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, courier, mergedCourierOptions);
 
