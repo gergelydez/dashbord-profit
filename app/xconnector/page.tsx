@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useShopStore } from '@/lib/store/shop-store';
 import type {
@@ -33,47 +32,37 @@ const S: Record<string, React.CSSProperties> = {
   th:          { padding: '10px 14px', textAlign: 'left' as const, color: 'var(--c-text3)', fontWeight: 600, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.06em', borderBottom: '1px solid var(--c-border)', background: 'var(--c-bg2)', whiteSpace: 'nowrap' as const },
   td:          { padding: '10px 14px', borderBottom: '1px solid var(--c-border2)', verticalAlign: 'middle' as const },
   actionsCell: { display: 'flex', gap: 6, flexWrap: 'wrap' as const },
-  btnPrimary:  { background: '#f97316', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4 },
-  btnGhost:    { background: 'rgba(255,255,255,0.03)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4 },
-  btnDisabled: { background: '#111620', color: '#334155', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'not-allowed', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5 },
-  btnDanger:   { background: 'rgba(244,63,94,0.12)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const },
-  overlay:     { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', backdropFilter: 'blur(4px)' },
-  drawer:      { width: '100%', maxWidth: 560, maxHeight: 'calc(92dvh - env(safe-area-inset-bottom))', background: '#0c1018', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '14px 14px 0 0', zIndex: 10000, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, flexShrink: 0 },
-  drawerHead:  { padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky' as const, top: 0, background: '#0c1018', zIndex: 10 },
+  btnPrimary:  { background: 'var(--c-orange)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4 },
+  btnGhost:    { background: 'var(--c-surface)', color: 'var(--c-text2)', border: '1px solid var(--c-border)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4 },
+  btnDisabled: { background: 'var(--c-bg3)', color: 'var(--c-text4)', border: '1px solid var(--c-border2)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'not-allowed', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5 },
+  btnDanger:   { background: 'rgba(244,63,94,0.12)', color: 'var(--c-red)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const },
+  overlay:     { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 9998, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' },
+  drawer:      { position: 'fixed' as const, left: 0, right: 0, bottom: 0, width: '100%', maxWidth: 600, margin: '0 auto', maxHeight: '90dvh', background: '#0c1018', borderTop: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px 16px 0 0', zIndex: 9999, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const },
+  drawerHead:  { padding: '16px 20px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky' as const, top: 0, background: '#0c1018', zIndex: 1 },
   drawerBody:  { padding: '20px', flex: 1, display: 'flex', flexDirection: 'column' as const, gap: 18 },
-  drawerFoot:  { padding: '12px 20px', paddingBottom: 'max(12px, env(safe-area-inset-bottom))', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'flex-end', gap: 10, background: '#0c1018', position: 'sticky' as const, bottom: 0, zIndex: 10 },
-  section:     { background: '#111620', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '14px 16px' },
-  sectionHead: { fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 12 },
+  drawerFoot:  { padding: '12px 20px', paddingBottom: 'max(12px, env(safe-area-inset-bottom))', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', gap: 10, background: '#0c1018', position: 'sticky' as const, bottom: 0, zIndex: 2 },
+  section:     { background: 'var(--c-bg3)', border: '1px solid var(--c-border)', borderRadius: 12, padding: '14px 16px' },
+  sectionHead: { fontSize: 11, fontWeight: 700, color: 'var(--c-text3)', textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 12 },
   row2col:     { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
-  fieldLabel:  { fontSize: 11, color: '#475569', marginBottom: 3 },
-  fieldValue:  { fontSize: 13, color: '#e2e8f0' },
-  toastWrap:   { position: 'fixed' as const, bottom: 90, right: 16, zIndex: 20000, display: 'flex', flexDirection: 'column' as const, gap: 8, maxWidth: 340 },
+  fieldLabel:  { fontSize: 11, color: 'var(--c-text3)', marginBottom: 3 },
+  fieldValue:  { fontSize: 13, color: 'var(--c-text)' },
+  toastWrap:   { position: 'fixed' as const, bottom: 90, right: 16, zIndex: 200, display: 'flex', flexDirection: 'column' as const, gap: 8, maxWidth: 340 },
   toastOk:     { background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.35)', color: '#10b981', borderRadius: 12, padding: '11px 15px', fontSize: 13, fontWeight: 500 },
   toastErr:    { background: 'rgba(244,63,94,0.15)', border: '1px solid rgba(244,63,94,0.35)', color: 'var(--c-red)', borderRadius: 12, padding: '11px 15px', fontSize: 13, fontWeight: 500 },
   toastInfo:   { background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', color: 'var(--c-blue)', borderRadius: 12, padding: '11px 15px', fontSize: 13, fontWeight: 500 },
   empty:       { padding: '60px 20px', textAlign: 'center' as const, color: 'var(--c-text3)' },
   spinner:     { width: 14, height: 14, border: '2px solid transparent', borderTopColor: 'currentColor', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.6s linear infinite' },
   checkbox:    { width: 15, height: 15, cursor: 'pointer', accentColor: 'var(--c-orange)' },
-  input:       { width: '100%', background: '#07090e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '7px 10px', color: '#e2e8f0', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const },
-  inputLabel:  { fontSize: 11, color: '#64748b', marginBottom: 4, display: 'block' },
+  input:       { width: '100%', background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: 8, padding: '7px 10px', color: 'var(--c-text)', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const },
+  inputLabel:  { fontSize: 11, color: 'var(--c-text3)', marginBottom: 4, display: 'block' },
   stepDot:     { width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0 },
   toggleOn:    { background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 10, padding: '6px 12px', color: '#10b981', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, whiteSpace: 'nowrap' as const },
-  toggleOff:   { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '6px 12px', color: '#94a3b8', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, whiteSpace: 'nowrap' as const },
+  toggleOff:   { background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 10, padding: '6px 12px', color: 'var(--c-text3)', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, whiteSpace: 'nowrap' as const },
 };
 
 /* ═══════════════════════════════════════════════════════════
    BADGE
 ═══════════════════════════════════════════════════════════ */
-/* ═══════════════════════════════════════════════════════════
-   PORTAL — render modal direct in body, evita overflow:clip bug
-═══════════════════════════════════════════════════════════ */
-function Portal({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
-  if (!mounted) return null;
-  return createPortal(children, document.body);
-}
-
 function Badge({ label, color }: { label: string; color: 'green' | 'yellow' | 'red' | 'blue' | 'gray' | 'orange' }) {
   const colors: Record<string, React.CSSProperties> = {
     green:  { background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.25)' },
@@ -190,14 +179,32 @@ function InvoiceSection({
   actionState: RowActionState;
   onInvoice: (id: string) => void;
 }) {
-  // Extract from Shopify note_attributes (for RO shop / xconnector legacy)
-  const attrs = order.noteAttributes ?? {};
-  const xcInvUrl      = attrs['xconnector-invoice-url']       || attrs['invoice-url']       || attrs['Factură URL'] || '';
-  const xcInvShortUrl = attrs['xconnector-invoice-short-url'] || '';
-  const xcInvNumRaw   = attrs['invoice-number'] || attrs['Factură'] || '';
+  // Extract from DB invoice first
+  if (order.invoice) {
+    return (
+      <div style={S.section}>
+        <div style={S.sectionHead}>🧾 Factură</div>
+        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+          <div style={S.row2col}>
+            <div><div style={S.fieldLabel}>Serie/Număr</div><div style={{ ...S.fieldValue, fontWeight: 700, color: '#f97316', fontFamily: 'monospace' }}>{order.invoice.series}{order.invoice.number}</div></div>
+            <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice.status} color="green" /></div></div>
+          </div>
+          <a href={order.invoice.url} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none', width: 'fit-content' }}>
+            📥 Descarcă PDF
+          </a>
+        </div>
+      </div>
+    );
+  }
 
-  // Extrage GLA2628 din URL: https://xconnector.app/download/invoice?c=11849&s=GLA&n=2628&h=...
-  const extractInvNum = (url: string, fallback: string): string => {
+  // Extract from Shopify note_attributes (xconnector-invoice-url etc.)
+  const attrs = order.noteAttributes ?? {};
+  const xcInvUrl      = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
+  const xcInvShortUrl = attrs['xconnector-invoice-short-url'] || '';
+  const finalUrl      = xcInvUrl || xcInvShortUrl;
+
+  // Extrage GLA2628 din URL: ?s=GLA&n=2628
+  const extractNum = (url: string): string => {
     try {
       const u = new URL(url);
       const s = u.searchParams.get('s') || '';
@@ -205,29 +212,23 @@ function InvoiceSection({
       if (s && n) return `${s}${n}`;
       if (n) return n;
     } catch {}
-    return fallback || 'Factură';
+    return attrs['invoice-number'] || attrs['Factură'] || 'Factură';
   };
 
-  if (order.invoice || xcInvUrl || xcInvShortUrl) {
-    const invUrl  = order.invoice?.url  || xcInvUrl  || xcInvShortUrl;
-    const invNum  = order.invoice
-      ? `${order.invoice.series}${order.invoice.number}`
-      : extractInvNum(xcInvUrl, xcInvNumRaw);
+  if (finalUrl) {
     return (
       <div style={S.section}>
         <div style={S.sectionHead}>🧾 Factură</div>
         <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
           <div style={S.row2col}>
-            <div><div style={S.fieldLabel}>Serie/Număr</div><div style={{ ...S.fieldValue, fontWeight: 700, color: 'var(--c-orange)', fontFamily: 'monospace', fontSize: 15 }}>{invNum}</div></div>
-            <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice?.status || 'generată'} color="green" /></div></div>
+            <div><div style={S.fieldLabel}>Număr</div><div style={{ ...S.fieldValue, fontWeight: 700, color: '#f97316', fontFamily: 'monospace' }}>{extractNum(xcInvUrl)}</div></div>
+            <div><div style={S.fieldLabel}>Status</div><div><Badge label="generată" color="green" /></div></div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
-            {invUrl && (
-              <a href={invUrl} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none' }}>
-                📥 Descarcă PDF
-              </a>
-            )}
-            {xcInvShortUrl && xcInvShortUrl !== invUrl && (
+            <a href={finalUrl} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none' }}>
+              📥 Descarcă PDF
+            </a>
+            {xcInvShortUrl && xcInvShortUrl !== xcInvUrl && (
               <a href={xcInvShortUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>
                 🔗 Link scurt
               </a>
@@ -276,13 +277,13 @@ function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWiza
     : 'Colet';
 
   return {
-    recipientName:    (order.customer.name || '').trim() || 'Client',
+    recipientName:    (order.customer.name  || '').trim() || 'Client',
     recipientPhone:   (order.customer.phone || '').replace(/\D/g, '').slice(-10) || '',
-    recipientEmail:   order.customer.email || '',
+    recipientEmail:   order.customer.email  || '',
     recipientAddress: ((order.address.address1 || '') + (order.address.address2 ? `, ${order.address.address2}` : '')).trim(),
-    recipientCity:    (order.address.city || '').trim(),
+    recipientCity:    (order.address.city     || '').trim(),
     recipientCounty:  (order.address.province || '').trim(),
-    recipientZip:     (order.address.zip || '').replace(/\s/g, ''),
+    recipientZip:     (order.address.zip      || '').replace(/\s/g, ''),
     productName,
     weight:           1,
     parcels:          1,
@@ -353,9 +354,9 @@ function AwbWizard({
   const stepPending: React.CSSProperties = { ...S.stepDot, background: 'var(--c-bg3)', color: 'var(--c-text4)', border: '1px solid var(--c-border)' };
 
   return (
-    <Portal>
-      <div style={S.overlay} className="xc-overlay" onClick={onClose} />
-      <div style={{ ...S.drawer, maxWidth: 580 }} className="xc-drawer">
+    <>
+      <div style={S.overlay} onClick={onClose} />
+      <div style={{ ...S.drawer, maxWidth: 580 }}>
         {/* Head */}
         <div style={S.drawerHead}>
           <div>
@@ -565,7 +566,7 @@ function AwbWizard({
           )}
         </div>
       </div>
-    </Portal>
+    </>
   );
 }
 
@@ -632,13 +633,13 @@ function OrderDrawer({
   };
 
   return (
-    <Portal>
-      <div style={S.overlay} className="xc-overlay" onClick={onClose} />
-      <div style={S.drawer} className="xc-drawer">
+    <>
+      <div style={S.overlay} onClick={onClose} />
+      <div style={S.drawer}>
         <div style={S.drawerHead}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700 }}>{order.name}</div>
-            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 2 }}>
               {new Date(order.createdAt).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short', year: 'numeric' })}
               {' · '}<span style={{ textTransform: 'uppercase', opacity: 0.7 }}>{shop}</span>
             </div>
@@ -765,7 +766,7 @@ function OrderDrawer({
           </div>
         </div>
       </div>
-    </Portal>
+    </>
   );
 }
 
@@ -836,27 +837,27 @@ export default function XConnectorPage() {
 
   const toggleAutoInvoice = async () => {
     const next = !autoInvoice;
+    setAutoInvoice(next);        // optimistic — se vede imediat
     setAutoInvLoading(true);
-    setAutoInvoice(next); // optimistic update imediat
-    const timeout = setTimeout(() => setAutoInvLoading(false), 5000); // safety timeout 5s
+    const safetyTimer = setTimeout(() => setAutoInvLoading(false), 6000);
     try {
       const res = await fetch('/api/connector/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shop: activeShop, autoInvoice: next }),
       });
-      const json = await res.json().catch(() => ({ ok: false, error: 'Raspuns invalid' }));
-      if (!res.ok || !json.ok) {
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.ok === false) {
         setAutoInvoice(!next); // rollback
-        addToast('err', 'Nu s-a putut salva: ' + (json.error || 'Eroare server'));
+        addToast('err', json.error || 'Nu s-a putut salva setarea');
       } else {
         addToast('ok', next ? '🧾 Facturare automată ACTIVATĂ' : '⏸ Facturare automată DEZACTIVATĂ');
       }
-    } catch (err) {
+    } catch (e) {
       setAutoInvoice(!next); // rollback
-      addToast('err', 'Eroare rețea: ' + (err as Error).message);
+      addToast('err', 'Eroare rețea');
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(safetyTimer);
       setAutoInvLoading(false);
     }
   };
@@ -994,11 +995,7 @@ export default function XConnectorPage() {
   /* ── Stats ── */
   const orders   = data?.orders ?? [];
   const statPaid = orders.filter(o => o.financialStatus === 'paid').length;
-  const statInv  = orders.filter(o => {
-    if (o.invoice) return true;
-    const a = o.noteAttributes ?? {};
-    return !!(a['xconnector-invoice-url'] || a['invoice-url'] || a['xconnector-invoice-short-url'] || a['Factură URL']);
-  }).length;
+  const statInv  = orders.filter(o => o.invoice || o.noteAttributes?.['xconnector-invoice-url'] || o.noteAttributes?.['invoice-url']).length;
   const statShip = orders.filter(o => o.shipment).length;
   const statFail = orders.filter(o => o.processingStatus === 'failed').length;
 
@@ -1006,30 +1003,20 @@ export default function XConnectorPage() {
   const fmtDate  = (s: string) => new Date(s).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short' });
 
   /* Helper: resolve best invoice link for table cell */
-  /* ── helpers ── */
-  const extractInvoiceNumber = (url: string, fallbackNum: string): string => {
-    if (!url) return fallbackNum || 'Factură';
-    // xconnector URL: ?c=11849&s=GLA&n=2628&h=...
-    try {
-      const u = new URL(url);
-      const series = u.searchParams.get('s') || '';
-      const num    = u.searchParams.get('n') || '';
-      if (series && num) return `${series}${num}`;
-      if (num) return num;
-    } catch {}
-    return fallbackNum || 'Factură';
-  };
-
   const getInvoiceLink = (order: EnrichedOrder): { label: string; url: string } | null => {
     if (order.invoice) return { label: `${order.invoice.series}${order.invoice.number}`, url: order.invoice.url };
     const attrs = order.noteAttributes ?? {};
-    const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || attrs['xconnector-invoice-short-url'] || attrs['Factură URL'] || '';
-    const shortUrl = attrs['xconnector-invoice-short-url'] || '';
-    const rawNum = attrs['invoice-number'] || attrs['Factură'] || '';
-    const label = extractInvoiceNumber(url, rawNum);
-    const finalUrl = url || shortUrl;
-    if (finalUrl) return { label, url: finalUrl };
-    return null;
+    const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || attrs['xconnector-invoice-short-url'] || '';
+    if (!url) return null;
+    try {
+      const u = new URL(attrs['xconnector-invoice-url'] || '');
+      const s = u.searchParams.get('s') || '';
+      const n = u.searchParams.get('n') || '';
+      const label = (s && n) ? `${s}${n}` : (attrs['invoice-number'] || attrs['Factură'] || 'Factură');
+      return { label, url };
+    } catch {
+      return { label: attrs['invoice-number'] || attrs['Factură'] || 'Factură', url };
+    }
   };
 
   return (
@@ -1037,15 +1024,8 @@ export default function XConnectorPage() {
       <style>{`
         @keyframes spin  { to { transform: rotate(360deg); } }
         @keyframes pulse { 0%,100%{opacity:.6} 50%{opacity:1} }
-        @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         tr:hover td { background: rgba(255,255,255,0.02) !important; }
-        select option { background: #0c1018; }
-        .xc-overlay { position: fixed !important; inset: 0 !important; z-index: 9999 !important; display: flex !important; align-items: flex-end !important; justify-content: center !important; background: rgba(0,0,0,0.85) !important; backdrop-filter: blur(4px) !important; }
-        .xc-drawer  { animation: slideUp 0.22s ease; z-index: 10000 !important; }
-        @media(min-width:640px){
-          .xc-overlay { align-items: center !important; }
-          .xc-drawer  { border-radius: 14px !important; max-height: 90vh !important; }
-        }
+        select option { background: var(--c-bg2); }
       `}</style>
 
       {/* ── TOP BAR ── */}
