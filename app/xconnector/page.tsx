@@ -183,17 +183,31 @@ function InvoiceSection({
   const attrs = order.noteAttributes ?? {};
   const xcInvUrl      = attrs['xconnector-invoice-url']       || attrs['invoice-url']       || attrs['Factură URL'] || '';
   const xcInvShortUrl = attrs['xconnector-invoice-short-url'] || '';
-  const xcInvNum      = attrs['invoice-number'] || attrs['Factură'] || '';
+  const xcInvNumRaw   = attrs['invoice-number'] || attrs['Factură'] || '';
+
+  // Extrage GLA2628 din URL: https://xconnector.app/download/invoice?c=11849&s=GLA&n=2628&h=...
+  const extractInvNum = (url: string, fallback: string): string => {
+    try {
+      const u = new URL(url);
+      const s = u.searchParams.get('s') || '';
+      const n = u.searchParams.get('n') || '';
+      if (s && n) return `${s}${n}`;
+      if (n) return n;
+    } catch {}
+    return fallback || 'Factură';
+  };
 
   if (order.invoice || xcInvUrl || xcInvShortUrl) {
     const invUrl  = order.invoice?.url  || xcInvUrl  || xcInvShortUrl;
-    const invNum  = order.invoice ? `${order.invoice.series}${order.invoice.number}` : (xcInvNum || 'Factură');
+    const invNum  = order.invoice
+      ? `${order.invoice.series}${order.invoice.number}`
+      : extractInvNum(xcInvUrl, xcInvNumRaw);
     return (
       <div style={S.section}>
         <div style={S.sectionHead}>🧾 Factură</div>
         <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
           <div style={S.row2col}>
-            <div><div style={S.fieldLabel}>Serie/Număr</div><div style={S.fieldValue}>{invNum}</div></div>
+            <div><div style={S.fieldLabel}>Serie/Număr</div><div style={{ ...S.fieldValue, fontWeight: 700, color: 'var(--c-orange)', fontFamily: 'monospace', fontSize: 15 }}>{invNum}</div></div>
             <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice?.status || 'generată'} color="green" /></div></div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
@@ -974,12 +988,29 @@ export default function XConnectorPage() {
   const fmtDate  = (s: string) => new Date(s).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short' });
 
   /* Helper: resolve best invoice link for table cell */
+  /* ── helpers ── */
+  const extractInvoiceNumber = (url: string, fallbackNum: string): string => {
+    if (!url) return fallbackNum || 'Factură';
+    // xconnector URL: ?c=11849&s=GLA&n=2628&h=...
+    try {
+      const u = new URL(url);
+      const series = u.searchParams.get('s') || '';
+      const num    = u.searchParams.get('n') || '';
+      if (series && num) return `${series}${num}`;
+      if (num) return num;
+    } catch {}
+    return fallbackNum || 'Factură';
+  };
+
   const getInvoiceLink = (order: EnrichedOrder): { label: string; url: string } | null => {
     if (order.invoice) return { label: `${order.invoice.series}${order.invoice.number}`, url: order.invoice.url };
     const attrs = order.noteAttributes ?? {};
     const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || attrs['xconnector-invoice-short-url'] || attrs['Factură URL'] || '';
-    const num = attrs['invoice-number'] || attrs['Factură'] || 'Factură';
-    if (url) return { label: num, url };
+    const shortUrl = attrs['xconnector-invoice-short-url'] || '';
+    const rawNum = attrs['invoice-number'] || attrs['Factură'] || '';
+    const label = extractInvoiceNumber(url, rawNum);
+    const finalUrl = url || shortUrl;
+    if (finalUrl) return { label, url: finalUrl };
     return null;
   };
 
