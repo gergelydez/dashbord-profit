@@ -217,6 +217,16 @@ const fmt = n => Number(n||0).toLocaleString('ro-RO', { minimumFractionDigits:2,
 const fmtD = d => { if (!d) return '—'; try { const p=d.split('T')[0].split('-'); return `${p[2]}.${p[1]}.${p[0]}`; } catch { return d.slice(0,10); } };
 const pct = (a,b) => b ? Math.round(a/b*100) : 0;
 
+// Monedă dinamică per magazin
+const getCurrency = () => {
+  try {
+    const s = typeof window !== 'undefined' ? localStorage.getItem('glamx-shop') : null;
+    const p = s ? JSON.parse(s) : null;
+    const sk = p?.state?.currentShop || 'ro';
+    return sk === 'hu' ? 'HUF' : 'RON';
+  } catch { return 'RON'; }
+};
+
 /**
  * ServerShopAutoConnect — dacă shopul curent e configurat server-side (env vars),
  * afișează un spinner de "conectare automată" în loc de formularul de credențiale.
@@ -281,6 +291,7 @@ export default function Dashboard() {
   const [pg, setPg]             = useState(1);
   const [sortCol, setSortCol]   = useState(null);
   const [sortDir, setSortDir]   = useState(1);
+  const [currency, setCurrency] = useState('RON');
 
   const [sdAwbMap, setSdAwbMap] = useState(() => {
     try { const s = ls.get('sd_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
@@ -375,6 +386,7 @@ export default function Dashboard() {
     const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
     if (t) setToken(t);
     if (d) setDomain(d);
+    setCurrency(sk === 'hu' ? 'HUF' : 'RON');
     setTimeout(loadSbSeries, 500);
     // Per-shop cache keys (HU uses gx_orders_all_hu, RO uses legacy keys)
     const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
@@ -410,7 +422,8 @@ export default function Dashboard() {
       const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
       if (t) setToken(t); else setToken('');
       if (d) setDomain(d);
-      const saved = ls.get(ordersKey(sk));
+      setCurrency(sk === 'hu' ? 'HUF' : 'RON');
+      const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
@@ -436,7 +449,7 @@ export default function Dashboard() {
     // Also listen for the custom glamx:shop event dispatched by StoreSwitcher
     const onGlamxShop = (e) => {
       const sk = e.detail || getShopKey();
-      const saved = ls.get(ordersKey(sk));
+      const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
       if (!saved) {
         setAllOrders([]); setOrders([]); setFiltered([]);
         setConnected(false);
@@ -1483,7 +1496,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               {sI>0 && (
                 <div className="sc sc1"><div className="si">💰</div><div>
                   <div className="slbl">Încasat total</div>
-                  <div className="sv">{fmt(sI)} RON</div>
+                  <div className="sv">{fmt(sI)} {currency}</div>
                   <div className="ssub">
                     {livrate} livrate
                     {sICOD>0 && <> · COD: <strong style={{color:'#f97316'}}>{fmt(sICOD)}</strong></>}
@@ -1494,13 +1507,13 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               {sA>0 && (
                 <div className="sc sc2"><div className="si">🚚</div><div>
                   <div className="slbl">COD în drum</div>
-                  <div className="sv">{fmt(sA)} RON</div>
+                  <div className="sv">{fmt(sA)} {currency}</div>
                   <div className="ssub">{incurs+outfor} comenzi în tranzit</div>
                 </div></div>
               )}
               <div className="sc" style={{border:'1px solid #a855f7',background:'#0f1419'}}><div className="si">⏰</div><div>
                 <div className="slbl">COD de încasat azi</div>
-                <div className="sv" style={{color: sumCodIncasatAzi>0?'#a855f7':'#4a5568'}}>{fmt(sumCodIncasatAzi)} RON</div>
+                <div className="sv" style={{color: sumCodIncasatAzi>0?'#a855f7':'#4a5568'}}>{fmt(sumCodIncasatAzi)} {currency}</div>
                 <div className="ssub">
                   GLS livrate pe {twoDaysAgoStr.split('-').reverse().join('.')} · SD pe {yesterdayStr.split('-').reverse().join('.')}<br/>
                   {codIncasatAzi.length > 0 ? `${codIncasatAzi.length} colete` : 'Niciun colet COD'}
@@ -1508,7 +1521,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               </div></div>
               <div className="sc" style={{border:'1px solid #10b981',background:'#0f1419'}}><div className="si">📅</div><div>
                 <div className="slbl">COD livrate azi</div>
-                <div className="sv" style={{color: sumCodLivrateAzi>0?'#10b981':'#4a5568'}}>{fmt(sumCodLivrateAzi)} RON</div>
+                <div className="sv" style={{color: sumCodLivrateAzi>0?'#10b981':'#4a5568'}}>{fmt(sumCodLivrateAzi)} {currency}</div>
                 <div className="ssub">
                   {codLivrateAzi.length > 0
                     ? <>{codLivrateAzi.length} COD din {codLivrateAziTotal} livrate · ramburs pe {new Date(now.getTime()+2*86400000).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit'})}</>
@@ -1518,7 +1531,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               {sR>0 && (
                 <div className="sc sc3"><div className="si">↩️</div><div>
                   <div className="slbl">Pierdut retur/anulat</div>
-                  <div className="sv">{fmt(sR)} RON</div>
+                  <div className="sv">{fmt(sR)} {currency}</div>
                   <div className="ssub">{retur+anulate} comenzi</div>
                 </div></div>
               )}
@@ -1762,7 +1775,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                           <td style={mobH}>{o.oras||'—'}</td>
                           <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
                           <td style={{whiteSpace:'nowrap'}}>
-                            <span className={`mg ${mc}`}>{fmt(o.total)} RON</span>
+                            <span className={`mg ${mc}`}>{fmt(o.total)} {currency}</span>
                             {' '}
                             <button onClick={(e)=>{e.stopPropagation();toggleOnlinePayment(o.id);}}
                               title={isOnlinePayment(o)?'Card online — click = COD':'COD — click = Card online'}
@@ -1854,7 +1867,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
               <div>
                 <div style={{fontSize:14,fontWeight:700,color:'#e8edf2'}}>📄 Factură {invoiceModal.order.name}</div>
-                <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{invoiceModal.order.client} · {fmt(invoiceModal.order.total)} RON</div>
+                <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{invoiceModal.order.client} · {fmt(invoiceModal.order.total)} {currency}</div>
               </div>
               <button onClick={()=>setInvoiceModal(null)} style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:13}}>✕</button>
             </div>
@@ -1928,11 +1941,11 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                         style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'6px 9px',borderRadius:6,fontSize:11,outline:'none'}} />
                     </div>
                     <div style={{width:100}}>
-                      <div style={{fontSize:9,color:'#4a5568',marginBottom:3,textTransform:'uppercase'}}>Preț (RON)</div>
+                      <div style={{fontSize:9,color:'#4a5568',marginBottom:3,textTransform:'uppercase'}}>Preț ({currency})</div>
                       <input type="number" step="0.01" min="0" value={item.price} onChange={e=>setInvoiceModal(prev=>{const items=[...prev.editItems];items[idx]={...items[idx],price:parseFloat(e.target.value)||0};return{...prev,editItems:items};})}
                         style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'6px 9px',borderRadius:6,fontSize:11,outline:'none'}} />
                     </div>
-                    <div style={{flex:1,textAlign:'right',fontSize:12,color:'#f97316',fontWeight:700,fontFamily:'monospace',paddingBottom:2}}>{fmt(item.qty*item.price)} RON</div>
+                    <div style={{flex:1,textAlign:'right',fontSize:12,color:'#f97316',fontWeight:700,fontFamily:'monospace',paddingBottom:2}}>{fmt(item.qty*item.price)} {currency}</div>
                     {invoiceModal.editItems.length>1&&(
                       <button onClick={()=>setInvoiceModal(prev=>({...prev,editItems:prev.editItems.filter((_,i)=>i!==idx)}))}
                         style={{background:'rgba(244,63,94,.1)',border:'1px solid rgba(244,63,94,.3)',color:'#f43f5e',borderRadius:6,padding:'5px 8px',cursor:'pointer',fontSize:12,flexShrink:0}}>✕</button>
@@ -1948,9 +1961,9 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             <div style={{borderTop:'1px solid #1e2a35',paddingTop:14,display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
               <div>
                 <div style={{fontSize:10,color:'#94a3b8'}}>Total factură</div>
-                <div style={{fontSize:18,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(invoiceModal.editItems.reduce((s,i)=>s+i.qty*i.price,0))} RON</div>
+                <div style={{fontSize:18,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{fmt(invoiceModal.editItems.reduce((s,i)=>s+i.qty*i.price,0))} {currency}</div>
                 {Math.abs(invoiceModal.editItems.reduce((s,i)=>s+i.qty*i.price,0)-invoiceModal.order.total)>0.5&&(
-                  <div style={{fontSize:9,color:'#f59e0b',marginTop:2}}>⚠ Diferă față de comanda Shopify ({fmt(invoiceModal.order.total)} RON)</div>
+                  <div style={{fontSize:9,color:'#f59e0b',marginTop:2}}>⚠ Diferă față de comanda Shopify ({fmt(invoiceModal.order.total)} {currency})</div>
                 )}
               </div>
               <div style={{display:'flex',gap:8}}>
@@ -2116,14 +2129,14 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               <div style={{fontSize:14,fontWeight:800,color:'#10b981'}}>✅ Comenzi livrate</div>
               <div style={{fontSize:10,color:'#475569',marginTop:1}}>{livrateOrders.length} comenzi · {rangeLabel}</div>
             </div>
-            <div style={{fontSize:12,fontWeight:700,color:'#10b981',fontFamily:'monospace'}}>{fmt(sI)} RON</div>
+            <div style={{fontSize:12,fontWeight:700,color:'#10b981',fontFamily:'monospace'}}>{fmt(sI)} {currency}</div>
           </div>
           <div style={{flex:1,overflowY:'auto',padding:'0 0 60px'}}>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,padding:'12px 16px 8px'}}>
               {[
                 {l:'Total livrate',v:livrateOrders.length,c:'#10b981'},
-                {l:'Valoare COD',v:fmt(sICOD)+' RON',c:'#f97316'},
-                {l:'Valoare card',v:fmt(sIPaid)+' RON',c:'#3b82f6'},
+                {l:'Valoare COD',v:fmt(sICOD)+' '+currency,c:'#f97316'},
+                {l:'Valoare card',v:fmt(sIPaid)+' '+currency,c:'#3b82f6'},
               ].map(({l,v,c})=>(
                 <div key={l} style={{background:'#0d1520',border:`1px solid ${c}22`,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
                   <div style={{fontSize:14,fontWeight:800,color:c}}>{v}</div>
@@ -2191,13 +2204,13 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 <div style={{fontSize:14,fontWeight:800,color:'#f43f5e'}}>↩️ Comenzi returnate</div>
                 <div style={{fontSize:10,color:'#475569',marginTop:1}}>{allRetur.length} comenzi · {rangeLabel}</div>
               </div>
-              <div style={{fontSize:12,fontWeight:700,color:'#f43f5e',fontFamily:'monospace'}}>-{fmt(totalRetur)} RON</div>
+              <div style={{fontSize:12,fontWeight:700,color:'#f43f5e',fontFamily:'monospace'}}>-{fmt(totalRetur)} {currency}</div>
             </div>
             <div style={{flex:1,overflowY:'auto',padding:'0 0 60px'}}>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,padding:'12px 16px 8px'}}>
                 {[
                   {l:'Total retur',v:allRetur.length,c:'#f43f5e'},
-                  {l:'Valoare pierdută',v:fmt(totalRetur)+' RON',c:'#f43f5e'},
+                  {l:'Valoare pierdută',v:fmt(totalRetur)+' '+currency,c:'#f43f5e'},
                   {l:'Din GLS Excel',v:glsReturOrdersModal.length,c:'#f59e0b'},
                 ].map(({l,v,c})=>(
                   <div key={l} style={{background:'#0d1520',border:`1px solid ${c}22`,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
