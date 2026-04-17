@@ -1,204 +1,207 @@
 /**
  * app/api/orders-server/route.js
- * Server-side orders fetch — uses shop config from env vars (no manual token needed).
- * Uses REST API (NOT GraphQL) to avoid Shopify "Customer object" PII restriction
- * on newer/lower-plan stores. Same approach as /api/connector/orders.
+ *
+ * Citeste comenzile DIN DB (salvate prin webhooks) — exact ca XConnector.
+ * Asta evita restrictia Shopify "Customer object" PII de pe planuri lower.
+ * DB-ul are toate datele: customerName, phone, address, totalPrice etc.
+ * salvate de webhook-ul orders/create + orders/updated.
  */
 import { NextResponse } from 'next/server';
+import { db } from '@/lib/db';
 import { getShopConfig, SHOP_CONFIGS } from '@/lib/shops';
 
-const API_VERSION = '2024-01';
-const serverCache = new Map();
-const CACHE_TTL = 60 * 1000;
+export const dynamic = 'force-dynamic';
 
-const mapFin = (s) => ({
-  paid: 'paid', pending: 'pending', refunded: 'refunded', voided: 'voided',
-  partially_paid: 'partially_paid', partially_refunded: 'partially_refunded',
-  authorized: 'authorized',
-}[s] || (s || '').toLowerCase());
-
-function procFulfillments(fulfillments) {
-  if (!fulfillments?.length) return { ts: 'pending', trackingNo: '', trackingCompany: '', fulfilledAt: '', courier: 'unknown' };
-
-  const deliveredF = fulfillments.find(f => (f.shipment_status || '').toLowerCase() === 'delivered');
-  const f = deliveredF || fulfillments[fulfillments.length - 1];
-  const fulfilledAt = f.updated_at || f.created_at || '';
-  const trackingNo = f.tracking_number || '';
-  const trackingCompany = (f.tracking_company || '').toLowerCase();
-
-  const ss = (f.shipment_status || '').toLowerCase();
+/* ── Map DB Order → formatul așteptat de page.js (dashboard) ── */
+function mapDbOrder(o) {
+  // Determina statusul de tracking/livrare din fulfillmentStatus + rawPayload
   let ts = 'pending';
-  if (!ss || ss === 'null') {
-    if (f.status === 'success' || f.status === 'fulfilled') {
-      const days = fulfilledAt ? (Date.now() - new Date(fulfilledAt)) / 86400000 : 999;
-      ts = days > 10 ? 'livrat' : 'incurs';
+  let trackingNo = '';
+  let trackingCompany = '';
+  let fulfilledAt = '';
+  let courier = 'unknown';
+
+  // Incearca sa extraga date de tracking din rawPayload (webhookul contine fulfillments)
+  try {
+    const raw = o.rawPayload;
+    const fulfillments = raw?.fulfillments || [];
+    if (fulfillments.length > 0) {
+      const deliveredF = fulfillments.find(f => (f.shipment_status || '').toLowerCase() === 'delivered');
+      const f = deliveredF || fulfillments[fulfillments.length - 1];
+      fulfilledAt = f.updated_at || f.created_at || '';
+      trackingNo = f.tracking_number || '';
+      trackingCompany = (f.tracking_company || '').toLowerCase();
+
+      const ss = (f.shipment_status || '').toLowerCase();
+      if (!ss || ss === 'null') {
+        if (o.fulfillmentStatus === 'fulfilled') {
+          const days = fulfilledAt ? (Date.now() - new Date(fulfilledAt)) / 86400000 : 999;
+          ts = days > 10 ? 'livrat' : 'incurs';
+        }
+      } else if (ss === 'delivered') ts = 'livrat';
+      else if (['failure', 'failed_attempt', 'returned', 'failed_delivery', 'return_in_progress'].includes(ss)) ts = 'retur';
+      else if (ss === 'out_for_delivery') ts = 'outfor';
+      else if (ss === 'label_printed') ts = 'pending';
+      else if (['in_transit', 'confirmed'].includes(ss)) {
+        const days = fulfilledAt ? (Date.now() - new Date(fulfilledAt)) / 86400000 : 0;
+        ts = days > 10 ? 'livrat' : 'incurs';
+      }
+
+      courier = trackingCompany.includes('sameday') ? 'sameday'
+        : trackingCompany.includes('gls') || trackingCompany.includes('mygls') ? 'gls'
+        : trackingCompany.includes('fan') ? 'fan'
+        : trackingCompany.includes('cargus') ? 'cargus'
+        : trackingCompany.includes('dpd') ? 'dpd'
+        : trackingCompany ? 'other' : 'unknown';
+    } else if (o.fulfillmentStatus === 'fulfilled') {
+      ts = 'livrat'; // no fulfillment details but marked fulfilled
     }
-  } else if (ss === 'delivered') ts = 'livrat';
-  else if (['failure', 'failed_attempt', 'returned', 'failed_delivery', 'return_in_progress'].includes(ss)) ts = 'retur';
-  else if (ss === 'out_for_delivery') ts = 'outfor';
-  else if (ss === 'label_printed') ts = 'pending';
-  else if (['in_transit', 'confirmed'].includes(ss)) {
-    const days = fulfilledAt ? (Date.now() - new Date(fulfilledAt)) / 86400000 : 0;
-    ts = days > 10 ? 'livrat' : 'incurs';
+  } catch {}
+
+  if (o.status === 'CANCELLED') ts = 'anulat';
+
+  // Invoice info din DB (relatii)
+  const invoice = o.invoices?.[0] || null;
+  const shipment = o.shipments?.[0] || null;
+  const hasInvoice = !!(invoice);
+  const invoiceUrl = invoice ? `/api/connector/invoice?id=${invoice.id}` : '';
+
+  // Note attributes din rawPayload (pentru invoice URL din xConnector)
+  let noteInvoiceUrl = '';
+  let noteInvoiceShort = '';
+  let noteInvoiceNumber = '';
+  try {
+    const notes = o.rawPayload?.note_attributes || [];
+    const invAttr  = notes.find(a => (a.name || '').toLowerCase().includes('invoice-url') && !(a.name || '').toLowerCase().includes('short'));
+    const shortAttr = notes.find(a => (a.name || '').toLowerCase().includes('invoice-short-url'));
+    noteInvoiceUrl   = invAttr?.value || '';
+    noteInvoiceShort = shortAttr?.value || '';
+    const m = noteInvoiceUrl.match(/[?&]n=(\d+)/);
+    noteInvoiceNumber = m ? m[1] : '';
+  } catch {}
+
+  const finalInvoiceUrl   = invoiceUrl || noteInvoiceUrl;
+  const finalInvoiceShort = noteInvoiceShort;
+  const finalHasInvoice   = hasInvoice || !!(noteInvoiceUrl);
+  const invoiceNumber     = invoice ? `${invoice.series}${invoice.number}` : noteInvoiceNumber;
+
+  // Line items din DB (JSON)
+  const items = Array.isArray(o.lineItems) ? o.lineItems : [];
+  const prods = items.map(i => i.name || '').filter(Boolean).join(' + ');
+
+  // Tracking din DB shipment (dacă există)
+  if (shipment && !trackingNo) {
+    trackingNo = shipment.trackingNumber || '';
+    courier = (shipment.courier || '').toLowerCase();
+    if (trackingNo) ts = 'incurs'; // are AWB = în tranzit (minim)
   }
 
-  const courier = trackingCompany.includes('sameday') ? 'sameday'
-    : trackingCompany.includes('gls') || trackingCompany.includes('mygls') ? 'gls'
-    : trackingCompany.includes('fan') ? 'fan'
-    : trackingCompany.includes('cargus') ? 'cargus'
-    : trackingCompany.includes('dpd') ? 'dpd'
-    : trackingCompany ? 'other' : 'unknown';
-
-  return { ts, trackingNo, trackingCompany: f.tracking_company || '', fulfilledAt, courier };
-}
-
-function mapOrder(o) {
-  const addr = o.shipping_address || o.billing_address || {};
-  const notes = o.note_attributes || [];
-
-  const invUrlAttr   = notes.find(a => (a.name || '').toLowerCase().includes('invoice-url') && !(a.name || '').toLowerCase().includes('short'));
-  const invShortAttr = notes.find(a => (a.name || '').toLowerCase().includes('invoice-short-url'));
-  const invoiceUrl   = invUrlAttr?.value || '';
-  const invoiceShort = invShortAttr?.value || '';
-  const invNumMatch  = invoiceUrl.match(/[?&]n=(\d+)/);
-  const invoiceNumber = invNumMatch ? invNumMatch[1] : '';
-  const hasInvoice   = !!(invoiceUrl || invoiceShort);
-
-  const { ts, trackingNo, trackingCompany, fulfilledAt, courier } = procFulfillments(o.fulfillments);
-  const finalTs = o.cancelled_at ? 'anulat' : ts;
-
-  const prods = (o.line_items || []).map(i => i.name || '').join(' + ');
-
-  const addrIssues = [];
-  if (!addr.name || addr.name.trim().length < 3) addrIssues.push('Nume lipsă');
-  if (!addr.address1 || addr.address1.trim().length < 5) addrIssues.push('Adresă incompletă');
-  if (!addr.city || addr.city.trim().length < 2) addrIssues.push('Oraș lipsă');
-  const ph = (o.phone || addr.phone || '').replace(/\D/g, '');
-  if (ph.length < 9) addrIssues.push('Telefon invalid');
+  const gateway = o.paymentGateway || '';
+  const ONLINE_GW = ['shopify_payments', 'stripe', 'paypal'];
+  // isPaid vine direct din DB (setat de webhook)
 
   return {
-    id: String(o.id),
-    name: o.name || '',
-    fin: mapFin(o.financial_status),
-    ts: finalTs,
+    id: o.shopifyId,
+    name: o.shopifyName,
+    fin: (o.financialStatus || '').toLowerCase(),
+    ts,
     trackingNo,
-    client: addr.name || `${addr.first_name || ''} ${addr.last_name || ''}`.trim() || '',
-    oras: addr.city || '',
-    total: parseFloat(o.total_price) || 0,
+    client: o.customerName || '',
+    oras: o.shippingCity || '',
+    total: Number(o.totalPrice) || 0,
     prods,
     prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
-    createdAt: o.created_at || '',
+    createdAt: o.shopifyCreatedAt ? o.shopifyCreatedAt.toISOString() : o.createdAt.toISOString(),
     fulfilledAt,
     courier,
     trackingCompany,
     invoiceNumber,
-    hasInvoice,
-    invoiceUrl,
-    invoiceShort,
-    gateway: o.payment_gateway || '',
-    paidAt: o.processed_at || '',
-    currency: o.presentment_currency || o.currency || 'HUF',
-    address: [addr.address1, addr.address2].filter(Boolean).join(', '),
-    county: addr.province || '',
-    zip: addr.zip || '',
-    phone: o.phone || addr.phone || '',
-    clientEmail: o.email || '',
+    hasInvoice: finalHasInvoice,
+    invoiceUrl: finalInvoiceUrl,
+    invoiceShort: finalInvoiceShort,
+    gateway,
+    paidAt: '',
+    currency: o.currency || 'HUF',
+    address: [o.shippingAddress1, o.shippingAddress2].filter(Boolean).join(', '),
+    county: o.shippingProvince || '',
+    zip: o.shippingZip || '',
+    phone: o.customerPhone || '',
+    clientEmail: o.customerEmail || '',
     utmSource: '', utmMedium: '', utmCampaign: '', referrerUrl: '',
-    items: (o.line_items || []).map(i => ({
-      name: i.name || i.title || 'Produs',
+    items: items.map(i => ({
+      name: i.name || 'Produs',
       sku: i.sku || '',
-      qty: i.quantity || 1,
-      price: parseFloat(i.price) || 0,
-      variantId: String(i.variant_id || ''),
+      qty: i.qty || i.quantity || 1,
+      price: Number(i.price) || 0,
+      variantId: i.variantId || '',
     })),
-    addrIssues,
+    addrIssues: [],
+    // Câmpuri extra pentru compatibilitate cu xConnector sync
+    _dbId: o.id,
+    _dbStatus: o.status,
   };
 }
 
-async function fetchAllOrders(domain, accessToken, createdMin, force) {
-  const cacheKey = `rest_${domain}_${createdMin}`;
-  const cached = serverCache.get(cacheKey);
-  if (!force && cached && (Date.now() - cached.ts) < CACHE_TTL) {
-    return { orders: cached.orders, source: 'cache' };
-  }
-
-  let allRaw = [];
-  let nextPageInfo = null;
-  const startTime = Date.now();
-
-  while (true) {
-    if (Date.now() - startTime > 25000) break;
-
-    const params = new URLSearchParams({ limit: '250', status: 'any' });
-    if (nextPageInfo) {
-      params.set('page_info', nextPageInfo);
-    } else {
-      params.set('created_at_min', `${createdMin}T00:00:00Z`);
-      params.set('order', 'created_at desc');
-    }
-
-    const url = `https://${domain}/admin/api/${API_VERSION}/orders.json?${params}`;
-    const res = await fetch(url, {
-      headers: { 'X-Shopify-Access-Token': accessToken },
-      cache: 'no-store',
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Shopify REST ${res.status}: ${body.slice(0, 300)}`);
-    }
-
-    const data = await res.json();
-    allRaw = allRaw.concat(data.orders || []);
-
-    const link = res.headers.get('Link') || '';
-    const nextMatch = link.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
-    if (nextMatch) {
-      nextPageInfo = nextMatch[1];
-    } else {
-      break;
-    }
-  }
-
-  const mapped = allRaw.map(mapOrder);
-  serverCache.set(cacheKey, { orders: mapped, ts: Date.now() });
-  for (const [k, v] of serverCache.entries()) {
-    if (Date.now() - v.ts > 5 * 60 * 1000) serverCache.delete(k);
-  }
-
-  return { orders: mapped, source: 'rest' };
-}
-
+/* ── GET: fetch orders din DB pentru shop-ul dat ── */
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const shopKey    = searchParams.get('shop') || 'ro';
   const createdMin = (searchParams.get('created_at_min') || '').slice(0, 10)
     || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-  const force = searchParams.get('force') === '1';
 
+  // Gaseste shopul in DB dupa domain
   let shopCfg;
   try {
     shopCfg = getShopConfig(shopKey);
   } catch (e) {
     return NextResponse.json({
-      error: `Shop "${shopKey}" not configured. Add SHOPIFY_DOMAIN_${shopKey.toUpperCase()} and SHOPIFY_ACCESS_TOKEN_${shopKey.toUpperCase()} to env vars.`
+      error: `Shop "${shopKey}" not configured. Adaugă SHOPIFY_DOMAIN_${shopKey.toUpperCase()} și SHOPIFY_ACCESS_TOKEN_${shopKey.toUpperCase()} în env vars.`
     }, { status: 400 });
   }
 
+  // Gaseste Shop row in DB
+  const shop = await db.shop.findFirst({ where: { domain: shopCfg.domain } });
+  if (!shop) {
+    // Shop-ul nu are inca date in DB — inseamna ca webhookurile nu au ajuns inca
+    return NextResponse.json({
+      orders: [],
+      count: 0,
+      shop: shopKey,
+      currency: shopKey === 'hu' ? 'HUF' : 'RON',
+      warning: 'Shop-ul nu are date în DB. Verifică că webhookurile Shopify sunt configurate pentru acest magazin.',
+    });
+  }
+
+  const since = new Date(createdMin + 'T00:00:00Z');
+
   try {
-    const { orders, source } = await fetchAllOrders(shopCfg.domain, shopCfg.accessToken, createdMin, force);
+    const dbOrders = await db.order.findMany({
+      where: {
+        shopId: shop.id,
+        shopifyCreatedAt: { gte: since },
+      },
+      include: {
+        invoices:  { take: 1, orderBy: { createdAt: 'desc' } },
+        shipments: { take: 1, orderBy: { createdAt: 'desc' } },
+      },
+      orderBy: { shopifyCreatedAt: 'desc' },
+    });
+
+    const orders = dbOrders.map(mapDbOrder);
+
     return NextResponse.json({
       orders,
-      source,
       count: orders.length,
       shop: shopKey,
       currency: orders[0]?.currency || (shopKey === 'hu' ? 'HUF' : 'RON'),
+      source: 'db',
     });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
 
+/* ── POST: lista shopurilor configurate server-side (pentru auto-detectare) ── */
 export async function POST() {
   const configured = SHOP_CONFIGS.map(s => ({
     key: s.key,
