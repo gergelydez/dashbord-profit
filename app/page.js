@@ -216,9 +216,7 @@ function ServerShopAutoConnect({ fetchOrders, children }) {
   const fetchCalledRef = useRef(false);
   useEffect(() => {
     const sk = getShopKey();
-    // RO folosește credențiale manuale — afișăm direct formularul, fără verificare server
-    if (sk === 'ro') { setIsServerShop(false); return; }
-    setLabel(sk === 'hu' ? '🇭🇺 Ungaria' : sk.toUpperCase());
+    setLabel(sk === 'hu' ? '🇭🇺 Ungaria' : sk === 'ro' ? '🇷🇴 Romania' : sk.toUpperCase());
     getServerConfiguredShops().then(shops => {
       const isServer = shops.includes(sk);
       setIsServerShop(isServer);
@@ -370,8 +368,8 @@ export default function Dashboard() {
         if (ff) setFetchedFrom(ff);
         applyDateFilter(parsedWithOv, 'last_30', '', '');
       } catch {}
-    } else if (sk !== 'ro') {
-      // Niciun cache pentru HU — auto-fetch din server
+    } else {
+      // Niciun cache — auto-fetch din server (RO + HU)
       getServerConfiguredShops().then(serverShops => {
         if (serverShops.includes(sk)) fetchOrders();
       });
@@ -403,17 +401,15 @@ export default function Dashboard() {
         // Magazin nou — fără date încă
         setAllOrders([]); setOrders([]); setFiltered([]);
         setConnected(false);
-        if (sk !== 'ro') {
-          getServerConfiguredShops().then(serverShops => {
-            if (serverShops.includes(sk)) setTimeout(() => fetchOrders(), 100);
-          });
-        }
+        getServerConfiguredShops().then(serverShops => {
+          if (serverShops.includes(sk)) setTimeout(() => fetchOrders(), 100);
+        });
       }
     };
     const onGlamxShop = (e) => {
       const sk = e.detail || getShopKey();
       const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
-      if (!saved && sk !== 'ro') {
+      if (!saved) {
         setAllOrders([]); setOrders([]); setFiltered([]);
         setConnected(false);
         getServerConfiguredShops().then(serverShops => {
@@ -495,10 +491,9 @@ export default function Dashboard() {
   const fetchOrders = async (forceMode) => {
     const sk = getShopKey();
 
-    // ── HU și alte shop-uri server-configured ──────────────────────────────
-    if (sk !== 'ro') {
-      const serverShops = await getServerConfiguredShops();
-      if (serverShops.includes(sk)) {
+    // ── Toate shop-urile server-configured (RO + HU) ───────────────────────
+    const serverShops = await getServerConfiguredShops();
+    if (serverShops.includes(sk)) {
         setLoading(true); setError('');
         try {
           const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
@@ -519,10 +514,9 @@ export default function Dashboard() {
           setLoading(false);
         }
         return;
-      }
     }
 
-    // ── RO — logică identică cu v21 ────────────────────────────────────────
+    // ── Fallback manual (niciun shop server-configured) ─────────────────────
     // Citim din LS direct — state React poate fi gol la apel automat
     const roDomain = domain || ls.get(domainKey(sk)) || ls.get('gx_d') || '';
     const roToken  = token  || ls.get(tokenKey(sk))  || ls.get('gx_t') || '';
