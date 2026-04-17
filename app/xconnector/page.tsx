@@ -752,10 +752,10 @@ function OrderDrawer({
                     }}>🖨 Descarcă etichetă PDF</button>
                   )}
                   {(awbResult?.myglsUrl || order.shipment?.labelUrl) && (
-                    <a href={awbResult?.myglsUrl || order.shipment?.labelUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>🔍 Tracking</a>
+                    <a href={awbResult?.myglsUrl || order.shipment?.labelUrl || undefined} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>🔍 Tracking</a>
                   )}
                   {(awbResult?.trackUrl || order.shipment?.trackingUrl) && (
-                    <a href={awbResult?.trackUrl || order.shipment?.trackingUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>📦 MyGLS</a>
+                    <a href={awbResult?.trackUrl || order.shipment?.trackingUrl || undefined} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>📦 MyGLS</a>
                   )}
                 </div>
               </div>
@@ -1244,7 +1244,7 @@ export default function XConnectorPage() {
                                 }}>🖨 PDF</button>
                               )}
                               {(awbRes?.myglsUrl || order.shipment?.labelUrl) && (
-                                <a href={awbRes?.myglsUrl || order.shipment?.labelUrl} target="_blank" rel="noreferrer"
+                                <a href={awbRes?.myglsUrl || order.shipment?.labelUrl || undefined} target="_blank" rel="noreferrer"
                                   onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>
                                   🔍 Track
                                 </a>
