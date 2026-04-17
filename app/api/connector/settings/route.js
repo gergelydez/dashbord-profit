@@ -1,11 +1,8 @@
 /**
  * app/api/connector/settings/route.js
- *
- * GET  /api/connector/settings?shop=ro   → { autoInvoice: boolean }
- * POST /api/connector/settings           → { shop, autoInvoice } → saves setting
- *
- * Settings sunt stocate in Redis (nu in filesystem — Vercel e read-only).
- * Fallback: daca Redis nu e disponibil, returneaza default fara a crasha.
+ * Settings per-shop stocate in Redis.
+ * GET  /api/connector/settings?shop=hu  → { autoInvoice: boolean }
+ * POST /api/connector/settings          → { shop: 'hu', autoInvoice: true }
  */
 import { NextResponse } from 'next/server';
 
@@ -36,7 +33,7 @@ async function readSettings(shop) {
 
 async function writeSettings(shop, settings) {
   const redis = await getRedis();
-  if (!redis) throw new Error('Redis nu este disponibil. Verifica REDIS_URL in Vercel env.');
+  if (!redis) throw new Error('Redis indisponibil. Verifica REDIS_URL in Vercel.');
   await redis.set(KEY(shop), JSON.stringify(settings));
 }
 
