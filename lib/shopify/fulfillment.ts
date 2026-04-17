@@ -171,14 +171,18 @@ export async function addInvoiceToOrder(
     opts,
     shopifyOrderId,
     [
-      // These appear in Shopify Admin → order → "Additional details"
-      { name: 'Factură',             value: fullNumber },
-      { name: 'Factură URL',         value: params.invoiceUrl },
-      { name: 'invoice-number',      value: fullNumber },
-      { name: 'invoice-series',      value: params.invoiceSeries },
-      { name: 'invoice-url',         value: params.invoiceUrl },
+      // These appear in Shopify Admin → order → „Additional details"
+      { name: 'Factură',                      value: fullNumber },
+      { name: 'Factură URL',                  value: params.invoiceUrl },
+      { name: 'invoice-number',               value: fullNumber },
+      { name: 'invoice-series',               value: params.invoiceSeries },
+      { name: 'invoice-url',                  value: params.invoiceUrl },
+      // XConnector branding — visible in Shopify order details
+      { name: 'xconnector-glamx',             value: `Generat cu XConnector-Glamx` },
+      { name: 'xconnector-invoice-number',    value: fullNumber },
+      { name: 'xconnector-invoice-url',       value: params.invoiceUrl },
     ],
-    ['invoiced', `factura-${fullNumber}`],
+    ['invoiced', `factura-${fullNumber}`, 'xconnector-glamx'],
   );
 }
 
