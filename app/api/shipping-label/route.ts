@@ -89,9 +89,9 @@ function pdfResponse(buffer: Buffer, filename: string): Response {
     status: 200,
     headers: {
       'Content-Type':           'application/pdf',
-      'Content-Disposition':    `attachment; filename="${encodeURIComponent(filename)}"`,
+      'Content-Disposition':    `inline; filename="${encodeURIComponent(filename)}"`,
       'Content-Length':         String(buffer.length),
-      'Cache-Control':          'private, no-store',
+      'Cache-Control':          'private, max-age=604800',
       'X-Content-Type-Options': 'nosniff',
     },
   });
