@@ -354,9 +354,8 @@ function AwbWizard({
 
   return (
     <Portal>
-      <>
-        <div style={S.overlay} className="xc-overlay" onClick={onClose} />
-        <div style={{ ...S.drawer, maxWidth: 580 }} className="xc-drawer">
+      <div style={S.overlay} className="xc-overlay" onClick={onClose} />
+      <div style={{ ...S.drawer, maxWidth: 580 }} className="xc-drawer">
         {/* Head */}
         <div style={S.drawerHead}>
           <div>
@@ -566,7 +565,7 @@ function AwbWizard({
           )}
         </div>
       </div>
-    </>
+    </Portal>
   );
 }
 
@@ -634,13 +633,12 @@ function OrderDrawer({
 
   return (
     <Portal>
-      <>
-        <div style={S.overlay} className="xc-overlay" onClick={onClose} />
-        <div style={S.drawer} className="xc-drawer">
-          <div style={S.drawerHead}>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>{order.name}</div>
-              <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 2 }}>
+      <div style={S.overlay} className="xc-overlay" onClick={onClose} />
+      <div style={S.drawer} className="xc-drawer">
+        <div style={S.drawerHead}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{order.name}</div>
+            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
               {new Date(order.createdAt).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short', year: 'numeric' })}
               {' · '}<span style={{ textTransform: 'uppercase', opacity: 0.7 }}>{shop}</span>
             </div>
@@ -767,7 +765,6 @@ function OrderDrawer({
           </div>
         </div>
       </div>
-    </>
     </Portal>
   );
 }
