@@ -110,14 +110,21 @@ export async function POST(req) {
 
     const { recipientName, phone, email, address, city, county, zip, weight, parcels, content, codAmount, codCurrency, orderName, orderId, selectedServices, manualAwb } = body;
 
+    // Sanitizare câmpuri - previne GLS 1000 "Object reference not set"
+    const safePhone = (phone||'').replace(/\D/g,'').slice(-10) || '0700000000';
+    const safeRecipient = (recipientName||'').trim() || 'Client';
+    const safeAddress = (address||'').trim() || 'Adresa';
+    const safeCity = (city||'').trim() || 'Oras';
+    const safeCounty = (county||'').trim() || '';
+
     if (manualAwb) return NextResponse.json({ ok: true, awb: manualAwb, mode: 'manual' }, { headers: CORS });
 
     const zipCleaned = cleanZip(zip);
     if (!zipCleaned || zipCleaned.length !== 6) return NextResponse.json({ ok: false, error: `Cod postal invalid: "${zip}". Trebuie 6 cifre.`, requiresCorrection: true }, { status: 422, headers: CORS });
-    if (!city || city.trim().length < 2) return NextResponse.json({ ok: false, error: 'Orasul destinatarului lipseste.', requiresCorrection: true }, { status: 422, headers: CORS });
-    if (!recipientName || recipientName.trim().length < 2) return NextResponse.json({ ok: false, error: 'Numele destinatarului lipseste.', requiresCorrection: true }, { status: 422, headers: CORS });
+    if (!safeCity || safeCity.trim().length < 2) return NextResponse.json({ ok: false, error: 'Orasul destinatarului lipseste.', requiresCorrection: true }, { status: 422, headers: CORS });
+    if (!safeRecipient || safeRecipient.trim().length < 2) return NextResponse.json({ ok: false, error: 'Numele destinatarului lipseste.', requiresCorrection: true }, { status: 422, headers: CORS });
 
-    const { street: dStreet, houseNum: dHouseNum } = parseStreet(address);
+    const { street: dStreet, houseNum: dHouseNum } = parseStreet(safeAddress);
 
     // ── DATE EXPEDITOR ────────────────────────────────────────────────────
     let pickup = null;
@@ -213,15 +220,15 @@ export async function POST(req) {
         ContactEmail:   '',
       },
       DeliveryAddress: {
-        Name:           (recipientName||'').slice(0,40),
-        Street:         (dStreet||address||'').slice(0,40),
+        Name:           safeRecipient.slice(0,40),
+        Street:         (dStreet||safeAddress||'').slice(0,40),
         HouseNumber:    (dHouseNum||'1').slice(0,10),
-        CountyName:     (county||'').slice(0,40),
-        City:           (city||'').slice(0,40),
+        CountyName:     safeCounty.slice(0,40),
+        City:           safeCity.slice(0,40),
         ZipCode:        zipCleaned,
         CountryIsoCode: 'RO',
-        ContactName:    (recipientName||'').slice(0,40),
-        ContactPhone:   (phone||'').replace(/\D/g,'').slice(-10),
+        ContactName:    safeRecipient.slice(0,40),
+        ContactPhone:   safePhone,
         ContactEmail:   (email||'').slice(0,100),
       },
       ServiceList: serviceList,
