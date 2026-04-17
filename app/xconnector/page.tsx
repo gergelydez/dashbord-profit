@@ -813,6 +813,11 @@ function SyncButton({ shop, onDone }: { shop: string; onDone: (msg: string) => v
 ═══════════════════════════════════════════════════════════ */
 const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺' };
 
+type AwbResultMap = Record<string, {
+  awb: string; courier: string; labelBase64?: string | null;
+  trackUrl?: string; myglsUrl?: string; labelUrl?: string | null;
+}>;
+
 export default function XConnectorPage() {
   const qc = useQueryClient();
   const { toasts, add: addToast } = useToast();
@@ -905,18 +910,15 @@ export default function XConnectorPage() {
   const [wizardLoading, setWizardLoading] = useState(false);
 
   /* ── AWB Results — persistate in localStorage (supravietuiesc refresh) ── */
-  const [awbResults, setAwbResultsRaw] = useState<Record<string, {
-    awb: string; courier: string; labelBase64?: string | null;
-    trackUrl?: string; myglsUrl?: string; labelUrl?: string | null;
-  }>>(() => {
+  const [awbResults, setAwbResultsRaw] = useState<AwbResultMap>(() => {
     try {
       const s = typeof window !== 'undefined' ? localStorage.getItem('xc_awb_results') : null;
       return s ? JSON.parse(s) : {};
     } catch { return {}; }
   });
 
-  const setAwbResults = useCallback((updater: any) => {
-    setAwbResultsRaw((prev: any) => {
+  const setAwbResults = useCallback((updater: AwbResultMap | ((prev: AwbResultMap) => AwbResultMap)) => {
+    setAwbResultsRaw((prev: AwbResultMap) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       try { localStorage.setItem('xc_awb_results', JSON.stringify(next)); } catch {}
       return next;
