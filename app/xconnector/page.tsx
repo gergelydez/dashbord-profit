@@ -37,7 +37,7 @@ const S: Record<string, React.CSSProperties> = {
   btnDisabled: { background: 'var(--c-bg3)', color: 'var(--c-text4)', border: '1px solid var(--c-border2)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'not-allowed', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5 },
   btnDanger:   { background: 'rgba(244,63,94,0.12)', color: 'var(--c-red)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const },
   overlay:     { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100 },
-  drawer:      { position: 'fixed' as const, right: 0, top: 0, bottom: 0, width: '100%', maxWidth: 560, background: 'var(--c-bg2)', borderLeft: '1px solid var(--c-border)', zIndex: 101, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const },
+  drawer:      { position: 'fixed' as const, right: 0, top: 0, bottom: 0, width: '100%', maxWidth: 560, background: 'var(--c-bg2)', borderLeft: '1px solid var(--c-border)', zIndex: 101, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, paddingBottom: 'env(safe-area-inset-bottom)' },
   drawerHead:  { padding: '16px 20px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky' as const, top: 0, background: 'var(--c-bg2)', zIndex: 1 },
   drawerBody:  { padding: '20px', flex: 1, display: 'flex', flexDirection: 'column' as const, gap: 18 },
   section:     { background: 'var(--c-bg3)', border: '1px solid var(--c-border)', borderRadius: 12, padding: '14px 16px' },
@@ -276,13 +276,13 @@ function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWiza
     : 'Colet';
 
   return {
-    recipientName:    order.customer.name,
-    recipientPhone:   order.customer.phone,
-    recipientEmail:   order.customer.email,
-    recipientAddress: order.address.address1 + (order.address.address2 ? `, ${order.address.address2}` : ''),
-    recipientCity:    order.address.city,
-    recipientCounty:  order.address.province,
-    recipientZip:     order.address.zip,
+    recipientName:    (order.customer.name || '').trim() || 'Client',
+    recipientPhone:   (order.customer.phone || '').replace(/\D/g, '').slice(-10) || '',
+    recipientEmail:   order.customer.email || '',
+    recipientAddress: (order.address.address1 || '').trim() + (order.address.address2 ? `, ${order.address.address2}` : ''),
+    recipientCity:    (order.address.city || '').trim(),
+    recipientCounty:  (order.address.province || '').trim(),
+    recipientZip:     (order.address.zip || '').replace(/\s/g, ''),
     productName,
     weight:           1,
     parcels:          1,
@@ -546,7 +546,7 @@ function AwbWizard({
         </div>
 
         {/* Footer navigation */}
-        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', gap: 10, background: 'var(--c-bg2)', position: 'sticky' as const, bottom: 0 }}>
+        <div style={{ padding: '14px 20px', paddingBottom: 'max(14px, env(safe-area-inset-bottom))', borderTop: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', gap: 10, background: 'var(--c-bg2)', position: 'sticky' as const, bottom: 0, zIndex: 20 }}>
           <button style={S.btnGhost} onClick={step === 1 ? onClose : prev} disabled={loading}>
             {step === 1 ? '✕ Anulează' : '← Înapoi'}
           </button>
