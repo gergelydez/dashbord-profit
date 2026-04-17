@@ -13,11 +13,11 @@ import type {
 ═══════════════════════════════════════════════════════════ */
 const S: Record<string, React.CSSProperties> = {
   page:        { background: 'var(--c-bg)', minHeight: '100dvh', fontFamily: 'DM Sans, sans-serif', color: 'var(--c-text)', paddingBottom: 80 },
-  topbar:      { background: 'var(--c-bg2)', borderBottom: '1px solid var(--c-border)', padding: '12px 20px', display: 'flex', flexDirection: 'column', gap: 10, position: 'sticky', top: 0, zIndex: 50 },
-  topbarRow1:  { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  topbar:      { background: 'var(--c-bg2)', borderBottom: '1px solid var(--c-border)', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, position: 'sticky', top: 0, zIndex: 50 },
+  topbarRow1:  { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const },
   h1:          { fontSize: 17, fontWeight: 700, color: 'var(--c-text)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 },
   shopBadge:   { display: 'flex', alignItems: 'center', gap: 6, background: 'var(--c-bg3)', border: '1px solid var(--c-border)', borderRadius: 8, padding: '4px 10px', fontSize: 12, fontWeight: 600, color: 'var(--c-text2)' },
-  searchWrap:  { flex: 1, minWidth: 180, maxWidth: 320, position: 'relative' },
+  searchWrap:  { flex: 1, minWidth: 140, maxWidth: 320, position: 'relative' },
   searchInput: { width: '100%', background: 'var(--c-bg3)', border: '1px solid var(--c-border)', borderRadius: 10, padding: '8px 12px 8px 34px', color: 'var(--c-text)', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const },
   searchIcon:  { position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', opacity: 0.4, fontSize: 13 },
   select:      { background: 'var(--c-bg3)', border: '1px solid var(--c-border)', borderRadius: 10, padding: '8px 12px', color: 'var(--c-text)', fontSize: 13, outline: 'none', cursor: 'pointer' },
@@ -32,14 +32,14 @@ const S: Record<string, React.CSSProperties> = {
   th:          { padding: '10px 14px', textAlign: 'left' as const, color: 'var(--c-text3)', fontWeight: 600, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.06em', borderBottom: '1px solid var(--c-border)', background: 'var(--c-bg2)', whiteSpace: 'nowrap' as const },
   td:          { padding: '10px 14px', borderBottom: '1px solid var(--c-border2)', verticalAlign: 'middle' as const },
   actionsCell: { display: 'flex', gap: 6, flexWrap: 'wrap' as const },
-  btnPrimary:  { background: 'var(--c-orange)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4 },
+  btnPrimary:  { background: 'var(--c-orange)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4, minHeight: 34 },
   btnGhost:    { background: 'var(--c-surface)', color: 'var(--c-text2)', border: '1px solid var(--c-border)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4 },
   btnDisabled: { background: 'var(--c-bg3)', color: 'var(--c-text4)', border: '1px solid var(--c-border2)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'not-allowed', whiteSpace: 'nowrap' as const, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5 },
   btnDanger:   { background: 'rgba(244,63,94,0.12)', color: 'var(--c-red)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const },
   overlay:     { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100 },
-  drawer:      { position: 'fixed' as const, right: 0, top: 0, bottom: 0, width: '100%', maxWidth: 560, background: 'var(--c-bg2)', borderLeft: '1px solid var(--c-border)', zIndex: 101, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const },
+  drawer:      { position: 'fixed' as const, right: 0, top: 0, bottom: 0, width: '100%', maxWidth: 560, background: 'var(--c-bg2)', borderLeft: '1px solid var(--c-border)', zIndex: 101, display: 'flex', flexDirection: 'column' as const },
   drawerHead:  { padding: '16px 20px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky' as const, top: 0, background: 'var(--c-bg2)', zIndex: 1 },
-  drawerBody:  { padding: '20px', flex: 1, display: 'flex', flexDirection: 'column' as const, gap: 18 },
+  drawerBody:  { padding: '20px', flex: 1, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, gap: 18 },
   section:     { background: 'var(--c-bg3)', border: '1px solid var(--c-border)', borderRadius: 12, padding: '14px 16px' },
   sectionHead: { fontSize: 11, fontWeight: 700, color: 'var(--c-text3)', textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 12 },
   row2col:     { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
@@ -355,7 +355,7 @@ function AwbWizard({
   return (
     <>
       <div style={S.overlay} onClick={onClose} />
-      <div style={{ ...S.drawer, maxWidth: 580 }}>
+      <div style={{ ...S.drawer, maxWidth: 580, top: 'env(safe-area-inset-top, 0px)' }}>
         {/* Head */}
         <div style={S.drawerHead}>
           <div>
@@ -372,7 +372,7 @@ function AwbWizard({
               <div style={step === s ? stepActive : step > s ? stepDone : stepPending}>
                 {step > s ? '✓' : s}
               </div>
-              <span style={{ fontSize: 12, fontWeight: step === s ? 700 : 400, color: step === s ? 'var(--c-text)' : 'var(--c-text3)', whiteSpace: 'nowrap' as const }}>
+              <span className="xconn-step-label" style={{ fontSize: 11, fontWeight: step === s ? 700 : 400, color: step === s ? 'var(--c-text)' : 'var(--c-text3)', whiteSpace: 'nowrap' as const }}>
                 {STEP_LABELS[s]}
               </span>
               {i < 2 && <div style={{ flex: 1, height: 1, background: step > s ? 'rgba(16,185,129,0.4)' : 'var(--c-border)' }} />}
@@ -546,7 +546,7 @@ function AwbWizard({
         </div>
 
         {/* Footer navigation */}
-        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', gap: 10, background: 'var(--c-bg2)', position: 'sticky' as const, bottom: 0 }}>
+        <div className="xconn-wizard-footer" style={{ padding: '14px 20px', borderTop: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', gap: 10, background: 'var(--c-bg2)', flexShrink: 0 }}>
           <button style={S.btnGhost} onClick={step === 1 ? onClose : prev} disabled={loading}>
             {step === 1 ? '✕ Anulează' : '← Înapoi'}
           </button>
@@ -998,8 +998,8 @@ export default function XConnectorPage() {
     if (order.invoice) return { label: `${order.invoice.series}${order.invoice.number}`, url: order.invoice.url };
     const attrs = order.noteAttributes ?? {};
     const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
-    const num = attrs['invoice-number'] || attrs['Factură'] || 'Factură';
-    if (url) return { label: num, url };
+    const num = attrs['xconnector-invoice-number'] || attrs['invoice-number'] || attrs['Factură'] || '';
+    if (url) return { label: num || 'Factură', url };
     return null;
   };
 
@@ -1010,6 +1010,28 @@ export default function XConnectorPage() {
         @keyframes pulse { 0%,100%{opacity:.6} 50%{opacity:1} }
         tr:hover td { background: rgba(255,255,255,0.02) !important; }
         select option { background: var(--c-bg2); }
+        /* ── Mobile responsive ── */
+        @media (max-width: 640px) {
+          .xconn-topbar { padding: 8px 10px !important; }
+          .xconn-topbar input[type=date] { max-width: 130px; font-size: 12px !important; }
+          .xconn-topbar select { max-width: 110px; font-size: 12px !important; padding: 6px 8px !important; }
+          .xconn-table-wrap { padding: 0 4px !important; }
+          .xconn-table-wrap th:nth-child(3),
+          .xconn-table-wrap td:nth-child(3),
+          .xconn-table-wrap th:nth-child(4),
+          .xconn-table-wrap td:nth-child(4),
+          .xconn-table-wrap th:nth-child(6),
+          .xconn-table-wrap td:nth-child(6),
+          .xconn-table-wrap th:nth-child(7),
+          .xconn-table-wrap td:nth-child(7) { display: none !important; }
+          .xconn-wizard-footer button { min-height: 44px; font-size: 14px !important; padding: 10px 18px !important; }
+          .xconn-wizard-footer { padding: 12px 14px 24px !important; }
+          .xconn-step-label { display: none !important; }
+        }
+        @media (max-width: 400px) {
+          .xconn-table-wrap th:nth-child(5),
+          .xconn-table-wrap td:nth-child(5) { display: none !important; }
+        }
       `}</style>
 
       {/* ── TOP BAR ── */}
@@ -1090,7 +1112,7 @@ export default function XConnectorPage() {
       )}
 
       {/* ── TABLE ── */}
-      <div style={{ overflowX: 'auto' as const, padding: '0 20px' }}>
+      <div style={{ overflowX: 'auto' as const, padding: '0 20px' }} className="xconn-table-wrap">
         <table style={S.table}>
           <thead>
             <tr>
@@ -1145,10 +1167,11 @@ export default function XConnectorPage() {
                         target="_blank"
                         rel="noreferrer"
                         onClick={e => e.stopPropagation()}
-                        style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 11 }}
+                        style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 11, flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}
                         title={invLink.url}
                       >
-                        📥 {invLink.label}
+                        <span style={{ fontSize: 10, color: 'var(--c-text3)' }}>📥 factură</span>
+                        <span style={{ fontWeight: 700, color: 'var(--c-blue)', fontSize: 12 }}>{invLink.label}</span>
                       </a>
                     ) : (
                       <button
