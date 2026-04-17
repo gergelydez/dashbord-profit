@@ -964,17 +964,30 @@ export default function XConnectorPage() {
         const res  = await fetch('/api/gls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json();
         if (data.ok) {
-          setAwbResults(p => ({ ...p, [orderId]: {
+          const awbData = {
             awb: data.awb, courier: 'gls',
             labelBase64: data.labelBase64 || null,
             trackUrl:    data.trackUrl    || `https://gls-group.eu/RO/ro/urmarire-colet?match=${data.awb}`,
             myglsUrl:    data.myglsUrl    || `https://mygls.ro/Parcel/Detail/${data.awb}`,
-          }}));
+          };
+          setAwbResults(p => ({ ...p, [orderId]: awbData }));
           setAS(orderId, { shipmentLoading: false });
           setWizardOrder(null);
           setWizardLoading(false);
-          addToast('ok', `AWB GLS ${data.awb} generat!`);
+          addToast('ok', `✅ AWB GLS ${data.awb} generat!`);
           qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
+          // Descarca PDF automat daca exista
+          if (data.labelBase64) {
+            try {
+              const bin = atob(data.labelBase64);
+              const arr = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+              const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+              const a = document.createElement('a');
+              a.href = url; a.download = `AWB_GLS_${data.awb}.pdf`; a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } catch {}
+          }
         } else {
           throw new Error(data.error || 'Eroare GLS');
         }
