@@ -208,25 +208,24 @@ function validateRecipientAddress(
   const errors: string[] = [];
 
   if (!recipient.name || recipient.name.trim().length < 2) {
-    errors.push('recipient name is missing');
+    errors.push('numele destinatarului lipsește');
   }
-  if (!recipient.phone || recipient.phone.replace(/\D/g, '').length < 9) {
-    errors.push(`phone "${recipient.phone}" is invalid (min 9 digits)`);
+  const phoneDigits = (recipient.phone || '').replace(/\D/g, '');
+  if (phoneDigits.length < 6) {
+    errors.push(`telefon invalid: "${recipient.phone}" (minim 6 cifre)`);
   }
-  if (!recipient.address || recipient.address.trim().length < 5) {
-    errors.push('shipping address is missing or too short');
+  if (!recipient.address || recipient.address.trim().length < 3) {
+    errors.push('adresa de livrare lipsește');
   }
   if (!recipient.city || recipient.city.trim().length < 2) {
-    errors.push('city is missing');
+    errors.push('orașul lipsește');
   }
-  if (!recipient.zip || !/^\d{4,9}$/.test(recipient.zip.replace(/\s/g, ''))) {
-    errors.push(`zip "${recipient.zip}" is invalid (must be 4–9 digits)`);
+  const zipDigits = (recipient.zip || '').replace(/\D/g, '');
+  if (zipDigits.length < 4) {
+    errors.push(`cod poștal invalid: "${recipient.zip}" (minim 4 cifre)`);
   }
 
   if (errors.length > 0) {
-    throw new Error(
-      `Order ${orderName}: address validation failed — ${errors.join('; ')}. ` +
-      'Fix the shipping address in Shopify and reprocess.',
-    );
+    throw new Error(`Comanda ${orderName}: ${errors.join('; ')}`);
   }
 }
