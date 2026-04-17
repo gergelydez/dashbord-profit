@@ -354,26 +354,25 @@ export default function Dashboard() {
     if (d) setDomain(d);
     setCurrency(sk === 'hu' ? 'HUF' : 'RON');
     setTimeout(loadSbSeries, 500);
-    const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
+    const saved = ls.get(ordersKey(sk)) || ls.get('gx_orders_60') || null;
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Aplicăm overrides direct în o.ts la încărcare — stabile imediat
         const parsedWithOv = applyTrackingOverrides(parsed);
         setAllOrders(parsedWithOv);
         setConnected(true);
-        const ts = ls.get('gx_fetch_time');
+        const ts = ls.get('gx_fetch_time_' + sk) || ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
-        const ff = ls.get('gx_fetched_from');
+        const ff = ls.get('gx_fetched_from_' + sk) || ls.get('gx_fetched_from');
         if (ff) setFetchedFrom(ff);
         applyDateFilter(parsedWithOv, 'last_30', '', '');
       } catch {}
-    } else {
-      // Niciun cache — auto-fetch din server (RO + HU)
-      getServerConfiguredShops().then(serverShops => {
-        if (serverShops.includes(sk)) fetchOrders();
-      });
     }
+    // Întotdeauna face fetch din server dacă e server-configured (RO + HU)
+    // Cache-ul vechi se afișează imediat, apoi se înlocuiește cu datele fresh
+    getServerConfiguredShops().then(serverShops => {
+      if (serverShops.includes(sk)) fetchOrders();
+    });
   }, []);
 
   // ── Shop switch — reîncarcă credențialele și comenzile când se schimbă magazinul
