@@ -401,12 +401,24 @@ export default function Dashboard() {
         const ff = ls.get('gx_fetched_from_' + sk) || ls.get('gx_fetched_from');
         if (ff) setFetchedFrom(ff);
         applyDateFilter(parsedWithOv, 'last_30', '', '');
+        // Cache stale check: dacă datele sunt mai vechi de 2h SAU mai puțin de 30 de comenzi,
+        // facem refresh automat în background pentru shop-urile server-configured
+        const fetchTime = ts ? new Date(ts) : null;
+        const isStale = !fetchTime || (Date.now() - fetchTime.getTime() > 2 * 60 * 60 * 1000);
+        const isSparse = parsed.length < 30;
+        if (isStale || isSparse) {
+          getServerConfiguredShops().then(serverShops => {
+            if (serverShops.includes(sk)) {
+              setTimeout(() => fetchOrders(), 1500);
+            }
+          });
+        }
       } catch {}
     } else {
       // No cached orders — check if shop is server-configured and auto-fetch
       getServerConfiguredShops().then(serverShops => {
         if (serverShops.includes(sk)) {
-          // Server-configured shop (e.g. HU) — auto-connect without manual credentials
+          // Server-configured shop (RO + HU) — auto-connect without manual credentials
           fetchOrders();
         }
       });
@@ -433,14 +445,23 @@ export default function Dashboard() {
           setFiltered(withOv);
           setConnected(true);
           applyDateFilter(withOv, 'last_30', '', '');
+          // Refresh automat dacă cache e stale (>2h) sau incomplet (<30 comenzi)
+          const ts2 = ls.get('gx_fetch_time_' + sk) || ls.get('gx_fetch_time');
+          const fetchTime2 = ts2 ? new Date(ts2) : null;
+          const isStale2 = !fetchTime2 || (Date.now() - fetchTime2.getTime() > 2 * 60 * 60 * 1000);
+          const isSparse2 = parsed.length < 30;
+          if (isStale2 || isSparse2) {
+            getServerConfiguredShops().then(serverShops => {
+              if (serverShops.includes(sk)) setTimeout(() => fetchOrders(), 1500);
+            });
+          }
         } catch {}
       } else {
-        // No local cache — check if server-configured (e.g. HU) and auto-fetch
+        // No local cache — check if server-configured (RO + HU) and auto-fetch
         setAllOrders([]); setOrders([]); setFiltered([]);
         setConnected(false);
         getServerConfiguredShops().then(serverShops => {
           if (serverShops.includes(sk)) {
-            // Auto-connect for server-configured shops — no manual credentials needed
             setTimeout(() => fetchOrders(), 100);
           }
         });
