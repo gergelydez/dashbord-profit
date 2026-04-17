@@ -93,7 +93,7 @@ export function buildInvoiceUrl(invoiceId: string, ttl?: number): string {
  * Build a full signed URL for the shipping label PDF endpoint.
  */
 export function buildShippingLabelUrl(shipmentId: string, ttl?: number): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '');
   const token = signToken(shipmentId, ttl);
   return `${appUrl}/api/shipping-label?id=${shipmentId}&token=${token}`;
 }
