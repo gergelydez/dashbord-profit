@@ -8,8 +8,7 @@ const ls = {
   del: (k) => { try { if (typeof window !== 'undefined') localStorage.removeItem(k); } catch {} },
 };
 
-
-// Cache pentru shopurile configurate server-side (env vars)
+// Cache pentru shopurile configurate server-side (HU etc.)
 let _serverShopsCache = null;
 async function getServerConfiguredShops() {
   if (_serverShopsCache) return _serverShopsCache;
@@ -211,21 +210,13 @@ const fmt = n => Number(n||0).toLocaleString('ro-RO', { minimumFractionDigits:2,
 const fmtD = d => { if (!d) return '—'; try { const p=d.split('T')[0].split('-'); return `${p[2]}.${p[1]}.${p[0]}`; } catch { return d.slice(0,10); } };
 const pct = (a,b) => b ? Math.round(a/b*100) : 0;
 
-
-/**
- * ServerShopAutoConnect — dacă shopul curent e configurat server-side (env vars),
- * afișează un spinner de "conectare automată" în loc de formularul de credențiale.
- * Apelează fetchOrders() automat și ascunde formularul.
- */
 function ServerShopAutoConnect({ fetchOrders, children }) {
   const [isServerShop, setIsServerShop] = useState(null);
   const [label, setLabel] = useState('');
   const fetchCalledRef = useRef(false);
-
   useEffect(() => {
     const sk = getShopKey();
-    const LABELS = { ro: '🇷🇴 Romania', hu: '🇭🇺 Ungaria' };
-    setLabel(LABELS[sk] || sk.toUpperCase());
+    setLabel(sk === 'hu' ? '🇭🇺 Ungaria' : sk === 'ro' ? '🇷🇴 Romania' : sk.toUpperCase());
     getServerConfiguredShops().then(shops => {
       const isServer = shops.includes(sk);
       setIsServerShop(isServer);
@@ -235,28 +226,21 @@ function ServerShopAutoConnect({ fetchOrders, children }) {
       }
     });
   }, [fetchOrders]);
-
-  if (isServerShop === null) {
-    return (
-      <div className="setup" style={{textAlign:'center'}}>
-        <div style={{fontSize:32,marginBottom:12}}>⚡</div>
-        <div style={{fontSize:14,fontWeight:700,color:'#f97316',marginBottom:6}}>Se verifică configurația…</div>
-        <div style={{display:'inline-block',width:20,height:20,border:'3px solid rgba(249,115,22,.3)',borderTopColor:'#f97316',borderRadius:'50%',animation:'spin 0.6s linear infinite'}} />
-      </div>
-    );
-  }
-
-  if (isServerShop) {
-    return (
-      <div className="setup" style={{textAlign:'center'}}>
-        <div style={{fontSize:32,marginBottom:12}}>⚡</div>
-        <div style={{fontSize:16,fontWeight:700,color:'#f97316',marginBottom:4}}>Conectare automată {label}</div>
-        <div style={{fontSize:13,color:'#94a3b8',marginBottom:16}}>Credențialele sunt configurate server-side — se încarcă comenzile…</div>
-        <div style={{display:'inline-block',width:24,height:24,border:'3px solid rgba(249,115,22,.3)',borderTopColor:'#f97316',borderRadius:'50%',animation:'spin 0.6s linear infinite'}} />
-      </div>
-    );
-  }
-
+  if (isServerShop === null) return (
+    <div className="setup" style={{textAlign:'center'}}>
+      <div style={{fontSize:32,marginBottom:12}}>⚡</div>
+      <div style={{fontSize:14,fontWeight:700,color:'#f97316',marginBottom:6}}>Se verifică configurația…</div>
+      <div style={{display:'inline-block',width:20,height:20,border:'3px solid rgba(249,115,22,.3)',borderTopColor:'#f97316',borderRadius:'50%',animation:'spin 0.6s linear infinite'}} />
+    </div>
+  );
+  if (isServerShop) return (
+    <div className="setup" style={{textAlign:'center'}}>
+      <div style={{fontSize:32,marginBottom:12}}>⚡</div>
+      <div style={{fontSize:16,fontWeight:700,color:'#f97316',marginBottom:4}}>Conectare automată {label}</div>
+      <div style={{fontSize:13,color:'#94a3b8',marginBottom:16}}>Credențialele sunt configurate server-side — se încarcă comenzile…</div>
+      <div style={{display:'inline-block',width:24,height:24,border:'3px solid rgba(249,115,22,.3)',borderTopColor:'#f97316',borderRadius:'50%',animation:'spin 0.6s linear infinite'}} />
+    </div>
+  );
   return children;
 }
 
@@ -273,7 +257,7 @@ export default function Dashboard() {
   const [pg, setPg]             = useState(1);
   const [sortCol, setSortCol]   = useState(null);
   const [sortDir, setSortDir]   = useState(1);
-  const [currency, setCurrency] = useState('RON');
+  const [currency, setCurrency] = useState(() => getShopKey() === 'hu' ? 'HUF' : 'RON');
 
   const [sdAwbMap, setSdAwbMap] = useState(() => {
     try { const s = ls.get('sd_awb_map'); return s ? JSON.parse(s) : {}; } catch { return {}; }
@@ -374,6 +358,7 @@ export default function Dashboard() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        // Aplicăm overrides direct în o.ts la încărcare — stabile imediat
         const parsedWithOv = applyTrackingOverrides(parsed);
         setAllOrders(parsedWithOv);
         setConnected(true);
@@ -382,32 +367,12 @@ export default function Dashboard() {
         const ff = ls.get('gx_fetched_from');
         if (ff) setFetchedFrom(ff);
         applyDateFilter(parsedWithOv, 'last_30', '', '');
-        // Auto-refresh: dacă cache-ul e mai vechi de 1h SAU are sub 30 comenzi → refetch automat
-        const fetchTime = ts ? new Date(ts) : null;
-        const cacheAgeHours = fetchTime ? (Date.now() - fetchTime.getTime()) / 3600000 : 999;
-        const hasToken = !!(ls.get(tokenKey(sk)) || ls.get('gx_t'));
-        if (cacheAgeHours > 1 || parsed.length < 30) {
-          // RO: are token salvat → fetch direct
-          // HU: e server-configured → fetch din DB
-          if (hasToken) {
-            setTimeout(() => fetchOrders(), 1000);
-          } else {
-            getServerConfiguredShops().then(serverShops => {
-              if (serverShops.includes(sk)) setTimeout(() => fetchOrders(), 1000);
-            });
-          }
-        }
       } catch {}
-    } else {
-      // No cached orders — fetch automat (RO cu token salvat SAU HU server-configured)
-      const hasToken = !!(ls.get(tokenKey(sk)) || ls.get('gx_t'));
-      if (hasToken) {
-        fetchOrders();
-      } else {
-        getServerConfiguredShops().then(serverShops => {
-          if (serverShops.includes(sk)) fetchOrders();
-        });
-      }
+    } else if (sk !== 'ro') {
+      // Niciun cache pentru HU — auto-fetch din server
+      getServerConfiguredShops().then(serverShops => {
+        if (serverShops.includes(sk)) fetchOrders();
+      });
     }
   }, []);
 
@@ -433,27 +398,24 @@ export default function Dashboard() {
           applyDateFilter(withOv, 'last_30', '', '');
         } catch {}
       } else {
-        // No local cache — check if server-configured (HU) and auto-fetch
+        // Magazin nou — fără date încă
         setAllOrders([]); setOrders([]); setFiltered([]);
         setConnected(false);
-        getServerConfiguredShops().then(serverShops => {
-          if (serverShops.includes(sk)) {
-            setTimeout(() => fetchOrders(), 100);
-          }
-        });
+        if (sk !== 'ro') {
+          getServerConfiguredShops().then(serverShops => {
+            if (serverShops.includes(sk)) setTimeout(() => fetchOrders(), 100);
+          });
+        }
       }
     };
-    // Also listen for the custom glamx:shop event dispatched by StoreSwitcher
     const onGlamxShop = (e) => {
       const sk = e.detail || getShopKey();
-      const saved = ls.get(ordersKey(sk));
-      if (!saved) {
+      const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
+      if (!saved && sk !== 'ro') {
         setAllOrders([]); setOrders([]); setFiltered([]);
         setConnected(false);
         getServerConfiguredShops().then(serverShops => {
-          if (serverShops.includes(sk)) {
-            setTimeout(() => fetchOrders(), 100);
-          }
+          if (serverShops.includes(sk)) setTimeout(() => fetchOrders(), 100);
         });
       }
     };
@@ -511,71 +473,64 @@ export default function Dashboard() {
     }
   }, [deliveryMode, preset, customFrom, customTo, getLivrateInPeriod, search, sortCol, sortDir, courierFilter, applyFilters]);
 
-  const fetchOrdersRange = async (fromDate, force=false, useServerApi=false, sk=null, explicitDomain=null, explicitToken=null) => {
-    if (useServerApi && sk) {
-      const url = `/api/orders-server?shop=${encodeURIComponent(sk)}&created_at_min=${fromDate}${force?'&force=1':''}`;
+  const fetchOrdersRange = async (fromDate, force=false, useServerApi=false, shopKey=null) => {
+    if (useServerApi && shopKey) {
+      const url = `/api/orders-server?shop=${encodeURIComponent(shopKey)}&created_at_min=${fromDate}${force?'&force=1':''}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok || !data.orders) throw new Error(data.error || data.warning || 'Răspuns invalid');
       return data.orders;
-    } else {
-      const d = explicitDomain || domain;
-      const t = explicitToken  || token;
-      const url = `/api/orders?domain=${encodeURIComponent(d)}&token=${encodeURIComponent(t)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
-      return data.orders.map(procOrder);
     }
+    const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
+    return data.orders.map(procOrder);
   };
 
   const fetchOrders = async (forceMode) => {
     const sk = getShopKey();
-    const serverShops = await getServerConfiguredShops();
-    const useServer = serverShops.includes(sk);
 
-    if (useServer) {
-      // ── SERVER SHOP (HU) — citim direct din DB ──────────────────────────────
-      setLoading(true); setError('');
-      try {
-        const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
-        const allFromDb = await fetchOrdersRange(d365, !!forceMode, true, sk);
-        const withOv = applyTrackingOverrides(allFromDb);
-        setAllOrders(withOv);
-        setConnected(true);
-        const now = new Date();
-        setLastFetch(now);
-        setFetchedFrom(d365);
-        ls.set(ordersKey(sk), JSON.stringify(withOv));
-        ls.set('gx_fetch_time_' + sk, now.toISOString());
-        ls.set('gx_fetched_from_' + sk, d365);
-        applyDateFilter(withOv, preset, customFrom, customTo);
-      } catch (e) {
-        setError('Eroare DB: ' + e.message);
-      } finally {
-        setLoading(false);
+    // ── HU și alte shop-uri server-configured ──────────────────────────────
+    if (sk !== 'ro') {
+      const serverShops = await getServerConfiguredShops();
+      if (serverShops.includes(sk)) {
+        setLoading(true); setError('');
+        try {
+          const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
+          const allFromDb = await fetchOrdersRange(d365, !!forceMode, true, sk);
+          const withOv = applyTrackingOverrides(allFromDb);
+          setAllOrders(withOv);
+          setConnected(true);
+          const now = new Date();
+          setLastFetch(now);
+          setFetchedFrom(d365);
+          ls.set(ordersKey(sk), JSON.stringify(withOv));
+          ls.set('gx_fetch_time_' + sk, now.toISOString());
+          ls.set('gx_fetched_from_' + sk, d365);
+          applyDateFilter(withOv, preset, customFrom, customTo);
+        } catch (e) {
+          setError('Eroare DB: ' + e.message);
+        } finally {
+          setLoading(false);
+        }
+        return;
       }
-      return;
     }
 
-    // ── MANUAL SHOP (RO cu credențiale) ────────────────────────────────────
-    // Citim din localStorage direct (nu din state React — poate fi gol la auto-fetch)
-    const lsDomain = ls.get(domainKey(sk)) || ls.get('gx_d') || domain;
-    const lsToken  = ls.get(tokenKey(sk))  || ls.get('gx_t') || token;
-    if (!lsDomain || !lsToken) { setError('Completează domeniul și tokenul!'); return; }
-    // Actualizăm state-ul cu valorile din LS (pentru UI)
-    if (lsDomain !== domain) setDomain(lsDomain);
-    if (lsToken  !== token)  setToken(lsToken);
-    ls.set(domainKey(sk), lsDomain);
-    ls.set(tokenKey(sk), lsToken);
-    if (sk === 'ro') { ls.set('gx_d', lsDomain); ls.set('gx_t', lsToken); }
+    // ── RO — logică identică cu v21 ────────────────────────────────────────
+    if (!domain || !token) { setError('Completează domeniul și tokenul!'); return; }
+    ls.set(domainKey(sk), domain);
+    ls.set(tokenKey(sk), token);
+    // Backward compat — RO credentials also saved under legacy keys
+    if (sk === 'ro') { ls.set('gx_d', domain); ls.set('gx_t', token); }
     setLoading(true); setError('');
 
     // FAZA 1: Ultimele 30 zile — rapid, eroarea e vizibilă
     let fast = [];
     try {
       const d30 = toISO(new Date(Date.now() - 30*24*60*60*1000));
-      fast = await fetchOrdersRange(d30, !!forceMode, false, sk, lsDomain, lsToken);
+      fast = await fetchOrdersRange(d30, !!forceMode);
       const fastWithOverrides = applyTrackingOverrides(fast);
       setAllOrders(fastWithOverrides);
       setConnected(true);
@@ -600,7 +555,7 @@ export default function Dashboard() {
     setBgLoading(true);
     try {
       const d60 = toISO(new Date(Date.now() - 60*24*60*60*1000));
-      const mid = await fetchOrdersRange(d60, false, false, sk, lsDomain, lsToken);
+      const mid = await fetchOrdersRange(d60, false);
       const fastIds = new Set(fast.map(o => o.id));
       const midNew = mid.filter(o => !fastIds.has(o.id));
       // Adăugăm doar comenzile NOI (nu suprascrim cele existente din state)
@@ -618,7 +573,7 @@ export default function Dashboard() {
       // Faza 3 — 1 an
       try {
         const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
-        const oldOrders = await fetchOrdersRange(d365, false, false, sk, lsDomain, lsToken);
+        const oldOrders = await fetchOrdersRange(d365, false);
         // Adăugăm doar comenzile NOI — nu atingem cele existente cu ts corect
         setAllOrders(prev => {
           const prevIds = new Set(prev.map(o => o.id));
