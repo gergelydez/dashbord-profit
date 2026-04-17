@@ -587,7 +587,7 @@ function OrderDrawer({
   onShipmentWizard: (order: EnrichedOrder) => void;
   actionState: RowActionState; shop: string;
   onAddressFixed: (orderId: string, newZip: string) => void;
-  awbResult?: { awb: string; courier: string; labelBase64?: string | null; trackUrl?: string; myglsUrl?: string } | null;
+  awbResult?: { awb: string; courier: string; labelBase64?: string | null; trackUrl?: string; myglsUrl?: string; labelUrl?: string | null } | null;
 }) {
   const fmtPrice = (n: number, cur: string) =>
     n.toLocaleString('ro-RO', { minimumFractionDigits: 2 }) + ' ' + cur;
