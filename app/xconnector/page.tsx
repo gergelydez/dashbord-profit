@@ -740,7 +740,13 @@ function OrderDrawer({
                   <div><div style={S.fieldLabel}>AWB</div><div style={{ ...S.fieldValue, fontFamily: 'monospace', fontWeight: 700, color: '#10b981' }}>{awbResult?.awb || order.shipment?.tracking}</div></div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
-                  {awbResult?.labelBase64 && (
+                  {/* Descarca label — prioritate: URL persistent din DB, apoi base64 din memorie */}
+                  {(awbResult?.labelUrl || order.shipment?.labelUrl) ? (
+                    <a href={awbResult?.labelUrl || order.shipment?.labelUrl || undefined}
+                      target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none' }}>
+                      🖨 Descarcă etichetă PDF
+                    </a>
+                  ) : awbResult?.labelBase64 ? (
                     <button style={S.btnPrimary} onClick={() => {
                       const bin = atob(awbResult.labelBase64!);
                       const arr = new Uint8Array(bin.length);
@@ -750,12 +756,12 @@ function OrderDrawer({
                       a.href = url; a.download = `AWB_GLS_${awbResult.awb}.pdf`; a.click();
                       URL.revokeObjectURL(url);
                     }}>🖨 Descarcă etichetă PDF</button>
-                  )}
-                  {(awbResult?.myglsUrl || order.shipment?.labelUrl) && (
-                    <a href={awbResult?.myglsUrl || order.shipment?.labelUrl || undefined} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>🔍 Tracking</a>
-                  )}
-                  {(awbResult?.trackUrl || order.shipment?.trackingUrl) && (
-                    <a href={awbResult?.trackUrl || order.shipment?.trackingUrl || undefined} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>📦 MyGLS</a>
+                  ) : null}
+                  {(awbResult?.myglsUrl || order.shipment?.trackingUrl) && (
+                    <a href={awbResult?.myglsUrl || order.shipment?.trackingUrl || undefined}
+                      target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>
+                      🔍 Tracking GLS
+                    </a>
                   )}
                 </div>
               </div>
@@ -901,7 +907,7 @@ export default function XConnectorPage() {
   /* ── AWB Results (pentru label PDF descarcabil) ── */
   const [awbResults, setAwbResults] = useState<Record<string, {
     awb: string; courier: string; labelBase64?: string | null;
-    trackUrl?: string; myglsUrl?: string;
+    trackUrl?: string; myglsUrl?: string; labelUrl?: string | null;
   }>>({});
 
   /* ── Per-row action state ── */
@@ -969,14 +975,39 @@ export default function XConnectorPage() {
             labelBase64: data.labelBase64 || null,
             trackUrl:    data.trackUrl    || `https://gls-group.eu/RO/ro/urmarire-colet?match=${data.awb}`,
             myglsUrl:    data.myglsUrl    || `https://mygls.ro/Parcel/Detail/${data.awb}`,
+            labelUrl:    null as string | null,
           };
+
+          // Salveaza in DB pentru persistenta si label URL permanent
+          try {
+            const saveRes  = await fetch('/api/connector/save-awb', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                shopifyOrderId: orderId,
+                shop:           activeShop,
+                courier:        'gls',
+                trackingNumber: data.awb,
+                trackingUrl:    data.trackUrl,
+                labelBase64:    data.labelBase64 || null,
+              }),
+            });
+            const saveData = await saveRes.json();
+            if (saveData.ok && saveData.labelUrl) {
+              awbData.labelUrl = saveData.labelUrl;
+            }
+          } catch (e) {
+            console.warn('[xConnector] save-awb failed (non-fatal):', e);
+          }
+
           setAwbResults(p => ({ ...p, [orderId]: awbData }));
           setAS(orderId, { shipmentLoading: false });
           setWizardOrder(null);
           setWizardLoading(false);
           addToast('ok', `✅ AWB GLS ${data.awb} generat!`);
           qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
-          // Descarca PDF automat daca exista
+
+          // Descarca PDF automat
           if (data.labelBase64) {
             try {
               const bin = atob(data.labelBase64);
@@ -1239,12 +1270,20 @@ export default function XConnectorPage() {
                     {(() => {
                       const awbRes = awbResults[order.id];
                       const existingAwb = order.shipment?.tracking || awbRes?.awb;
+                      const labelUrl = awbRes?.labelUrl || order.shipment?.labelUrl || null;
                       if (existingAwb) {
                         return (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                             <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#10b981', fontWeight: 700 }}>{existingAwb}</div>
                             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
-                              {awbRes?.labelBase64 && (
+                              {/* Descarca label — prioritate: URL persistent din DB, apoi base64 din memorie */}
+                              {labelUrl ? (
+                                <a href={labelUrl} target="_blank" rel="noreferrer"
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ ...S.btnPrimary, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>
+                                  🖨 PDF
+                                </a>
+                              ) : awbRes?.labelBase64 ? (
                                 <button style={{ ...S.btnPrimary, fontSize: 10, padding: '3px 7px' }} onClick={e => {
                                   e.stopPropagation();
                                   const bin = atob(awbRes.labelBase64!);
@@ -1255,10 +1294,11 @@ export default function XConnectorPage() {
                                   a.href = url; a.download = `AWB_GLS_${existingAwb}.pdf`; a.click();
                                   URL.revokeObjectURL(url);
                                 }}>🖨 PDF</button>
-                              )}
-                              {(awbRes?.myglsUrl || order.shipment?.labelUrl) && (
-                                <a href={awbRes?.myglsUrl || order.shipment?.labelUrl || undefined} target="_blank" rel="noreferrer"
-                                  onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>
+                              ) : null}
+                              {(awbRes?.myglsUrl || order.shipment?.trackingUrl) && (
+                                <a href={awbRes?.myglsUrl || order.shipment?.trackingUrl || undefined}
+                                  target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                                  style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>
                                   🔍 Track
                                 </a>
                               )}
