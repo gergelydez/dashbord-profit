@@ -904,11 +904,24 @@ export default function XConnectorPage() {
   const [wizardOrder, setWizardOrder]     = useState<EnrichedOrder | null>(null);
   const [wizardLoading, setWizardLoading] = useState(false);
 
-  /* ── AWB Results (pentru label PDF descarcabil) ── */
-  const [awbResults, setAwbResults] = useState<Record<string, {
+  /* ── AWB Results — persistate in localStorage (supravietuiesc refresh) ── */
+  const [awbResults, setAwbResultsRaw] = useState<Record<string, {
     awb: string; courier: string; labelBase64?: string | null;
     trackUrl?: string; myglsUrl?: string; labelUrl?: string | null;
-  }>>({});
+  }>>(() => {
+    try {
+      const s = typeof window !== 'undefined' ? localStorage.getItem('xc_awb_results') : null;
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+  });
+
+  const setAwbResults = useCallback((updater: any) => {
+    setAwbResultsRaw((prev: any) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try { localStorage.setItem('xc_awb_results', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   /* ── Per-row action state ── */
   const [actionStates, setActionStates] = useState<Record<string, RowActionState>>({});
