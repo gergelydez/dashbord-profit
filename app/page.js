@@ -8,7 +8,6 @@ const ls = {
   del: (k) => { try { if (typeof window !== 'undefined') localStorage.removeItem(k); } catch {} },
 };
 
-// ── MULTI-SHOP HELPERS ─────────────────────────────────────────────────────
 
 // Cache pentru shopurile configurate server-side (env vars)
 let _serverShopsCache = null;
@@ -25,12 +24,7 @@ async function getServerConfiguredShops() {
   return [];
 }
 
-// Verifică dacă shopul curent e configurat server-side (nu necesită credențiale manuale)
-async function isServerConfigured(shopKey) {
-  const shops = await getServerConfiguredShops();
-  return shops.includes(shopKey);
-}
-
+// ── MULTI-SHOP HELPERS ─────────────────────────────────────────────────────
 function getShopKey() {
   try {
     const s = typeof window !== 'undefined' ? localStorage.getItem('glamx-shop') : null;
@@ -217,15 +211,6 @@ const fmt = n => Number(n||0).toLocaleString('ro-RO', { minimumFractionDigits:2,
 const fmtD = d => { if (!d) return '—'; try { const p=d.split('T')[0].split('-'); return `${p[2]}.${p[1]}.${p[0]}`; } catch { return d.slice(0,10); } };
 const pct = (a,b) => b ? Math.round(a/b*100) : 0;
 
-// Monedă dinamică per magazin
-const getCurrency = () => {
-  try {
-    const s = typeof window !== 'undefined' ? localStorage.getItem('glamx-shop') : null;
-    const p = s ? JSON.parse(s) : null;
-    const sk = p?.state?.currentShop || 'ro';
-    return sk === 'hu' ? 'HUF' : 'RON';
-  } catch { return 'RON'; }
-};
 
 /**
  * ServerShopAutoConnect — dacă shopul curent e configurat server-side (env vars),
@@ -233,7 +218,7 @@ const getCurrency = () => {
  * Apelează fetchOrders() automat și ascunde formularul.
  */
 function ServerShopAutoConnect({ fetchOrders, children }) {
-  const [isServerShop, setIsServerShop] = useState(null); // null = loading, true/false = known
+  const [isServerShop, setIsServerShop] = useState(null);
   const [label, setLabel] = useState('');
   const fetchCalledRef = useRef(false);
 
@@ -251,7 +236,6 @@ function ServerShopAutoConnect({ fetchOrders, children }) {
     });
   }, [fetchOrders]);
 
-  // Loading check
   if (isServerShop === null) {
     return (
       <div className="setup" style={{textAlign:'center'}}>
@@ -262,7 +246,6 @@ function ServerShopAutoConnect({ fetchOrders, children }) {
     );
   }
 
-  // Server-configured shop — show auto-connect spinner instead of credentials form
   if (isServerShop) {
     return (
       <div className="setup" style={{textAlign:'center'}}>
@@ -274,7 +257,6 @@ function ServerShopAutoConnect({ fetchOrders, children }) {
     );
   }
 
-  // Manual credentials needed — show the normal setup form
   return children;
 }
 
@@ -388,37 +370,24 @@ export default function Dashboard() {
     if (d) setDomain(d);
     setCurrency(sk === 'hu' ? 'HUF' : 'RON');
     setTimeout(loadSbSeries, 500);
-    // Per-shop cache keys (HU uses gx_orders_all_hu, RO uses legacy keys)
     const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        // Aplicăm overrides direct în o.ts la încărcare — stabile imediat
         const parsedWithOv = applyTrackingOverrides(parsed);
         setAllOrders(parsedWithOv);
         setConnected(true);
-        const ts = ls.get('gx_fetch_time_' + sk) || ls.get('gx_fetch_time');
+        const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
-        const ff = ls.get('gx_fetched_from_' + sk) || ls.get('gx_fetched_from');
+        const ff = ls.get('gx_fetched_from');
         if (ff) setFetchedFrom(ff);
         applyDateFilter(parsedWithOv, 'last_30', '', '');
-        // Cache stale check: dacă datele sunt mai vechi de 2h SAU mai puțin de 30 de comenzi,
-        // facem refresh automat în background pentru shop-urile server-configured
-        const fetchTime = ts ? new Date(ts) : null;
-        const isStale = !fetchTime || (Date.now() - fetchTime.getTime() > 2 * 60 * 60 * 1000);
-        const isSparse = parsed.length < 30;
-        if (isStale || isSparse) {
-          getServerConfiguredShops().then(serverShops => {
-            if (serverShops.includes(sk)) {
-              setTimeout(() => fetchOrders(), 1500);
-            }
-          });
-        }
       } catch {}
     } else {
-      // No cached orders — check if shop is server-configured and auto-fetch
+      // No cached orders — check if shop is server-configured (HU) and auto-fetch
       getServerConfiguredShops().then(serverShops => {
         if (serverShops.includes(sk)) {
-          // Server-configured shop (RO + HU) — auto-connect without manual credentials
           fetchOrders();
         }
       });
@@ -435,7 +404,7 @@ export default function Dashboard() {
       if (t) setToken(t); else setToken('');
       if (d) setDomain(d);
       setCurrency(sk === 'hu' ? 'HUF' : 'RON');
-      const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
+      const saved = ls.get(ordersKey(sk));
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
@@ -445,19 +414,9 @@ export default function Dashboard() {
           setFiltered(withOv);
           setConnected(true);
           applyDateFilter(withOv, 'last_30', '', '');
-          // Refresh automat dacă cache e stale (>2h) sau incomplet (<30 comenzi)
-          const ts2 = ls.get('gx_fetch_time_' + sk) || ls.get('gx_fetch_time');
-          const fetchTime2 = ts2 ? new Date(ts2) : null;
-          const isStale2 = !fetchTime2 || (Date.now() - fetchTime2.getTime() > 2 * 60 * 60 * 1000);
-          const isSparse2 = parsed.length < 30;
-          if (isStale2 || isSparse2) {
-            getServerConfiguredShops().then(serverShops => {
-              if (serverShops.includes(sk)) setTimeout(() => fetchOrders(), 1500);
-            });
-          }
         } catch {}
       } else {
-        // No local cache — check if server-configured (RO + HU) and auto-fetch
+        // No local cache — check if server-configured (HU) and auto-fetch
         setAllOrders([]); setOrders([]); setFiltered([]);
         setConnected(false);
         getServerConfiguredShops().then(serverShops => {
@@ -470,7 +429,7 @@ export default function Dashboard() {
     // Also listen for the custom glamx:shop event dispatched by StoreSwitcher
     const onGlamxShop = (e) => {
       const sk = e.detail || getShopKey();
-      const saved = ls.get(ordersKey(sk)) || (sk === 'ro' ? ls.get('gx_orders_60') : null);
+      const saved = ls.get(ordersKey(sk));
       if (!saved) {
         setAllOrders([]); setOrders([]); setFiltered([]);
         setConnected(false);
@@ -536,17 +495,14 @@ export default function Dashboard() {
   }, [deliveryMode, preset, customFrom, customTo, getLivrateInPeriod, search, sortCol, sortDir, courierFilter, applyFilters]);
 
   const fetchOrdersRange = async (fromDate, force=false, useServerApi=false, sk=null) => {
-    let url;
     if (useServerApi && sk) {
-      // DB-based fetch — datele vin deja transformate din webhook (nu mai trec prin procOrder)
-      url = `/api/orders-server?shop=${encodeURIComponent(sk)}&created_at_min=${fromDate}${force?'&force=1':''}`;
+      const url = `/api/orders-server?shop=${encodeURIComponent(sk)}&created_at_min=${fromDate}${force?'&force=1':''}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok || !data.orders) throw new Error(data.error || data.warning || 'Răspuns invalid');
-      // Ordinele din DB sunt deja în formatul dashboard — aplicam doar applyTrackingOverrides
       return data.orders;
     } else {
-      url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
+      const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
@@ -558,17 +514,10 @@ export default function Dashboard() {
     const sk = getShopKey();
     const serverShops = await getServerConfiguredShops();
     const useServer = serverShops.includes(sk);
-    if (!useServer && (!domain || !token)) { setError('Completează domeniul și tokenul!'); return; }
-    if (!useServer) {
-      ls.set(domainKey(sk), domain);
-      ls.set(tokenKey(sk), token);
-      if (sk === 'ro') { ls.set('gx_d', domain); ls.set('gx_t', token); }
-    }
-    setLoading(true); setError('');
 
     if (useServer) {
-      // ── SERVER SHOP (HU etc.) — citim direct din DB (webhook data) ──────────
-      // DB-ul are TOATE comenzile, facem un singur fetch cu 1 an
+      // ── SERVER SHOP (HU) — citim direct din DB ──────────────────────────────
+      setLoading(true); setError('');
       try {
         const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
         const allFromDb = await fetchOrdersRange(d365, !!forceMode, true, sk);
@@ -590,56 +539,70 @@ export default function Dashboard() {
       return;
     }
 
-    // ── MANUAL SHOP (RO cu credențiale) — 3 faze: 30 → 60 → 365 zile ────────
+    // ── MANUAL SHOP (RO cu credențiale) — exact ca v21 ──────────────────────
+    if (!domain || !token) { setError('Completează domeniul și tokenul!'); return; }
+    ls.set(domainKey(sk), domain);
+    ls.set(tokenKey(sk), token);
+    // Backward compat — RO credentials also saved under legacy keys
+    if (sk === 'ro') { ls.set('gx_d', domain); ls.set('gx_t', token); }
+    setLoading(true); setError('');
+
+    // FAZA 1: Ultimele 30 zile — rapid, eroarea e vizibilă
     let fast = [];
     try {
       const d30 = toISO(new Date(Date.now() - 30*24*60*60*1000));
-      fast = await fetchOrdersRange(d30, !!forceMode, false, sk);
+      fast = await fetchOrdersRange(d30, !!forceMode);
       const fastWithOverrides = applyTrackingOverrides(fast);
       setAllOrders(fastWithOverrides);
       setConnected(true);
       setFetchedFrom(d30);
       const now = new Date();
       setLastFetch(now);
-      ls.set(ordersKey(sk), JSON.stringify(fastWithOverrides));
-      ls.set('gx_fetch_time_' + sk, now.toISOString());
-      ls.set('gx_fetched_from_' + sk, d30);
+      ls.set('gx_orders_60', JSON.stringify(fastWithOverrides));
+      ls.set('gx_fetch_time', now.toISOString());
+      ls.set('gx_fetched_from', d30);
       applyDateFilter(fastWithOverrides, preset, customFrom, customTo);
     } catch (e) {
       setError('Eroare: ' + e.message);
       setLoading(false);
-      return;
+      return; // Oprим dacă faza 1 eșuează
     } finally {
       setLoading(false);
     }
 
+    // FAZA 2 + 3: Background silențios — erorile nu se afișează
+    // IMPORTANT: mergem comenzile noi cu ts-urile DIN STATE (nu din Shopify raw)
+    // ca să nu pierdem rezultatele de tracking GLS
     setBgLoading(true);
     try {
       const d60 = toISO(new Date(Date.now() - 60*24*60*60*1000));
-      const mid = await fetchOrdersRange(d60, false, false, sk);
+      const mid = await fetchOrdersRange(d60, false);
       const fastIds = new Set(fast.map(o => o.id));
       const midNew = mid.filter(o => !fastIds.has(o.id));
+      // Adăugăm doar comenzile NOI (nu suprascrim cele existente din state)
       setAllOrders(prev => {
         const prevIds = new Set(prev.map(o => o.id));
         const toAdd = applyTrackingOverrides(midNew.filter(o => !prevIds.has(o.id)));
         if (!toAdd.length) return prev;
         const merged60 = [...prev, ...toAdd];
         ls.set(ordersKey(getShopKey()), JSON.stringify(merged60));
-        ls.set('gx_fetched_from_' + getShopKey(), d60);
+        ls.set('gx_fetched_from', d60);
         return merged60;
       });
       setFetchedFrom(d60);
 
+      // Faza 3 — 1 an
       try {
         const d365 = toISO(new Date(Date.now() - 365*24*60*60*1000));
-        const oldOrders = await fetchOrdersRange(d365, false, false, sk);
+        const oldOrders = await fetchOrdersRange(d365, false);
+        // Adăugăm doar comenzile NOI — nu atingem cele existente cu ts corect
         setAllOrders(prev => {
           const prevIds = new Set(prev.map(o => o.id));
           const toAdd = applyTrackingOverrides(oldOrders.filter(o => !prevIds.has(o.id)));
           if (!toAdd.length) return prev;
           const merged = [...prev, ...toAdd];
           ls.set(ordersKey(getShopKey()), JSON.stringify(merged));
-          ls.set('gx_fetched_from_' + getShopKey(), d365);
+          ls.set('gx_fetched_from', d365);
           return merged;
         });
         setFetchedFrom(d365);
@@ -1342,25 +1305,25 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
 
         {!connected && !loading && (
           <ServerShopAutoConnect fetchOrders={fetchOrders}>
-            <div className="setup">
-              <h2>🔌 Conectare Shopify</h2>
-              {(() => {
-                try {
-                  const s = localStorage.getItem('glamx-shop');
-                  const p = s ? JSON.parse(s) : null;
-                  const sk = p?.state?.currentShop || 'ro';
-                  const label = sk === 'ro' ? '🇷🇴 Romania' : sk === 'hu' ? '🇭🇺 Ungaria' : sk.toUpperCase();
-                  if (sk !== 'ro') return <p style={{background:'rgba(249,115,22,.1)',border:'1px solid rgba(249,115,22,.3)',borderRadius:8,padding:'8px 12px',fontSize:13,color:'#f97316',marginBottom:8}}>Magazin activ: <strong>{label}</strong> — introdu credențialele pentru acest magazin.</p>;
-                } catch {}
-                return <p>Introdu datele magazinului pentru a vedea comenzile live.</p>;
-              })()}
-              <div className="info">🔒 Tokenul e trimis doar la Shopify prin serverul Next.js — fără CORS.</div>
-              <label className="lbl">Domeniu magazin</label>
-              <input type="text" value={domain} onChange={e=>setDomain(e.target.value)} placeholder="glamxonline.myshopify.com" />
-              <label className="lbl">Admin API Access Token</label>
-              <input type="password" value={token} onChange={e=>setToken(e.target.value)} placeholder="shpat_..." autoComplete="off" />
-              <button className="cbtn" onClick={() => fetchOrders()}>🚀 Conectează &amp; Încarcă</button>
-            </div>
+          <div className="setup">
+            <h2>🔌 Conectare Shopify</h2>
+            {(() => {
+              try {
+                const s = localStorage.getItem('glamx-shop');
+                const p = s ? JSON.parse(s) : null;
+                const sk = p?.state?.currentShop || 'ro';
+                const label = sk === 'ro' ? '🇷🇴 Romania' : sk === 'hu' ? '🇭🇺 Ungaria' : sk.toUpperCase();
+                if (sk !== 'ro') return <p style={{background:'rgba(249,115,22,.1)',border:'1px solid rgba(249,115,22,.3)',borderRadius:8,padding:'8px 12px',fontSize:13,color:'#f97316',marginBottom:8}}>Magazin activ: <strong>{label}</strong> — introdu credențialele pentru acest magazin.</p>;
+              } catch {}
+              return <p>Introdu datele magazinului pentru a vedea comenzile live.</p>;
+            })()}
+            <div className="info">🔒 Tokenul e trimis doar la Shopify prin serverul Next.js — fără CORS.</div>
+            <label className="lbl">Domeniu magazin</label>
+            <input type="text" value={domain} onChange={e=>setDomain(e.target.value)} placeholder="glamxonline.myshopify.com" />
+            <label className="lbl">Admin API Access Token</label>
+            <input type="password" value={token} onChange={e=>setToken(e.target.value)} placeholder="shpat_..." autoComplete="off" />
+            <button className="cbtn" onClick={() => fetchOrders()}>🚀 Conectează &amp; Încarcă</button>
+          </div>
           </ServerShopAutoConnect>
         )}
 
@@ -1962,7 +1925,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                         style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'6px 9px',borderRadius:6,fontSize:11,outline:'none'}} />
                     </div>
                     <div style={{width:100}}>
-                      <div style={{fontSize:9,color:'#4a5568',marginBottom:3,textTransform:'uppercase'}}>Preț ({currency})</div>
+                      <div style={{fontSize:9,color:'#4a5568',marginBottom:3,textTransform:'uppercase'}}>{`Preț (${currency})`}</div>
                       <input type="number" step="0.01" min="0" value={item.price} onChange={e=>setInvoiceModal(prev=>{const items=[...prev.editItems];items[idx]={...items[idx],price:parseFloat(e.target.value)||0};return{...prev,editItems:items};})}
                         style={{width:'100%',background:'#161d24',border:'1px solid #243040',color:'#e8edf2',padding:'6px 9px',borderRadius:6,fontSize:11,outline:'none'}} />
                     </div>
