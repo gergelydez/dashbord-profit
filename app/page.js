@@ -216,7 +216,9 @@ function ServerShopAutoConnect({ fetchOrders, children }) {
   const fetchCalledRef = useRef(false);
   useEffect(() => {
     const sk = getShopKey();
-    setLabel(sk === 'hu' ? '🇭🇺 Ungaria' : sk === 'ro' ? '🇷🇴 Romania' : sk.toUpperCase());
+    // RO folosește credențiale manuale — afișăm direct formularul, fără verificare server
+    if (sk === 'ro') { setIsServerShop(false); return; }
+    setLabel(sk === 'hu' ? '🇭🇺 Ungaria' : sk.toUpperCase());
     getServerConfiguredShops().then(shops => {
       const isServer = shops.includes(sk);
       setIsServerShop(isServer);
