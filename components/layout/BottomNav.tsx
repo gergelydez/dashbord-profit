@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { href: '/xconnector',         icon: '⚡', label: 'xConnector' },
   { href: '/stats',              icon: '📊', label: 'Stats' },
   { href: '/profit',             icon: '💹', label: 'Profit' },
+  { href: '/import',             icon: '🚢', label: 'Import' },
   { href: '/sales-engine-pro',   icon: '💰', label: 'Sales' },
   { href: '/whatsapp',           icon: '📱', label: 'Chat' },
 ];
