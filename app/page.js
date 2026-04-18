@@ -324,30 +324,18 @@ export default function Dashboard() {
   useEffect(() => {
     const onStorage = (e) => {
       if (e.key !== 'glamx-shop') return;
-      const sk = getShopKey();
-      const t = ls.get(tokenKey(sk))  || (sk !== 'ro' ? null : ls.get('gx_t'));
-      const d = ls.get(domainKey(sk)) || (sk !== 'ro' ? null : ls.get('gx_d'));
-      if (t) setToken(t); else setToken('');
-      if (d) setDomain(d);
-      const saved = ls.get(ordersKey(sk));
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          const withOv = applyTrackingOverrides(parsed);
-          setAllOrders(withOv);
-          setOrders(withOv);
-          setFiltered(withOv);
-          setConnected(true);
-          applyDateFilter(withOv, 'last_30', '', '');
-        } catch {}
-      } else {
-        // Magazin nou — fără date încă
-        setAllOrders([]); setOrders([]); setFiltered([]);
-        setConnected(false);
-      }
+      // Reload pagina la schimbare magazin — cel mai simplu și sigur
+      window.location.reload();
+    };
+    const onGlamxShop = () => {
+      window.location.reload();
     };
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener('glamx:shop', onGlamxShop);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('glamx:shop', onGlamxShop);
+    };
   }, []); // applyDateFilter is stable (useCallback []) — safe to omit from deps
 
   const applyDateFilter = useCallback((ords, p, cf, ct) => {
@@ -1159,12 +1147,12 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
           {/* ROW 2: Nav links — mobile: sub logo, desktop: în hr */}
           {connected && (
             <div className="header-nav">
-              <a href="/profit" className="nav-link" style={{background:'rgba(16,185,129,.12)',color:'#10b981',border:'1px solid rgba(16,185,129,.25)'}}>💹 Profit</a>
-              <a href="/stats" className="nav-link" style={{background:'rgba(59,130,246,.12)',color:'#3b82f6',border:'1px solid rgba(59,130,246,.25)'}}>📊 Statistici</a>
-              <a href="/import" className="nav-link" style={{background:'rgba(168,85,247,.12)',color:'#a855f7',border:'1px solid rgba(168,85,247,.25)'}}>📦 Import</a>
-              <a href="/fulfillment" className="nav-link" style={{background:'rgba(249,115,22,.12)',color:'#f97316',border:'1px solid rgba(249,115,22,.25)'}}>⚡ Fulfillment</a>
-<a href="/sales-engine-pro" className="nav-link" style={{background:'rgba(249,115,22,.12)',color:'#f97316',border:'1px solid rgba(249,115,22,.25)'}}>💰 SalesEnginePro</a>
-              <a href="/whatsapp" className="nav-link" style={{background:'rgba(37,211,102,.12)',color:'#25d366',border:'1px solid rgba(37,211,102,.25)'}}>📱 WhatsApp</a>
+              <a href="/profit"       className="nav-link" style={{background:'rgba(16,185,129,.12)', color:'#10b981',border:'1px solid rgba(16,185,129,.25)'}}>💹 Profit</a>
+              <a href="/stats"        className="nav-link" style={{background:'rgba(59,130,246,.12)', color:'#3b82f6',border:'1px solid rgba(59,130,246,.25)'}}>📊 Stats</a>
+              <a href="/xconnector"   className="nav-link" style={{background:'rgba(249,115,22,.12)', color:'#f97316',border:'1px solid rgba(249,115,22,.25)'}}>⚡ xConn</a>
+              <a href="/import"       className="nav-link" style={{background:'rgba(168,85,247,.12)', color:'#a855f7',border:'1px solid rgba(168,85,247,.25)'}}>🚢 Import</a>
+              <a href="/fulfillment"  className="nav-link" style={{background:'rgba(249,115,22,.12)', color:'#f97316',border:'1px solid rgba(249,115,22,.25)'}}>📦 Fulfil</a>
+              <a href="/whatsapp"     className="nav-link" style={{background:'rgba(37,211,102,.12)', color:'#25d366',border:'1px solid rgba(37,211,102,.25)'}}>📱 Chat</a>
             </div>
           )}
         </header>
