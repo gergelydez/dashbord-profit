@@ -140,15 +140,21 @@ header {
 .bottom-nav-items { display:grid; grid-template-columns:repeat(6,1fr); height:var(--nav-h); }
 .bn-item {
   display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:3px; color:var(--c-text4); text-decoration:none;
-  font-size:9px; font-weight:700; letter-spacing:.3px; text-transform:uppercase;
+  gap:2px; color:var(--c-text4); text-decoration:none;
+  font-size:8.5px; font-weight:700; letter-spacing:.2px; text-transform:uppercase;
   transition:color var(--t-fast); cursor:pointer;
-  background:none; border:none; padding:4px 2px;
+  background:none; border:none; padding:4px 1px;
+  position:relative;
 }
-.bn-icon { font-size:22px; line-height:1; transition:transform var(--t-base); }
+.bn-icon { font-size:20px; line-height:1; transition:transform var(--t-base); }
 .bn-item:active { transform:scale(.9); }
 .bn-item.active { color:var(--c-orange); }
-.bn-item.active .bn-icon { transform:scale(1.15); }
+.bn-item.active .bn-icon { transform:scale(1.18); }
+.bn-item.active::after {
+  content:''; position:absolute; top:0; left:20%; right:20%;
+  height:2px; background:var(--c-orange);
+  border-radius:0 0 3px 3px;
+}
 
 /* ══════════════════════════════════════
    BUTTONS
