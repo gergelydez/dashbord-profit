@@ -12,12 +12,12 @@ import { useShopStore } from '@/lib/store/shop-store';
 const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺' };
 
 const NAV_ITEMS = [
-  { href: '/',                icon: '📦', label: 'Comenzi' },
-  { href: '/xconnector',      icon: '⚡', label: 'xConnector' },
-  { href: '/stats',           icon: '📊', label: 'Stats' },
-  { href: '/profit',          icon: '💹', label: 'Profit' },
-  { href: '/whatsapp',        icon: '📱', label: 'Chat' },
-  { href: '/import',          icon: '🚢', label: 'Import' },
+  { href: '/',                   icon: '📦', label: 'Comenzi' },
+  { href: '/xconnector',         icon: '⚡', label: 'xConnector' },
+  { href: '/stats',              icon: '📊', label: 'Stats' },
+  { href: '/profit',             icon: '💹', label: 'Profit' },
+  { href: '/sales-engine-pro',   icon: '💰', label: 'Sales' },
+  { href: '/whatsapp',           icon: '📱', label: 'Chat' },
 ];
 
 export function BottomNav() {
