@@ -557,7 +557,7 @@ export default function ImportCalc() {
               </div>
             </div>
 
-            <button className="nbtn" onClick={() => setStep(2)} disabled={products.every(p => !p.name.trim() && !p.unitPriceUSD)}>
+            <button className="nbtn" onClick={() => setStep(2)} style={{position:'sticky',bottom:80,zIndex:10}}>
               Continuă → DVI & Taxe Vamale
             </button>
           </div>
