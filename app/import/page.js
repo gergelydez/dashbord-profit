@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 const fmt = (n, d=2) => Number(n||0).toLocaleString('ro-RO', {minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtRON = n => `${fmt(n)} RON`;
 
-const EMPTY = {name:'', sku:'', qty:'1', unitPriceUSD:'0', taxaVamala:'', tvaPercent:'21'};
+const EMPTY = {name:'', sku:'', qty:'1', unitPriceUSD:'', taxaVamala:'', tvaPercent:'21'};
 
 export default function ImportCalc() {
   const [mounted, setMounted] = useState(false);
@@ -557,7 +557,7 @@ export default function ImportCalc() {
               </div>
             </div>
 
-            <button className="nbtn" onClick={() => setStep(2)} disabled={totalUSD === 0}>
+            <button className="nbtn" onClick={() => setStep(2)} disabled={products.every(p => !p.name.trim() && !p.unitPriceUSD)}>
               Continuă → DVI & Taxe Vamale
             </button>
           </div>
