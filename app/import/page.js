@@ -557,7 +557,7 @@ export default function ImportCalc() {
               </div>
             </div>
 
-            <button className="nbtn" onClick={() => setStep(2)} style={{position:'sticky',bottom:80,zIndex:10}}>
+            <button className="nbtn" onClick={() => setStep(2)} style={{position:'sticky',bottom:70,zIndex:20,marginTop:12,background:'linear-gradient(135deg,#f97316,#ea580c)',boxShadow:'0 4px 20px rgba(249,115,22,.4)'}}>
               Continuă → DVI & Taxe Vamale
             </button>
           </div>
@@ -667,7 +667,7 @@ export default function ImportCalc() {
               </div>
             )}
 
-            <div style={{display:'flex',gap:10,marginTop:12}}>
+            <div style={{display:'flex',gap:10,marginTop:12,position:'sticky',bottom:70,zIndex:20,background:'#070d12',padding:'10px 0',borderTop:'1px solid #1a2535'}}>
               <button className="bbtn" onClick={() => setStep(1)}>← Înapoi</button>
               <button className="nbtn" style={{flex:2,marginTop:0}} onClick={() => setStep(3)}>
                 Calculează Rezultatele →
