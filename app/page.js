@@ -13,7 +13,7 @@ let _serverShopsCache = null;
 async function getServerConfiguredShops() {
   if (_serverShopsCache) return _serverShopsCache;
   try {
-    const res = await fetch('/api/orders-server', { method: 'POST' });
+    const res = await fetch('/api/orders', { method: 'POST' });
     if (res.ok) {
       const data = await res.json();
       _serverShopsCache = (data.shops || []).map(s => s.key);
@@ -472,11 +472,11 @@ export default function Dashboard() {
 
   const fetchOrdersRange = async (fromDate, force=false, useServerApi=false, shopKey=null, explicitDomain=null, explicitToken=null) => {
     if (useServerApi && shopKey) {
-      const url = `/api/orders-server?shop=${encodeURIComponent(shopKey)}&created_at_min=${fromDate}${force?'&force=1':''}`;
+      const url = `/api/orders?shop=${encodeURIComponent(shopKey)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
       const res = await fetch(url);
       const data = await res.json();
-      if (!res.ok || !data.orders) throw new Error(data.error || data.warning || 'Răspuns invalid');
-      return data.orders;
+      if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
+      return data.orders.map(procOrder);
     }
     const d = explicitDomain || domain;
     const t = explicitToken  || token;
@@ -506,9 +506,12 @@ export default function Dashboard() {
           ls.set(ordersKey(sk), JSON.stringify(withOv));
           ls.set('gx_fetch_time_' + sk, now.toISOString());
           ls.set('gx_fetched_from_' + sk, d365);
+          // Ștergem cheile vechi pentru a evita confuzia
+          if (sk === 'ro') { ls.del('gx_orders_60'); ls.del('gx_fetch_time'); ls.del('gx_fetched_from'); }
           applyDateFilter(withOv, preset, customFrom, customTo);
         } catch (e) {
-          setError('Eroare DB: ' + e.message);
+          setError('Eroare fetch comenzi: ' + e.message);
+          console.error('[fetchOrders server]', e);
         } finally {
           setLoading(false);
         }
