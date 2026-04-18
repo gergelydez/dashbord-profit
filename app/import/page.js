@@ -669,7 +669,7 @@ export default function ImportCalc() {
 
             <div style={{display:'flex',gap:10,marginTop:12}}>
               <button className="bbtn" onClick={() => setStep(1)}>← Înapoi</button>
-              <button className="nbtn" style={{flex:2,marginTop:0}} onClick={() => setStep(3)} disabled={!cursValutar}>
+              <button className="nbtn" style={{flex:2,marginTop:0}} onClick={() => setStep(3)}>
                 Calculează Rezultatele →
               </button>
             </div>
