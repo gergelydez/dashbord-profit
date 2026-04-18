@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { SHOP_CONFIGS } from '@/lib/shops';
 
 const serverCache = new Map();
 const CACHE_TTL = 60 * 1000;
@@ -137,9 +138,19 @@ function toRestOrder(node) {
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const forceRefresh = searchParams.get('force') === '1';
-  const domain = searchParams.get('domain');
-  const token = searchParams.get('token');
+  const shopKey = searchParams.get('shop') || null;
   const createdMin = (searchParams.get('created_at_min') || '2020-01-01T00:00:00').slice(0, 10);
+
+  // Dacă se trimite shop= folosim env vars din Vercel (nu mai trebuie domain+token din browser)
+  let domain = searchParams.get('domain');
+  let token = searchParams.get('token');
+  if (shopKey && (!domain || !token)) {
+    const shopConfig = SHOP_CONFIGS.find(s => s.key === shopKey);
+    if (shopConfig) {
+      domain = shopConfig.domain;
+      token = shopConfig.accessToken;
+    }
+  }
 
   if (!domain || !token) {
     return NextResponse.json({ error: 'Missing domain or token' }, { status: 400 });
@@ -252,4 +263,10 @@ export async function PUT(req) {
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
+}
+
+// POST — returnează shop-urile configurate server-side (pentru getServerConfiguredShops)
+export async function POST() {
+  const shops = SHOP_CONFIGS.filter(s => s.domain && s.accessToken).map(s => ({ key: s.key, label: s.label }));
+  return NextResponse.json({ shops });
 }
