@@ -70,19 +70,27 @@ function mapDbOrder(o) {
   let noteInvoiceUrl = '';
   let noteInvoiceShort = '';
   let noteInvoiceNumber = '';
+  let noteInvoiceSeries = '';
+  let noteHasInvoicedTag = false;
   try {
     const notes = o.rawPayload?.note_attributes || [];
-    const invAttr  = notes.find(a => (a.name || '').toLowerCase().includes('invoice-url') && !(a.name || '').toLowerCase().includes('short'));
-    const shortAttr = notes.find(a => (a.name || '').toLowerCase().includes('invoice-short-url'));
-    noteInvoiceUrl   = invAttr?.value || '';
-    noteInvoiceShort = shortAttr?.value || '';
-    const m = noteInvoiceUrl.match(/[?&]n=(\d+)/);
-    noteInvoiceNumber = m ? m[1] : '';
+    const rawTags = (o.rawPayload?.tags || '').toLowerCase();
+    noteHasInvoicedTag = rawTags.includes('invoiced');
+    const invAttr   = notes.find(a => { const n=(a.name||'').toLowerCase(); return (n.includes('invoice-url')||n.includes('invoice_url')) && !n.includes('short'); });
+    const shortAttr = notes.find(a => { const n=(a.name||'').toLowerCase(); return n.includes('invoice-short')||n.includes('invoice_short'); });
+    const numAttr   = notes.find(a => { const n=(a.name||'').toLowerCase(); return n==='invoice-number'||n==='invoice_number'; });
+    const serAttr   = notes.find(a => { const n=(a.name||'').toLowerCase(); return n==='invoice-series'||n==='invoice_series'; });
+    noteInvoiceUrl    = invAttr?.value || '';
+    noteInvoiceShort  = shortAttr?.value || '';
+    noteInvoiceSeries = (serAttr?.value || '').trim();
+    const directNum   = (numAttr?.value || '').trim();
+    const m           = noteInvoiceUrl.match(/[?&]n=(\d+)/);
+    noteInvoiceNumber = directNum || (m ? m[1] : '');
   } catch {}
 
   const finalInvoiceUrl   = invoiceUrl || noteInvoiceUrl;
   const finalInvoiceShort = noteInvoiceShort;
-  const finalHasInvoice   = hasInvoice || !!(noteInvoiceUrl);
+  const finalHasInvoice   = hasInvoice || !!(noteInvoiceUrl || noteInvoiceNumber || noteHasInvoicedTag);
   const invoiceNumber     = invoice ? `${invoice.series}${invoice.number}` : noteInvoiceNumber;
 
   // Line items din DB (JSON)
