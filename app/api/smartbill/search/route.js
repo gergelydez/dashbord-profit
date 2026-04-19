@@ -28,7 +28,6 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
     );
     if (!getRes.ok) return { ok: false };
     const orderData = await getRes.json();
-
     const existingAttrs = (orderData.order?.note_attributes || []).filter(a => {
       const n = (a.name || '').toLowerCase();
       return !['xconnector-invoice-url', 'invoice-short-url', 'invoice-number', 'invoice-series', 'invoice-url'].includes(n);
@@ -41,7 +40,6 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
     );
     const tags = (orderData.order?.tags || '').split(',').map(t => t.trim()).filter(Boolean);
     if (!tags.includes('invoiced')) tags.push('invoiced');
-
     const updateRes = await fetch(
       `https://${shopifyDomain}/admin/api/2024-01/orders/${orderId}.json`,
       {
@@ -56,33 +54,38 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
 }
 
 // ── Fetch lista facturi SmartBill după perioadă ───────────────────────────────
-// SmartBill API: GET /invoice/list?cif=...&seriesName=...&from=YYYY-MM-DD&to=YYYY-MM-DD
 async function fetchInvoiceList(auth, cif, seriesName, from, to) {
-  const url = `${BASE}/invoice/list?cif=${encodeURIComponent(cif)}&seriesName=${encodeURIComponent(seriesName)}&from=${from}&to=${to}`;
-  try {
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.list || data.invoices || data.invoicesList || [];
-  } catch (e) {
-    console.error('[SmartBill] fetchInvoiceList error:', e.message);
-    return [];
+  const urls = [
+    `${BASE}/invoice/list?cif=${encodeURIComponent(cif)}&seriesName=${encodeURIComponent(seriesName)}&from=${from}&to=${to}`,
+    `${BASE}/invoices?cif=${encodeURIComponent(cif)}&seriesName=${encodeURIComponent(seriesName)}&from=${from}&to=${to}`,
+  ];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const list = data.list || data.invoices || data.invoicesList || [];
+      if (list.length > 0) return list;
+    } catch {}
   }
+  return [];
 }
 
-// ── Fetch factură individuală (fallback) ──────────────────────────────────────
+// ── Fetch factură individuală ──────────────────────────────────────────────────
 async function fetchInvoice(auth, cif, seriesName, number) {
-  const url = `${BASE}/invoice?cif=${encodeURIComponent(cif)}&seriesName=${encodeURIComponent(seriesName)}&number=${encodeURIComponent(number)}`;
   try {
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await fetch(
+      `${BASE}/invoice?cif=${encodeURIComponent(cif)}&seriesName=${encodeURIComponent(seriesName)}&number=${encodeURIComponent(number)}`,
+      {
+        headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(6000),
+      }
+    );
     if (!res.ok) return null;
     const data = await res.json();
     return data.invoice || data.invoiceDetails || (data.seriesName || data.series ? data : null);
@@ -91,20 +94,17 @@ async function fetchInvoice(auth, cif, seriesName, number) {
 
 async function getSeriesList(auth, cif, preferredSeries) {
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
-  const endpoints = [
+  for (const url of [
     `${BASE}/invoice/series?cif=${encodeURIComponent(cif)}`,
     `${BASE}/series?cif=${encodeURIComponent(cif)}&type=f`,
     `${BASE}/series?cif=${encodeURIComponent(cif)}`,
-  ];
-
-  for (const url of endpoints) {
+  ]) {
     try {
       const res = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(8000) });
       if (!res.ok) continue;
       const data = await res.json();
       const list = data.list || data.invoiceSeries || data.seriesList || [];
       if (!list.length) continue;
-
       return list
         .map(s => ({ name: s.name || s, nextNumber: parseInt(s.nextNumber || s.next || 0) || null }))
         .sort((a, b) => {
@@ -119,7 +119,7 @@ async function getSeriesList(auth, cif, preferredSeries) {
 
 function matchInvoiceToOrder(inv, invNum, sName, order, cif) {
   const obs       = norm(inv.observations || inv.description || inv.mentions || inv.obs || '');
-  const clientInv = inv.clientName || inv.client?.name || inv.buyerName || inv.client || '';
+  const clientInv = inv.clientName || inv.client?.name || inv.buyerName || (typeof inv.client === 'string' ? inv.client : '') || '';
   const invTotal  = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || inv.amount || 0);
   const orderTotal= parseFloat(order.total) || 0;
   const cleanNum  = order.name.replace(/[^0-9]/g, '');
@@ -147,6 +147,49 @@ function matchInvoiceToOrder(inv, invNum, sName, order, cif) {
   return { series: sName, number: String(invNum), url: invoiceUrl, matchType, client: clientInv };
 }
 
+// ── Scanare completă prin numere individuale ──────────────────────────────────
+// Scanează de la nextNumber-1 până la 1, în batch-uri paralele de 20
+async function scanAllInvoices(auth, cif, sName, nextNum, orders, found, shopifyDomain, shopifyToken, shopifyUpdated, scanLog) {
+  const BATCH = 20; // apeluri paralele per rundă
+  const startNum = nextNum - 1;
+
+  scanLog.push(`${sName}: scan complet #${startNum}→#1 (${startNum} facturi)`);
+
+  for (let batch = startNum; batch >= 1; batch -= BATCH) {
+    if (Object.keys(found).length === orders.length) break;
+
+    const nums = [];
+    for (let n = batch; n >= Math.max(1, batch - BATCH + 1); n--) nums.push(n);
+
+    const results = await Promise.allSettled(
+      nums.map(n => fetchInvoice(auth, cif, sName, n))
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const inv = results[i].status === 'fulfilled' ? results[i].value : null;
+      if (!inv) continue;
+
+      for (const order of orders) {
+        if (found[order.name]) continue;
+        const match = matchInvoiceToOrder(inv, nums[i], sName, order, cif);
+        if (match) {
+          found[order.name] = match;
+          if (shopifyDomain && shopifyToken && order.id) {
+            const r = await markInvoiceInShopify({
+              shopifyDomain, shopifyToken,
+              orderId: order.id,
+              invoiceSeries: sName,
+              invoiceNumber: String(nums[i]),
+              invoiceUrl: match.url,
+            });
+            if (r.ok) shopifyUpdated.push(order.name);
+          }
+        }
+      }
+    }
+  }
+}
+
 // ── POST /api/smartbill/search ────────────────────────────────────────────────
 export async function POST(request) {
   try {
@@ -168,71 +211,52 @@ export async function POST(request) {
       seriesList = [{ name: seriesName, nextNumber: null }];
     }
     if (!seriesList.length) {
-      return NextResponse.json({
-        error: 'Nu s-au găsit serii de facturi. Selectează seria (ex: GLA) în câmpul Serie.',
-      }, { status: 400 });
+      return NextResponse.json({ error: 'Nu s-au găsit serii de facturi.' }, { status: 400 });
     }
 
     const found          = {};
     const shopifyUpdated = [];
 
-    // ── Calculează perioadele de căutare: ultimele 6 luni ────────────────────
-    const now     = new Date();
-    const periods = [];
-
-    for (let i = 0; i < 6; i++) {
-      let fromDate, toDate;
-
-      if (i === 0) {
-        // Luna curentă: de la 1 până azi
-        fromDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-        toDate   = now.toISOString().slice(0, 10);
-      } else {
-        // Luna i în urmă
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        fromDate = d.toISOString().slice(0, 10);
-        const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-        toDate   = lastDay.toISOString().slice(0, 10);
-      }
-
-      periods.push({ from: fromDate, to: toDate });
-    }
-
-    // ── Scanează fiecare serie ────────────────────────────────────────────────
     for (const serie of seriesList) {
+      if (Object.keys(found).length === orders.length) break;
+
       const sName = serie.name;
 
-      // Strategie 1: Fetch lista după perioadă (API eficient)
+      // ── Strategie 1: API list pe ultimele 6 luni ─────────────────────────
+      const now = new Date();
       let usedListAPI = false;
 
-      for (const period of periods) {
+      for (let i = 0; i < 6; i++) {
         if (Object.keys(found).length === orders.length) break;
+        let fromDate, toDate;
+        if (i === 0) {
+          fromDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+          toDate   = now.toISOString().slice(0, 10);
+        } else {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          fromDate = d.toISOString().slice(0, 10);
+          toDate   = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+        }
 
-        const invoices = await fetchInvoiceList(auth, cif, sName, period.from, period.to);
-
+        const invoices = await fetchInvoiceList(auth, cif, sName, fromDate, toDate);
         if (invoices.length > 0) {
           usedListAPI = true;
-          scanLog.push(`${sName}: ${period.from}→${period.to} = ${invoices.length} facturi`);
+          scanLog.push(`${sName}: ${fromDate}→${toDate} = ${invoices.length} facturi`);
 
           for (const inv of invoices) {
             if (Object.keys(found).length === orders.length) break;
-
             const invNum = inv.number || inv.invoiceNumber || inv.documentNumber;
             if (!invNum) continue;
 
             for (const order of orders) {
               if (found[order.name]) continue;
-
               const match = matchInvoiceToOrder(inv, invNum, sName, order, cif);
               if (match) {
                 found[order.name] = match;
                 if (shopifyDomain && shopifyToken && order.id) {
                   const r = await markInvoiceInShopify({
-                    shopifyDomain, shopifyToken,
-                    orderId: order.id,
-                    invoiceSeries: sName,
-                    invoiceNumber: String(invNum),
-                    invoiceUrl: match.url,
+                    shopifyDomain, shopifyToken, orderId: order.id,
+                    invoiceSeries: sName, invoiceNumber: String(invNum), invoiceUrl: match.url,
                   });
                   if (r.ok) shopifyUpdated.push(order.name);
                 }
@@ -242,60 +266,27 @@ export async function POST(request) {
         }
       }
 
-      // Strategie 2 (fallback): Scanare individuală dacă API list nu funcționează
+      // ── Strategie 2: Scan complet individual dacă API list nu merge ──────
       if (!usedListAPI && Object.keys(found).length < orders.length) {
         let nextNum = serie.nextNumber;
 
         if (!nextNum) {
-          const probes = [3000, 2000, 1500, 1000, 700, 500, 300, 200, 100, 50, 10, 5, 1];
-          for (const n of probes) {
-            const inv = await fetchInvoice(auth, cif, sName, n);
-            if (inv) { nextNum = n + 50; break; }
+          // Detectează nextNumber rapid cu binary search
+          let lo = 1, hi = 5000, last = 0;
+          while (lo <= hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            const inv = await fetchInvoice(auth, cif, sName, mid);
+            if (inv) { last = mid; lo = mid + 1; }
+            else { hi = mid - 1; }
           }
-          nextNum = nextNum || 100;
+          nextNum = last + 1;
         }
 
-        scanLog.push(`${sName}: API list indisponibil. Scan individual de la #${nextNum} (ultimele 300)`);
-
-        const startNum = nextNum - 1;
-        const endNum   = Math.max(1, startNum - 300);
-
-        for (let batch = startNum; batch >= endNum; batch -= 15) {
-          if (Object.keys(found).length === orders.length) break;
-
-          const nums = [];
-          for (let n = batch; n >= Math.max(endNum, batch - 14); n--) nums.push(n);
-
-          const results = await Promise.allSettled(
-            nums.map(n => fetchInvoice(auth, cif, sName, n))
-          );
-
-          for (let i = 0; i < results.length; i++) {
-            const inv = results[i].status === 'fulfilled' ? results[i].value : null;
-            if (!inv) continue;
-
-            for (const order of orders) {
-              if (found[order.name]) continue;
-              const match = matchInvoiceToOrder(inv, nums[i], sName, order, cif);
-              if (match) {
-                found[order.name] = match;
-                if (shopifyDomain && shopifyToken && order.id) {
-                  const r = await markInvoiceInShopify({
-                    shopifyDomain, shopifyToken,
-                    orderId: order.id,
-                    invoiceSeries: sName,
-                    invoiceNumber: String(nums[i]),
-                    invoiceUrl: match.url,
-                  });
-                  if (r.ok) shopifyUpdated.push(order.name);
-                }
-              }
-            }
-          }
-        }
+        await scanAllInvoices(
+          auth, cif, sName, nextNum, orders,
+          found, shopifyDomain, shopifyToken, shopifyUpdated, scanLog
+        );
       }
-
-      if (Object.keys(found).length === orders.length) break;
     }
 
     const notFound = orders.map(o => o.name).filter(n => !found[n]);
