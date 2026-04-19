@@ -38,6 +38,7 @@ const buildQuery = (cursor, createdAtMin) => {
           displayStatus
         }
         customAttributes { key value }
+        tags
       }
     }
   }
@@ -125,6 +126,7 @@ function toRestOrder(node) {
     total_price: node.totalPriceSet?.shopMoney?.amount || '0',
     currency: node.totalPriceSet?.shopMoney?.currencyCode || 'RON',
     note_attributes: (node.customAttributes || []).map(a => ({ name: a.key, value: a.value })),
+    tags: (node.tags || []).join(', '),
     utmSource: '', utmMedium: '', utmCampaign: '', referrerUrl: '', landingPage: '',
     email: node.email || '',
     phone: node.phone || node.shippingAddress?.phone || node.billingAddress?.phone || '',
