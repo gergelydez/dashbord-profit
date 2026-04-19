@@ -148,18 +148,21 @@ function procOrder(o) {
   const notes = o.note_attributes || [];
   const invUrlAttr   = notes.find(a => (a.name||'').toLowerCase().includes('invoice-url') && !(a.name||'').toLowerCase().includes('short'));
   const invShortAttr = notes.find(a => (a.name||'').toLowerCase().includes('invoice-short-url'));
+  const invNumAttr   = notes.find(a => (a.name||'').toLowerCase() === 'invoice-number');
+  const invSerAttr   = notes.find(a => (a.name||'').toLowerCase() === 'invoice-series');
   const invoiceUrl   = invUrlAttr?.value || '';
   const invoiceShort = invShortAttr?.value || '';
   const invNumMatch  = invoiceUrl.match(/[?&]n=(\d+)/);
-  const invoiceNumber = invNumMatch ? invNumMatch[1] : '';
-  const hasInvoice   = !!(invoiceUrl || invoiceShort);
+  const invoiceNumber = invNumAttr?.value || (invNumMatch ? invNumMatch[1] : '');
+  const invoiceSeries = invSerAttr?.value || '';
+  const hasInvoice   = !!(invoiceUrl || invoiceShort || invoiceNumber);
   return {
     id: o.id, name: o.name || '', fin: o.financial_status || '', ts,
     trackingNo, client: addr.name || '', oras: addr.city || '',
     total: parseFloat(o.total_price) || 0,
     prods, prodShort: prods.length > 45 ? prods.slice(0, 45) + '…' : prods,
     createdAt: o.created_at || '', fulfilledAt, courier, trackingCompany: fulfillmentData?.tracking_company || '',
-    invoiceNumber, hasInvoice, invoiceUrl, invoiceShort,
+    invoiceNumber, invoiceSeries, hasInvoice, invoiceUrl, invoiceShort,
     gateway: o.payment_gateway || '',
     paidAt: o.processed_at || '',
     currency: o.presentment_currency || o.currency || 'RON',
@@ -265,6 +268,8 @@ export default function Dashboard() {
   const [sbInvSeries, setSbInvSeries]   = useState(() => { try { return ls.get('sb_inv_series') || ''; } catch { return ''; } });
   const [sbInvSeriesList, setSbInvSeriesList] = useState([]);
   const [sbBulkLoading, setSbBulkLoading] = useState(false);
+  const [sbCheckLoading, setSbCheckLoading] = useState(false);
+  const [sbCheckResults, setSbCheckResults] = useState(null); // { found: {}, notFound: [] }
   const [invoiceModal, setInvoiceModal] = useState(null);
   const [sbEmail, setSbEmail] = useState(() => { try { return ls.get('sb_email') || ''; } catch { return ''; } });
   const [sbToken, setSbToken] = useState(() => { try { return ls.get('sb_token') || ''; } catch { return ''; } });
@@ -713,6 +718,73 @@ export default function Dashboard() {
     }
     setSbBulkLoading(false);
   };
+
+  const checkSmartBillInvoices = async () => {
+    const email = ls.get('sb_email');
+    const token = ls.get('sb_token');
+    const cif   = ls.get('sb_cif');
+    if (!email || !token || !cif) { setSbCredsOpen(true); return; }
+
+    const pending = noInvoicePaid.filter(o => !sbInvResults[o.id]?.ok);
+    if (!pending.length) return;
+
+    setSbCheckLoading(true);
+    setSbCheckResults(null);
+    try {
+      const shopifyDomain = ls.get(domainKey(getShopKey())) || ls.get('gx_d') || '';
+      const shopifyToken  = ls.get(tokenKey(getShopKey()))  || ls.get('gx_t') || '';
+
+      const res = await fetch('/api/smartbill/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email, token, cif,
+          shopifyDomain,
+          shopifyToken,
+          orders: pending.map(o => ({
+            id:     o.id,
+            name:   o.name,
+            client: o.client,
+            oras:   o.oras,
+            total:  o.total,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      setSbCheckResults(data);
+
+      // Marchează comenzile găsite ca facturate în state
+      if (data.found && Object.keys(data.found).length > 0) {
+        setAllOrders(prev => prev.map(o => {
+          const f = data.found[o.name];
+          if (!f) return o;
+          return {
+            ...o,
+            hasInvoice:     true,
+            invoiceNumber:  f.number,
+            invoiceSeries:  f.series,
+            invoiceUrl:     f.url || o.invoiceUrl,
+            invoiceShort:   f.url || o.invoiceShort,
+          };
+        }));
+        pending.forEach(o => {
+          const f = data.found[o.name];
+          if (f) {
+            setSbInvResults(prev => ({
+              ...prev,
+              [o.id]: { ok: true, series: f.series, number: f.number, foundInSB: true, matchType: f.matchType },
+            }));
+          }
+        });
+      }
+    } catch (e) {
+      setSbCheckResults({ error: e.message });
+    }
+    setSbCheckLoading(false);
+  };
+
 
   const loadSbSeries = async () => {
     const email = ls.get('sb_email');
@@ -1406,17 +1478,48 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     style={{background:'#f59e0b',color:'#000',padding:'5px 14px',borderRadius:7,fontSize:11,fontWeight:700,border:'none',cursor:'pointer',opacity:(sbBulkLoading||!sbInvSeries)?.5:1}}>
                     {sbBulkLoading?'⟳ Generare...':`⚡ Generează toate (${noInvoicePaid.filter(o=>!sbInvResults[o.id]?.ok).length})`}
                   </button>
+                  <button onClick={checkSmartBillInvoices} disabled={sbCheckLoading}
+                    style={{background:'rgba(16,185,129,.15)',color:'#10b981',padding:'5px 14px',borderRadius:7,fontSize:11,fontWeight:700,border:'1px solid rgba(16,185,129,.4)',cursor:'pointer',opacity:sbCheckLoading?.5:1}}>
+                    {sbCheckLoading?'⟳ Verificare...':'🔍 Verifică SmartBill'}
+                  </button>
                   <a href="https://cloud.smartbill.ro/auth/login/?next=/core/integrari/" target="_blank" rel="noopener noreferrer"
                     style={{color:'#f59e0b',padding:'5px 8px',fontSize:11,textDecoration:'none',border:'1px solid rgba(245,158,11,.3)',borderRadius:7}}>
                     📄 SmartBill
                   </a>
                 </div>
+
+                {sbCheckResults && !sbCheckResults.error && (
+                  <div style={{marginTop:8,padding:'8px 10px',background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8}}>
+                    <div style={{fontSize:11,fontWeight:700,color:'#10b981',marginBottom:5}}>
+                      🔍 Rezultat verificare SmartBill — {Object.keys(sbCheckResults.found||{}).length} găsite, {(sbCheckResults.notFound||[]).length} lipsă
+                    </div>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                      {Object.entries(sbCheckResults.found||{}).map(([name,inv])=>(
+                        <span key={name} style={{padding:'2px 8px',borderRadius:10,background:'rgba(16,185,129,.15)',color:'#10b981',fontSize:10}}>
+                          ✓ {name} → {inv.series}{inv.number}
+                          {inv.url && <a href={inv.url} target="_blank" rel="noopener noreferrer" style={{color:'#10b981',marginLeft:4}}>↗</a>}
+                        </span>
+                      ))}
+                      {(sbCheckResults.notFound||[]).map(name=>(
+                        <span key={name} style={{padding:'2px 8px',borderRadius:10,background:'rgba(244,63,94,.1)',color:'#f43f5e',fontSize:10}}>
+                          ✗ {name} — nu există în SmartBill
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {sbCheckResults?.error && (
+                  <div style={{marginTop:6,fontSize:10,color:'#f43f5e',padding:'5px 8px',background:'rgba(244,63,94,.08)',borderRadius:6}}>
+                    ⚠ Eroare verificare: {sbCheckResults.error}
+                  </div>
+                )}
+
                 {Object.values(sbInvResults).some(r=>r) && (
                   <div style={{marginTop:8,fontSize:10,display:'flex',flexWrap:'wrap',gap:4}}>
                     {noInvoicePaid.map(o=>{
                       const r=sbInvResults[o.id]; if(!r) return null;
                       return <span key={o.id} style={{padding:'2px 7px',borderRadius:10,background:r.ok?'rgba(16,185,129,.15)':'rgba(244,63,94,.15)',color:r.ok?'#10b981':'#f43f5e'}}>
-                        {o.name}: {r.ok?`✓ ${r.series}${r.number}`:`✗ ${(r.error||'').slice(0,50)}`}
+                        {o.name}: {r.ok?`✓ ${r.series}${r.number}${r.foundInSB?' (SmartBill)':''}`:`✗ ${(r.error||'').slice(0,50)}`}
                       </span>;
                     })}
                   </div>
@@ -1638,7 +1741,11 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                               <span style={{fontSize:9,color:'#f43f5e',lineHeight:1.3}}>✗ {invRes.error.slice(0,60)}</span>
                               <button onClick={()=>openInvoiceModal(o)} style={{fontSize:8,background:'transparent',border:'1px solid #f43f5e',color:'#f43f5e',borderRadius:4,padding:'1px 5px',cursor:'pointer'}}>↺ Retry</button>
                             </div>;
-                            if(o.hasInvoice) return <a href={o.invoiceShort||o.invoiceUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:'#10b981',fontFamily:'monospace',textDecoration:'none'}}>{o.invoiceNumber?`#${o.invoiceNumber}`:'✓ Vezi'} ↗</a>;
+                            if(o.hasInvoice) {
+                              const label = o.invoiceNumber ? `${o.invoiceSeries||''}${o.invoiceNumber}` : '✓ Facturat';
+                              if (o.invoiceShort||o.invoiceUrl) return <a href={o.invoiceShort||o.invoiceUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:'#10b981',fontFamily:'monospace',textDecoration:'none'}}>{label} ↗</a>;
+                              return <span style={{fontSize:10,color:'#10b981',fontFamily:'monospace'}}>✓ {label}</span>;
+                            }
                             if(o.fin==='paid') return <button onClick={()=>openInvoiceModal(o)} disabled={invLoading} style={{fontSize:9,background:'rgba(245,158,11,.15)',border:'1px solid rgba(245,158,11,.4)',color:'#f59e0b',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:invLoading?.5:1}}>{invLoading?'⟳':'+ Factură'}</button>;
                             return <span style={{fontSize:10,color:'#4a5568'}}>—</span>;
                           })()}</td>
