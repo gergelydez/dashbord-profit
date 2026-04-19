@@ -739,6 +739,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email, token, cif,
+          seriesName: sbInvSeries || undefined,
           shopifyDomain,
           shopifyToken,
           orders: pending.map(o => ({
@@ -755,7 +756,6 @@ export default function Dashboard() {
 
       setSbCheckResults(data);
 
-      // Marchează comenzile găsite ca facturate în state
       if (data.found && Object.keys(data.found).length > 0) {
         setAllOrders(prev => prev.map(o => {
           const f = data.found[o.name];
@@ -1491,21 +1491,35 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 {sbCheckResults && !sbCheckResults.error && (
                   <div style={{marginTop:8,padding:'8px 10px',background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8}}>
                     <div style={{fontSize:11,fontWeight:700,color:'#10b981',marginBottom:5}}>
-                      🔍 Rezultat verificare SmartBill — {Object.keys(sbCheckResults.found||{}).length} găsite, {(sbCheckResults.notFound||[]).length} lipsă
+                      🔍 SmartBill: {sbCheckResults.total||0} facturi scanate · {Object.keys(sbCheckResults.found||{}).length} găsite · {(sbCheckResults.notFound||[]).length} lipsă
+                      {sbCheckResults.shopifyUpdated?.length > 0 && <span style={{color:'#3b82f6',marginLeft:6}}>· {sbCheckResults.shopifyUpdated.length} salvate în Shopify ✓</span>}
                     </div>
                     <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
                       {Object.entries(sbCheckResults.found||{}).map(([name,inv])=>(
                         <span key={name} style={{padding:'2px 8px',borderRadius:10,background:'rgba(16,185,129,.15)',color:'#10b981',fontSize:10}}>
                           ✓ {name} → {inv.series}{inv.number}
+                          <span style={{opacity:.6,marginLeft:4}}>({inv.matchType})</span>
                           {inv.url && <a href={inv.url} target="_blank" rel="noopener noreferrer" style={{color:'#10b981',marginLeft:4}}>↗</a>}
                         </span>
                       ))}
                       {(sbCheckResults.notFound||[]).map(name=>(
                         <span key={name} style={{padding:'2px 8px',borderRadius:10,background:'rgba(244,63,94,.1)',color:'#f43f5e',fontSize:10}}>
-                          ✗ {name} — nu există în SmartBill
+                          ✗ {name}
                         </span>
                       ))}
                     </div>
+                    {sbCheckResults.total === 0 && (
+                      <div style={{marginTop:6,fontSize:10,color:'#f59e0b'}}>
+                        ⚠ SmartBill API nu a returnat facturi — verifică credențialele și că seria este corectă (ex: GLA)
+                        {sbCheckResults.debug?.fetchDebug && (
+                          <div style={{marginTop:4,fontFamily:'monospace',fontSize:9,color:'#64748b'}}>
+                            {sbCheckResults.debug.fetchDebug.map((d,i)=>(
+                              <div key={i}>{d.url}: {d.status||d.error} {d.preview?.slice(0,80)}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
                 {sbCheckResults?.error && (
