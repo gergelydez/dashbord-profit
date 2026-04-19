@@ -743,11 +743,12 @@ export default function Dashboard() {
           shopifyDomain,
           shopifyToken,
           orders: pending.map(o => ({
-            id:     o.id,
-            name:   o.name,
-            client: o.client,
-            oras:   o.oras,
-            total:  o.total,
+            id:        o.id,
+            name:      o.name,
+            client:    o.client,
+            oras:      o.oras,
+            total:     o.total,
+            createdAt: o.createdAt,
           })),
         }),
       });
