@@ -1489,7 +1489,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   </button>
                   <label style={{background:'rgba(59,130,246,.15)',color:'#3b82f6',padding:'5px 14px',borderRadius:7,fontSize:11,fontWeight:700,border:'1px solid rgba(59,130,246,.4)',cursor:'pointer',display:'inline-flex',alignItems:'center',gap:4}}>
                     {sbCheckLoading?'⟳':'📥 Import XLS SmartBill'}
-                    <input type="file" accept=".xls,.xlsx" style={{display:'none'}} onChange={async (e) => {
+                    <input type="file" accept="*/*" style={{display:'none'}} onChange={async (e) => {
                       const file = e.target.files[0]; if (!file) return;
                       setSbCheckLoading(true); setSbCheckResults(null);
                       try {
