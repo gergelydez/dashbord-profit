@@ -743,12 +743,11 @@ export default function Dashboard() {
           shopifyDomain,
           shopifyToken,
           orders: pending.map(o => ({
-            id:        o.id,
-            name:      o.name,
-            client:    o.client,
-            oras:      o.oras,
-            total:     o.total,
-            createdAt: o.createdAt,
+            id:     o.id,
+            name:   o.name,
+            client: o.client,
+            oras:   o.oras,
+            total:  o.total,
           })),
         }),
       });
@@ -1483,6 +1482,82 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     style={{background:'rgba(16,185,129,.15)',color:'#10b981',padding:'5px 14px',borderRadius:7,fontSize:11,fontWeight:700,border:'1px solid rgba(16,185,129,.4)',cursor:'pointer',opacity:sbCheckLoading?.5:1}}>
                     {sbCheckLoading?'⟳ Verificare...':'🔍 Verifică SmartBill'}
                   </button>
+                  <label style={{background:'rgba(59,130,246,.15)',color:'#3b82f6',padding:'5px 14px',borderRadius:7,fontSize:11,fontWeight:700,border:'1px solid rgba(59,130,246,.4)',cursor:'pointer',display:'inline-flex',alignItems:'center',gap:4}}>
+                    {sbCheckLoading?'⟳':'📥 Import XLS SmartBill'}
+                    <input type="file" accept=".xls,.xlsx" style={{display:'none'}} onChange={async (e) => {
+                      const file = e.target.files[0]; if (!file) return;
+                      setSbCheckLoading(true); setSbCheckResults(null);
+                      try {
+                        // Parsează XLS cu SheetJS din CDN
+                        const loadXLSX = () => new Promise((res, rej) => {
+                          if (window.XLSX) { res(); return; }
+                          const s = document.createElement('script');
+                          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+                          s.onload = res; s.onerror = rej;
+                          document.head.appendChild(s);
+                        });
+                        await loadXLSX();
+                        const buf = await file.arrayBuffer();
+                        const wb  = window.XLSX.read(new Uint8Array(buf), { type: 'array' });
+                        const ws  = wb.Sheets[wb.SheetNames[0]];
+                        const raw = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+                        // Găsim header-ul (rândul cu "Factura")
+                        let hi = -1;
+                        for (let i = 0; i < raw.length; i++) {
+                          if (raw[i].join('').toLowerCase().includes('factura') && raw[i].join('').toLowerCase().includes('client')) { hi = i; break; }
+                        }
+                        if (hi === -1) { setSbCheckResults({ error: 'Nu am găsit header-ul în XLS. Asigură-te că e exportul SmartBill.' }); setSbCheckLoading(false); return; }
+                        const hdr = raw[hi].map(h => (h||'').toString().toLowerCase());
+                        const ci  = hdr.findIndex(h => h.includes('client'));
+                        const fi  = hdr.findIndex(h => h.includes('factura') || h.includes('factură'));
+                        const oi  = hdr.findIndex(h => h.includes('observ'));
+                        const ti  = hdr.findIndex(h => h.includes('valoare totala') || h.includes('total'));
+                        const rows = [];
+                        for (let i = hi+1; i < raw.length; i++) {
+                          const r = raw[i];
+                          const inv = (r[fi]||'').toString().trim();
+                          if (!inv || !inv.match(/^[A-Z]+\d+$/)) continue;
+                          rows.push({
+                            invoiceCode:  inv,
+                            client:       (r[ci]||'').toString().trim(),
+                            observations: (r[oi]||'').toString().trim(),
+                            total:        parseFloat((r[ti]||'').toString().replace(',','.')) || 0,
+                          });
+                        }
+                        if (!rows.length) { setSbCheckResults({ error: 'Nicio factură găsită în XLS.' }); setSbCheckLoading(false); return; }
+
+                        const pending = noInvoicePaid.filter(o => !sbInvResults[o.id]?.ok);
+                        const shopifyDomain = ls.get(domainKey(getShopKey())) || ls.get('gx_d') || '';
+                        const shopifyToken  = ls.get(tokenKey(getShopKey()))  || ls.get('gx_t') || '';
+                        const cif = ls.get('sb_cif') || '';
+
+                        const res = await fetch('/api/smartbill/search', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            cif, shopifyDomain, shopifyToken,
+                            xlsData: rows,
+                            orders: pending.map(o => ({ id: o.id, name: o.name, client: o.client, total: o.total })),
+                          }),
+                        });
+                        const data = await res.json();
+                        if (data.error) throw new Error(data.error);
+                        setSbCheckResults(data);
+                        if (data.found && Object.keys(data.found).length > 0) {
+                          setAllOrders(prev => prev.map(o => {
+                            const f = data.found[o.name]; if (!f) return o;
+                            return { ...o, hasInvoice: true, invoiceNumber: f.number, invoiceSeries: f.series, invoiceUrl: f.url || o.invoiceUrl, invoiceShort: f.url || o.invoiceShort };
+                          }));
+                          pending.forEach(o => {
+                            const f = data.found[o.name];
+                            if (f) setSbInvResults(prev => ({ ...prev, [o.id]: { ok: true, series: f.series, number: f.number, foundInSB: true, matchType: f.matchType } }));
+                          });
+                        }
+                      } catch(err) { setSbCheckResults({ error: err.message }); }
+                      setSbCheckLoading(false);
+                      e.target.value = '';
+                    }}/>
+                  </label>
                   <a href="https://cloud.smartbill.ro/auth/login/?next=/core/integrari/" target="_blank" rel="noopener noreferrer"
                     style={{color:'#f59e0b',padding:'5px 8px',fontSize:11,textDecoration:'none',border:'1px solid rgba(245,158,11,.3)',borderRadius:7}}>
                     📄 SmartBill
