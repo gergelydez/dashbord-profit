@@ -146,16 +146,21 @@ function procOrder(o) {
                 : trackingCompany.includes('dpd') ? 'dpd'
                 : trackingCompany ? 'other' : 'unknown';
   const notes = o.note_attributes || [];
-  const invUrlAttr   = notes.find(a => (a.name||'').toLowerCase().includes('invoice-url') && !(a.name||'').toLowerCase().includes('short'));
-  const invShortAttr = notes.find(a => (a.name||'').toLowerCase().includes('invoice-short-url'));
-  const invNumAttr   = notes.find(a => (a.name||'').toLowerCase() === 'invoice-number');
-  const invSerAttr   = notes.find(a => (a.name||'').toLowerCase() === 'invoice-series');
-  const invoiceUrl   = invUrlAttr?.value || '';
-  const invoiceShort = invShortAttr?.value || '';
-  const invNumMatch  = invoiceUrl.match(/[?&]n=(\d+)/);
-  const invoiceNumber = invNumAttr?.value || (invNumMatch ? invNumMatch[1] : '');
-  const invoiceSeries = invSerAttr?.value || '';
-  const hasInvoice   = !!(invoiceUrl || invoiceShort || invoiceNumber);
+  const tags  = (o.tags || '').toLowerCase().split(',').map(t => t.trim());
+
+  const invUrlAttr   = notes.find(a => { const n=(a.name||'').toLowerCase(); return (n.includes('invoice-url')||n.includes('invoice_url')) && !n.includes('short'); });
+  const invShortAttr = notes.find(a => { const n=(a.name||'').toLowerCase(); return n.includes('invoice-short')||n.includes('invoice_short'); });
+  const invNumAttr   = notes.find(a => { const n=(a.name||'').toLowerCase(); return n==='invoice-number'||n==='invoice_number'||n==='invoicenumber'; });
+  const invSerAttr   = notes.find(a => { const n=(a.name||'').toLowerCase(); return n==='invoice-series'||n==='invoice_series'||n==='invoiceseries'; });
+
+  const invoiceUrl    = invUrlAttr?.value || '';
+  const invoiceShort  = invShortAttr?.value || '';
+  const invNumMatch   = invoiceUrl.match(/[?&]n=(\d+)/);
+  const invoiceNumber = (invNumAttr?.value || '').trim() || (invNumMatch ? invNumMatch[1] : '');
+  const invoiceSeries = (invSerAttr?.value || '').trim();
+
+  // hasInvoice: are URL, număr factură SAU tag-ul "invoiced" pus de noi
+  const hasInvoice = !!(invoiceUrl || invoiceShort || invoiceNumber || tags.includes('invoiced'));
   return {
     id: o.id, name: o.name || '', fin: o.financial_status || '', ts,
     trackingNo, client: addr.name || '', oras: addr.city || '',
