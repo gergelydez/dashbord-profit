@@ -38,6 +38,7 @@ const buildQuery = (cursor, createdAtMin) => {
           displayStatus
         }
         customAttributes { key value }
+        noteAttributes { name value }
         tags
       }
     }
@@ -125,7 +126,10 @@ function toRestOrder(node) {
     processed_at: node.processedAt || '',
     total_price: node.totalPriceSet?.shopMoney?.amount || '0',
     currency: node.totalPriceSet?.shopMoney?.currencyCode || 'RON',
-    note_attributes: (node.customAttributes || []).map(a => ({ name: a.key, value: a.value })),
+    note_attributes: [
+      ...(node.noteAttributes || []).map(a => ({ name: a.name, value: a.value })),
+      ...(node.customAttributes || []).map(a => ({ name: a.key, value: a.value })),
+    ],
     tags: (node.tags || []).join(', '),
     utmSource: '', utmMedium: '', utmCampaign: '', referrerUrl: '', landingPage: '',
     email: node.email || '',
