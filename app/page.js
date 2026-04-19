@@ -1491,7 +1491,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 {sbCheckResults && !sbCheckResults.error && (
                   <div style={{marginTop:8,padding:'8px 10px',background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.2)',borderRadius:8}}>
                     <div style={{fontSize:11,fontWeight:700,color:'#10b981',marginBottom:5}}>
-                      🔍 SmartBill: {sbCheckResults.total||0} facturi scanate · {Object.keys(sbCheckResults.found||{}).length} găsite · {(sbCheckResults.notFound||[]).length} lipsă
+                      🔍 Scanat: {sbCheckResults.scanned||'—'} · {Object.keys(sbCheckResults.found||{}).length} găsite · {(sbCheckResults.notFound||[]).length} lipsă
                       {sbCheckResults.shopifyUpdated?.length > 0 && <span style={{color:'#3b82f6',marginLeft:6}}>· {sbCheckResults.shopifyUpdated.length} salvate în Shopify ✓</span>}
                     </div>
                     <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
@@ -1508,18 +1508,6 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                         </span>
                       ))}
                     </div>
-                    {sbCheckResults.total === 0 && (
-                      <div style={{marginTop:6,fontSize:10,color:'#f59e0b'}}>
-                        ⚠ SmartBill API nu a returnat facturi — verifică credențialele și că seria este corectă (ex: GLA)
-                        {sbCheckResults.debug?.fetchDebug && (
-                          <div style={{marginTop:4,fontFamily:'monospace',fontSize:9,color:'#64748b'}}>
-                            {sbCheckResults.debug.fetchDebug.map((d,i)=>(
-                              <div key={i}>{d.url}: {d.status||d.error} {d.preview?.slice(0,80)}</div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
                 {sbCheckResults?.error && (
