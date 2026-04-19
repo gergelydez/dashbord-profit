@@ -6,6 +6,7 @@ function makeAuth(email, token) {
   return Buffer.from(`${email.trim()}:${token.trim()}`).toString('base64');
 }
 
+// ── Salvează factura înapoi în Shopify ───────────────────────────────────────
 async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invoiceSeries, invoiceNumber, invoiceUrl }) {
   if (!shopifyDomain || !shopifyToken || !orderId) return { ok: false };
   try {
@@ -43,7 +44,8 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
   } catch { return { ok: false }; }
 }
 
-function normalizeName(str) {
+// ── Normalizare text pentru comparare ────────────────────────────────────────
+function norm(str) {
   return (str || '')
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -52,51 +54,63 @@ function normalizeName(str) {
     .trim();
 }
 
-function nameMatchScore(orderClient, invoiceClient) {
-  const a = normalizeName(orderClient);
-  const b = normalizeName(invoiceClient);
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-  const wordsA = a.split(' ').filter(w => w.length > 1);
-  const wordsB = b.split(' ').filter(w => w.length > 1);
-  if (!wordsA.length) return 0;
-  const matches = wordsA.filter(w => wordsB.includes(w));
-  return matches.length / wordsA.length;
+function nameScore(a, b) {
+  const wa = norm(a).split(' ').filter(w => w.length > 1);
+  const wb = norm(b).split(' ').filter(w => w.length > 1);
+  if (!wa.length || !wb.length) return 0;
+  const hits = wa.filter(w => wb.includes(w));
+  return hits.length / wa.length;
 }
 
-async function fetchInvoiceList(auth, cif) {
-  const today = new Date();
-  const from = new Date(today);
-  from.setFullYear(from.getFullYear() - 1);
+// ── Fetch lista facturi SmartBill ─────────────────────────────────────────────
+// Endpoint corect documentat: GET /invoice?cif=...&from=...&to=...&seriesName=...
+async function fetchAllInvoices(auth, cif, seriesName) {
+  const today = new Date().toISOString().slice(0, 10);
+  const from  = new Date(); from.setFullYear(from.getFullYear() - 1);
   const dateFrom = from.toISOString().slice(0, 10);
-  const dateTo   = today.toISOString().slice(0, 10);
 
-  const endpoints = [
-    `${BASE}/invoices?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${dateTo}`,
-    `${BASE}/invoice/list?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${dateTo}`,
-    `${BASE}/invoices/text?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${dateTo}`,
-  ];
+  const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
 
-  for (const url of endpoints) {
+  // Încearcă toate variantele endpoint-ului de listare SmartBill
+  const urls = [
+    // Endpoint principal documentat SmartBill
+    `${BASE}/invoice?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}`,
+    // Cu serie specifică
+    seriesName ? `${BASE}/invoice?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}&seriesName=${encodeURIComponent(seriesName)}` : null,
+    // Variante alternative
+    `${BASE}/invoices?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}`,
+    `${BASE}/invoice/list?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}`,
+  ].filter(Boolean);
+
+  const debugInfo = [];
+
+  for (const url of urls) {
     try {
-      const res = await fetch(url, {
-        headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
-        cache: 'no-store',
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const list = data.list || data.invoices || data.invoiceList || [];
-        if (list.length > 0) return list;
-      }
-    } catch {}
+      const res = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      const raw = await res.text();
+      debugInfo.push({ url: url.replace(BASE, ''), status: res.status, preview: raw.slice(0, 200) });
+
+      if (!res.ok) continue;
+
+      let data;
+      try { data = JSON.parse(raw); } catch { continue; }
+
+      // SmartBill returnează { list: [...] } sau { invoices: [...] }
+      const list = data.list || data.invoices || data.data || [];
+      if (list.length > 0) return { list, debug: debugInfo };
+    } catch (e) {
+      debugInfo.push({ url: url.replace(BASE, ''), error: e.message });
+    }
   }
-  return [];
+
+  return { list: [], debug: debugInfo };
 }
 
+// ── POST /api/smartbill/search ────────────────────────────────────────────────
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { email, token, cif, orders, shopifyDomain, shopifyToken } = body;
+    const { email, token, cif, orders, shopifyDomain, shopifyToken, seriesName } = body;
 
     if (!email || !token || !cif) {
       return NextResponse.json({ error: 'Credențiale SmartBill lipsă.' }, { status: 400 });
@@ -106,105 +120,136 @@ export async function POST(request) {
     }
 
     const auth = makeAuth(email, token);
-    const invoices = await fetchInvoiceList(auth, cif);
 
-    const found = {};
-    const notFound = [];
+    // Fetch toate facturile o singură dată
+    const { list: invoices, debug: fetchDebug } = await fetchAllInvoices(auth, cif, seriesName);
+
+    const found        = {};
+    const notFound     = [];
     const shopifyUpdated = [];
-
-    const today = new Date().toISOString().slice(0, 10);
-    const fromDate = new Date(); fromDate.setFullYear(fromDate.getFullYear() - 1);
-    const dateFrom = fromDate.toISOString().slice(0, 10);
+    const matchDetails = {}; // pentru debugging
 
     for (const order of orders) {
-      const orderName = order.name;
-      const cleanName = orderName.replace('#', '').trim();
-      let match = null;
+      const orderName  = order.name;          // '#3190'
+      const cleanNum   = orderName.replace(/[^0-9]/g, ''); // '3190'
+      const clientNorm = norm(order.client || '');
+      const orderTotal = parseFloat(order.total) || 0;
+
+      let match     = null;
       let matchType = null;
 
-      // PASUL 1: după numărul comenzii în observations
+      // ── 1. Caută în lista bulk după observations/număr ──────────────────
       if (invoices.length > 0) {
+        // 1a. Numărul comenzii în observations
         match = invoices.find(inv => {
-          const obs = (inv.observations || inv.description || inv.clientRef || inv.mentions || '').toLowerCase();
-          return obs.includes(orderName.toLowerCase()) || obs.includes(cleanName);
+          const obs = norm(inv.observations || inv.description || inv.mentions || inv.clientRef || '');
+          return obs.includes(cleanNum) || obs.includes(norm(orderName));
         });
-        if (match) matchType = 'order';
+        if (match) matchType = 'observations';
+
+        // 1b. Numele clientului (≥80% cuvinte comune)
+        if (!match) {
+          const best = invoices
+            .map(inv => ({ inv, s: nameScore(order.client, inv.clientName || inv.client || inv.buyerName || '') }))
+            .filter(x => x.s >= 0.8)
+            .sort((a, b) => b.s - a.s)[0];
+          if (best) { match = best.inv; matchType = `name(${Math.round(best.s*100)}%)`; }
+        }
+
+        // 1c. Numărul comenzii în clientRef sau alte câmpuri
+        if (!match) {
+          match = invoices.find(inv => {
+            const allText = norm([
+              inv.observations, inv.description, inv.mentions,
+              inv.clientRef, inv.documentNumber, inv.referenceNumber,
+            ].join(' '));
+            return allText.includes(cleanNum);
+          });
+          if (match) matchType = 'clientRef';
+        }
+
+        // 1d. Total + primul cuvânt din nume
+        if (!match && orderTotal > 0) {
+          const firstWord = clientNorm.split(' ')[0];
+          match = invoices.find(inv => {
+            const invTotal = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || inv.amount || 0);
+            const invClient = norm(inv.clientName || inv.client || inv.buyerName || '');
+            return Math.abs(invTotal - orderTotal) < 1 && firstWord && invClient.includes(firstWord);
+          });
+          if (match) matchType = 'total+name';
+        }
+
+        // 1e. Total exact (dacă totalul e unic — mai puțin sigur)
+        if (!match && orderTotal > 10) {
+          const byTotal = invoices.filter(inv => {
+            const invTotal = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || inv.amount || 0);
+            return Math.abs(invTotal - orderTotal) < 0.01;
+          });
+          if (byTotal.length === 1) { match = byTotal[0]; matchType = 'total-exact'; }
+        }
       }
 
-      // PASUL 2: după numele clientului (minim 80% cuvinte comune)
-      if (!match && order.client && invoices.length > 0) {
-        const bestMatch = invoices
-          .map(inv => ({
-            inv,
-            score: nameMatchScore(order.client, inv.clientName || inv.client || inv.buyerName || ''),
-          }))
-          .filter(x => x.score >= 0.8)
-          .sort((a, b) => b.score - a.score)[0];
-        if (bestMatch) { match = bestMatch.inv; matchType = 'name'; }
-      }
-
-      // PASUL 3: după total + primul cuvânt din nume
-      if (!match && order.client && order.total && invoices.length > 0) {
-        const orderTotal = parseFloat(order.total);
-        const namePart = normalizeName(order.client).split(' ')[0];
-        const byTotal = invoices.find(inv => {
-          const invTotal = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || 0);
-          const invClient = normalizeName(inv.clientName || inv.client || '');
-          return Math.abs(invTotal - orderTotal) < 0.5 && invClient.includes(namePart);
-        });
-        if (byTotal) { match = byTotal; matchType = 'total+name'; }
-      }
-
-      // PASUL 4: search API SmartBill direct (dacă lista era goală sau nu s-a găsit)
+      // ── 2. Fallback: search API individual (dacă lista goală sau nu s-a găsit) ──
       if (!match) {
-        try {
-          // 4a: după numărul comenzii
-          const sRes = await fetch(
-            `${BASE}/invoices/text?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}&text=${encodeURIComponent(cleanName)}`,
-            { headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' }, cache: 'no-store' }
-          );
-          if (sRes.ok) {
-            const sData = await sRes.json();
-            const list = sData.list || sData.invoices || [];
-            if (list.length > 0) { match = list[0]; matchType = 'search-order'; }
-          }
+        const today = new Date().toISOString().slice(0, 10);
+        const fromD = new Date(); fromD.setFullYear(fromD.getFullYear() - 1);
+        const dateFrom = fromD.toISOString().slice(0, 10);
+        const headers  = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
 
-          // 4b: după primul cuvânt din numele clientului + validare total
-          if (!match && order.client) {
-            const clientWord = order.client.split(' ')[0];
-            const sRes2 = await fetch(
-              `${BASE}/invoices/text?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}&text=${encodeURIComponent(clientWord)}`,
-              { headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' }, cache: 'no-store' }
-            );
-            if (sRes2.ok) {
-              const sData2 = await sRes2.json();
-              const list2 = sData2.list || sData2.invoices || [];
-              const byTotal2 = list2.find(inv => {
-                const invTotal = parseFloat(inv.totalAmount || inv.total || 0);
-                return Math.abs(invTotal - parseFloat(order.total)) < 0.5;
-              });
-              if (byTotal2) { match = byTotal2; matchType = 'search-name+total'; }
-              else if (list2.length === 1) { match = list2[0]; matchType = 'search-name'; }
+        // 2a. Caută după numărul comenzii (text search)
+        const searchUrls = [
+          `${BASE}/invoice?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}&client=${encodeURIComponent(cleanNum)}`,
+          `${BASE}/invoice?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}&name=${encodeURIComponent(orderName)}`,
+        ];
+        for (const url of searchUrls) {
+          if (match) break;
+          try {
+            const res = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(8000) });
+            if (!res.ok) continue;
+            const data = await res.json();
+            const list = data.list || data.invoices || [];
+            if (list.length > 0) { match = list[0]; matchType = 'api-search-num'; }
+          } catch {}
+        }
+
+        // 2b. Caută după primul cuvânt din numele clientului
+        if (!match && order.client) {
+          const firstWord = (order.client || '').split(' ')[0];
+          try {
+            const url = `${BASE}/invoice?cif=${encodeURIComponent(cif)}&from=${dateFrom}&to=${today}&client=${encodeURIComponent(firstWord)}`;
+            const res = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(8000) });
+            if (res.ok) {
+              const data = await res.json();
+              const list = data.list || data.invoices || [];
+              // Verifică totalul pentru confirmare
+              const hit = list.find(inv => {
+                const invTotal = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || 0);
+                return Math.abs(invTotal - orderTotal) < 1;
+              }) || (list.length === 1 ? list[0] : null);
+              if (hit) { match = hit; matchType = 'api-search-name'; }
             }
-          }
-        } catch {}
+          } catch {}
+        }
       }
 
+      // ── Procesează rezultatul ────────────────────────────────────────────
       if (match) {
-        const series = match.seriesName || match.series || '';
-        const number = match.number || match.invoiceNumber || '';
-        const url    = match.webLink || match.pdfLink || match.url || match.documentUrl || '';
+        const series = match.seriesName || match.series || match.invoiceSeries || '';
+        const number = match.number || match.invoiceNumber || match.documentNumber || '';
+        const url    = match.webLink || match.pdfLink || match.url || match.documentUrl ||
+          (series && number ? `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(cif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}` : '');
 
         found[orderName] = { series, number, url, matchType, date: match.issueDate || match.date || '' };
+        matchDetails[orderName] = matchType;
 
-        // Write-back în Shopify note_attributes
-        if (shopifyDomain && shopifyToken && order.id) {
+        // Write-back în Shopify
+        if (shopifyDomain && shopifyToken && order.id && number) {
           const sbRes = await markInvoiceInShopify({
             shopifyDomain, shopifyToken,
-            orderId: order.id,
+            orderId:       order.id,
             invoiceSeries: series,
             invoiceNumber: number,
-            invoiceUrl: url,
+            invoiceUrl:    url,
           });
           if (sbRes.ok) shopifyUpdated.push(orderName);
         }
@@ -213,7 +258,11 @@ export async function POST(request) {
       }
     }
 
-    return NextResponse.json({ found, notFound, shopifyUpdated, total: invoices.length });
+    return NextResponse.json({
+      found, notFound, shopifyUpdated,
+      total: invoices.length,
+      debug: { fetchDebug, matchDetails },
+    });
 
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
@@ -226,4 +275,3 @@ export async function OPTIONS() {
     headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS' },
   });
 }
-
