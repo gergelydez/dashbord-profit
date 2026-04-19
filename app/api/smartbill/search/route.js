@@ -6,7 +6,19 @@ function makeAuth(email, token) {
   return Buffer.from(`${email.trim()}:${token.trim()}`).toString('base64');
 }
 
-// ── Salvează factura în Shopify note_attributes ──────────────────────────────
+function norm(str) {
+  return (str || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function nameScore(a, b) {
+  const wa = norm(a).split(' ').filter(w => w.length > 1);
+  const wb = norm(b).split(' ').filter(w => w.length > 1);
+  if (!wa.length || !wb.length) return 0;
+  return wa.filter(w => wb.includes(w)).length / wa.length;
+}
+
 async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invoiceSeries, invoiceNumber, invoiceUrl }) {
   if (!shopifyDomain || !shopifyToken || !orderId) return { ok: false };
   try {
@@ -43,24 +55,42 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
   } catch { return { ok: false }; }
 }
 
-function norm(str) {
-  return (str || '').toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+// ── Fetch lista facturi SmartBill după perioadă ───────────────────────────────
+// SmartBill API: GET /invoice/list?cif=...&seriesName=...&from=YYYY-MM-DD&to=YYYY-MM-DD
+async function fetchInvoiceList(auth, cif, seriesName, from, to) {
+  const url = `${BASE}/invoice/list?cif=${encodeURIComponent(cif)}&seriesName=${encodeURIComponent(seriesName)}&from=${from}&to=${to}`;
+  try {
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.list || data.invoices || data.invoicesList || [];
+  } catch (e) {
+    console.error('[SmartBill] fetchInvoiceList error:', e.message);
+    return [];
+  }
 }
 
-function nameScore(a, b) {
-  const wa = norm(a).split(' ').filter(w => w.length > 1);
-  const wb = norm(b).split(' ').filter(w => w.length > 1);
-  if (!wa.length || !wb.length) return 0;
-  return wa.filter(w => wb.includes(w)).length / wa.length;
+// ── Fetch factură individuală (fallback) ──────────────────────────────────────
+async function fetchInvoice(auth, cif, seriesName, number) {
+  const url = `${BASE}/invoice?cif=${encodeURIComponent(cif)}&seriesName=${encodeURIComponent(seriesName)}&number=${encodeURIComponent(number)}`;
+  try {
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.invoice || data.invoiceDetails || (data.seriesName || data.series ? data : null);
+  } catch { return null; }
 }
 
-// ── Obține seriile + nextNumber ───────────────────────────────────────────────
-async function getSeriesWithNextNumber(auth, cif, preferredSeries) {
+async function getSeriesList(auth, cif, preferredSeries) {
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
-
-  // Încearcă toate variantele endpoint-ului pentru serii
   const endpoints = [
     `${BASE}/invoice/series?cif=${encodeURIComponent(cif)}`,
     `${BASE}/series?cif=${encodeURIComponent(cif)}&type=f`,
@@ -75,49 +105,46 @@ async function getSeriesWithNextNumber(auth, cif, preferredSeries) {
       const list = data.list || data.invoiceSeries || data.seriesList || [];
       if (!list.length) continue;
 
-      // Sortează: seria preferată primul
-      const sorted = [...list].sort((a, b) => {
-        const an = a.name || a;
-        const bn = b.name || b;
-        if (preferredSeries && an === preferredSeries) return -1;
-        if (preferredSeries && bn === preferredSeries) return 1;
-        return 0;
-      });
-
-      return sorted.map(s => ({
-        name:       s.name || s,
-        nextNumber: parseInt(s.nextNumber || s.next || s.nextSeriesNumber || 0) || null,
-      }));
+      return list
+        .map(s => ({ name: s.name || s, nextNumber: parseInt(s.nextNumber || s.next || 0) || null }))
+        .sort((a, b) => {
+          if (preferredSeries && a.name === preferredSeries) return -1;
+          if (preferredSeries && b.name === preferredSeries) return 1;
+          return 0;
+        });
     } catch {}
   }
   return [];
 }
 
-// ── Fetch factură individuală SmartBill ───────────────────────────────────────
-async function fetchInvoice(auth, cif, seriesName, number) {
-  const url = `${BASE}/invoice?cif=${encodeURIComponent(cif)}&seriesName=${encodeURIComponent(seriesName)}&number=${encodeURIComponent(number)}`;
-  try {
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.invoice || data.invoiceDetails || (data.seriesName || data.series ? data : null);
-  } catch { return null; }
-}
+function matchInvoiceToOrder(inv, invNum, sName, order, cif) {
+  const obs       = norm(inv.observations || inv.description || inv.mentions || inv.obs || '');
+  const clientInv = inv.clientName || inv.client?.name || inv.buyerName || inv.client || '';
+  const invTotal  = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || inv.amount || 0);
+  const orderTotal= parseFloat(order.total) || 0;
+  const cleanNum  = order.name.replace(/[^0-9]/g, '');
 
-// ── Estimează nextNumber prin binary search ────────────────────────────────────
-// Dacă API-ul nu returnează nextNumber, găsim ultima factură existentă
-async function estimateNextNumber(auth, cif, seriesName) {
-  // Încearcă numere mari descrescător până găsim una existentă
-  const probes = [500, 400, 300, 200, 150, 100, 50, 30, 10, 5, 1];
-  for (const n of probes) {
-    const inv = await fetchInvoice(auth, cif, seriesName, n);
-    if (inv) return n + 1; // găsit la n, deci next e n+1 sau mai mare
+  let matchType = null;
+
+  if (cleanNum && (obs.includes(cleanNum) || obs.includes(norm(order.name)))) {
+    matchType = 'observations';
+  } else if (inv.orderNumber && String(inv.orderNumber).includes(cleanNum)) {
+    matchType = 'orderNumber';
+  } else if (nameScore(order.client, clientInv) >= 0.8) {
+    matchType = `name(${Math.round(nameScore(order.client, clientInv) * 100)}%)`;
+  } else if (orderTotal > 0 && Math.abs(invTotal - orderTotal) < 1) {
+    const firstWord = norm(order.client || '').split(' ')[0];
+    if (firstWord && norm(clientInv).includes(firstWord)) {
+      matchType = 'total+name';
+    }
   }
-  return 100; // fallback
+
+  if (!matchType) return null;
+
+  const invoiceUrl = inv.webLink || inv.pdfLink || inv.url ||
+    `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(cif)}&series=${encodeURIComponent(sName)}&number=${encodeURIComponent(invNum)}`;
+
+  return { series: sName, number: String(invNum), url: invoiceUrl, matchType, client: clientInv };
 }
 
 // ── POST /api/smartbill/search ────────────────────────────────────────────────
@@ -134,107 +161,138 @@ export async function POST(request) {
     }
 
     const auth = makeAuth(email, token);
+    const scanLog = [];
 
-    // Obține seriile disponibile
-    let seriesList = await getSeriesWithNextNumber(auth, cif, seriesName);
-
-    // Dacă nu s-au găsit serii din API dar avem seriesName din UI, folosim direct aceea
+    let seriesList = await getSeriesList(auth, cif, seriesName);
     if (!seriesList.length && seriesName) {
       seriesList = [{ name: seriesName, nextNumber: null }];
     }
-
     if (!seriesList.length) {
       return NextResponse.json({
-        error: 'Nu s-au găsit serii de facturi. Asigură-te că seria (ex: GLA) e selectată în câmpul Serie de deasupra.',
+        error: 'Nu s-au găsit serii de facturi. Selectează seria (ex: GLA) în câmpul Serie.',
       }, { status: 400 });
     }
 
     const found          = {};
     const shopifyUpdated = [];
-    const scanLog        = [];
 
-    for (const serie of seriesList) {
-      const sName = serie.name;
-      let nextNum = serie.nextNumber;
+    // ── Calculează perioadele de căutare: ultimele 6 luni ────────────────────
+    const now     = new Date();
+    const periods = [];
 
-      // Dacă nu știm nextNumber, îl estimăm
-      if (!nextNum) {
-        nextNum = await estimateNextNumber(auth, cif, sName);
-        scanLog.push(`${sName}: nextNumber estimat ~${nextNum}`);
+    for (let i = 0; i < 6; i++) {
+      let fromDate, toDate;
+
+      if (i === 0) {
+        // Luna curentă: de la 1 până azi
+        fromDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+        toDate   = now.toISOString().slice(0, 10);
       } else {
-        scanLog.push(`${sName}: nextNumber=${nextNum}`);
+        // Luna i în urmă
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        fromDate = d.toISOString().slice(0, 10);
+        const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+        toDate   = lastDay.toISOString().slice(0, 10);
       }
 
-      // Scanăm ultimele 100 facturi (sau mai multe dacă avem 26 comenzi)
-      const scanCount = Math.max(100, orders.length * 4);
-      const startNum  = nextNum - 1;
-      const endNum    = Math.max(1, startNum - scanCount);
+      periods.push({ from: fromDate, to: toDate });
+    }
 
-      // Fetch în paralel câte 10
-      for (let batch = startNum; batch >= endNum; batch -= 10) {
-        const nums = [];
-        for (let n = batch; n >= Math.max(endNum, batch - 9); n--) nums.push(n);
+    // ── Scanează fiecare serie ────────────────────────────────────────────────
+    for (const serie of seriesList) {
+      const sName = serie.name;
 
-        const results = await Promise.allSettled(
-          nums.map(n => fetchInvoice(auth, cif, sName, n))
-        );
+      // Strategie 1: Fetch lista după perioadă (API eficient)
+      let usedListAPI = false;
 
-        for (let i = 0; i < results.length; i++) {
-          const inv = results[i].status === 'fulfilled' ? results[i].value : null;
-          if (!inv) continue;
+      for (const period of periods) {
+        if (Object.keys(found).length === orders.length) break;
 
-          const invNum    = nums[i];
-          const obs       = norm(inv.observations || inv.description || inv.mentions || '');
-          const clientInv = inv.clientName || inv.client || inv.buyerName || '';
-          const invTotal  = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || inv.amount || 0);
-          const invUrl    = inv.webLink || inv.pdfLink || inv.url ||
-            `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(cif)}&series=${encodeURIComponent(sName)}&number=${encodeURIComponent(invNum)}`;
+        const invoices = await fetchInvoiceList(auth, cif, sName, period.from, period.to);
 
-          for (const order of orders) {
-            if (found[order.name]) continue;
+        if (invoices.length > 0) {
+          usedListAPI = true;
+          scanLog.push(`${sName}: ${period.from}→${period.to} = ${invoices.length} facturi`);
 
-            const cleanNum   = order.name.replace(/[^0-9]/g, '');
-            const orderTotal = parseFloat(order.total) || 0;
-            let matchType    = null;
+          for (const inv of invoices) {
+            if (Object.keys(found).length === orders.length) break;
 
-            // 1. Numărul comenzii în observations
-            if (obs.includes(cleanNum) || obs.includes(norm(order.name))) {
-              matchType = 'observations';
-            }
-            // 2. Potrivire nume client ≥80%
-            else if (nameScore(order.client, clientInv) >= 0.8) {
-              matchType = `name(${Math.round(nameScore(order.client, clientInv)*100)}%)`;
-            }
-            // 3. Total + primul cuvânt din nume
-            else if (orderTotal > 0 && Math.abs(invTotal - orderTotal) < 1) {
-              const firstWord = norm(order.client || '').split(' ')[0];
-              if (firstWord && norm(clientInv).includes(firstWord)) {
-                matchType = 'total+name';
-              }
-            }
+            const invNum = inv.number || inv.invoiceNumber || inv.documentNumber;
+            if (!invNum) continue;
 
-            if (matchType) {
-              found[order.name] = {
-                series: sName, number: String(invNum),
-                url: invUrl, matchType,
-                client: clientInv,
-              };
+            for (const order of orders) {
+              if (found[order.name]) continue;
 
-              if (shopifyDomain && shopifyToken && order.id) {
-                const r = await markInvoiceInShopify({
-                  shopifyDomain, shopifyToken,
-                  orderId:       order.id,
-                  invoiceSeries: sName,
-                  invoiceNumber: String(invNum),
-                  invoiceUrl:    invUrl,
-                });
-                if (r.ok) shopifyUpdated.push(order.name);
+              const match = matchInvoiceToOrder(inv, invNum, sName, order, cif);
+              if (match) {
+                found[order.name] = match;
+                if (shopifyDomain && shopifyToken && order.id) {
+                  const r = await markInvoiceInShopify({
+                    shopifyDomain, shopifyToken,
+                    orderId: order.id,
+                    invoiceSeries: sName,
+                    invoiceNumber: String(invNum),
+                    invoiceUrl: match.url,
+                  });
+                  if (r.ok) shopifyUpdated.push(order.name);
+                }
               }
             }
           }
         }
+      }
 
-        if (Object.keys(found).length === orders.length) break;
+      // Strategie 2 (fallback): Scanare individuală dacă API list nu funcționează
+      if (!usedListAPI && Object.keys(found).length < orders.length) {
+        let nextNum = serie.nextNumber;
+
+        if (!nextNum) {
+          const probes = [3000, 2000, 1500, 1000, 700, 500, 300, 200, 100, 50, 10, 5, 1];
+          for (const n of probes) {
+            const inv = await fetchInvoice(auth, cif, sName, n);
+            if (inv) { nextNum = n + 50; break; }
+          }
+          nextNum = nextNum || 100;
+        }
+
+        scanLog.push(`${sName}: API list indisponibil. Scan individual de la #${nextNum} (ultimele 300)`);
+
+        const startNum = nextNum - 1;
+        const endNum   = Math.max(1, startNum - 300);
+
+        for (let batch = startNum; batch >= endNum; batch -= 15) {
+          if (Object.keys(found).length === orders.length) break;
+
+          const nums = [];
+          for (let n = batch; n >= Math.max(endNum, batch - 14); n--) nums.push(n);
+
+          const results = await Promise.allSettled(
+            nums.map(n => fetchInvoice(auth, cif, sName, n))
+          );
+
+          for (let i = 0; i < results.length; i++) {
+            const inv = results[i].status === 'fulfilled' ? results[i].value : null;
+            if (!inv) continue;
+
+            for (const order of orders) {
+              if (found[order.name]) continue;
+              const match = matchInvoiceToOrder(inv, nums[i], sName, order, cif);
+              if (match) {
+                found[order.name] = match;
+                if (shopifyDomain && shopifyToken && order.id) {
+                  const r = await markInvoiceInShopify({
+                    shopifyDomain, shopifyToken,
+                    orderId: order.id,
+                    invoiceSeries: sName,
+                    invoiceNumber: String(nums[i]),
+                    invoiceUrl: match.url,
+                  });
+                  if (r.ok) shopifyUpdated.push(order.name);
+                }
+              }
+            }
+          }
+        }
       }
 
       if (Object.keys(found).length === orders.length) break;
@@ -242,12 +300,10 @@ export async function POST(request) {
 
     const notFound = orders.map(o => o.name).filter(n => !found[n]);
 
-    return NextResponse.json({
-      found, notFound, shopifyUpdated,
-      scanned: scanLog.join(' | '),
-    });
+    return NextResponse.json({ found, notFound, shopifyUpdated, scanned: scanLog.join(' | ') });
 
   } catch (e) {
+    console.error('[SmartBill Search]', e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
