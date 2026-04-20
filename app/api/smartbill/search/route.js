@@ -26,9 +26,13 @@ async function markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId, invo
       { name: 'invoice-series',         value: String(invoiceSeries) },
       { name: 'invoice-short-url',      value: invoiceUrl || '' },
       { name: 'xconnector-invoice-url', value: invoiceUrl || '' },
+
     );
     const tags = (orderData.order?.tags || '').split(',').map(t => t.trim()).filter(Boolean);
     if (!tags.includes('invoiced')) tags.push('invoiced');
+    // Salvăm seria+numărul în tag pentru a fi citite prin GraphQL
+    const invTag = `inv-${invoiceSeries}-${invoiceNumber}`;
+    if (!tags.includes(invTag)) tags.push(invTag);
 
     const updateRes = await fetch(
       `https://${shopifyDomain}/admin/api/2024-01/orders/${orderId}.json`,
