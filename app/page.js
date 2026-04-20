@@ -156,10 +156,17 @@ function procOrder(o) {
   const invoiceUrl    = invUrlAttr?.value || '';
   const invoiceShort  = invShortAttr?.value || '';
   const invNumMatch   = invoiceUrl.match(/[?&]n=(\d+)/);
-  const invoiceNumber = (invNumAttr?.value || '').trim() || (invNumMatch ? invNumMatch[1] : '');
-  const invoiceSeries = (invSerAttr?.value || '').trim();
 
-  // hasInvoice: are URL, număr factură SAU tag-ul "invoiced" pus de noi
+  // Citește din note_attributes (REST) sau din tag inv-SERIE-NUMAR (GraphQL)
+  const invTagMatch   = tags.find(t => t.startsWith('inv-'));
+  const invTagParts   = invTagMatch ? invTagMatch.split('-') : []; // ['inv','GLA','2657']
+  const invTagSeries  = invTagParts.length >= 3 ? invTagParts[1].toUpperCase() : '';
+  const invTagNumber  = invTagParts.length >= 3 ? invTagParts[2] : '';
+
+  const invoiceNumber = (invNumAttr?.value || '').trim() || invTagNumber || (invNumMatch ? invNumMatch[1] : '');
+  const invoiceSeries = (invSerAttr?.value || '').trim() || invTagSeries;
+
+  // hasInvoice: URL, număr factură SAU tag invoiced
   const hasInvoice = !!(invoiceUrl || invoiceShort || invoiceNumber || tags.includes('invoiced'));
   return {
     id: o.id, name: o.name || '', fin: o.financial_status || '', ts,
