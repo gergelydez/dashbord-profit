@@ -1505,6 +1505,136 @@ export default function ProfitPage() {
                 </>
               )}
             </div>
+            {/* ══ ESTIMARE PROFIT DIN COSTURI META ══ */}
+            {(() => {
+              const metaEstNum = parseFloat(metaCost) || 0;
+              if (!metaEstNum) return null;
+
+              // Colete: livrate + în tranzit + refuzate = toate expediate
+              const livrate = totalOrders;
+              const tranzitCount = tranzitOrders.length;
+              const refuzate = returnedCount;
+              const totalExpediateEst = livrate + tranzitCount + refuzate;
+
+              // CPA estimat = Meta ÷ total expediate
+              const cpaEst = totalExpediateEst > 0 ? metaEstNum / totalExpediateEst : 0;
+
+              // TVA 21% pe Meta
+              const tvaMetaEst = tvaOnMeta ? metaEstNum * TVA_RATE : 0;
+              const metaCuTVA = metaEstNum + tvaMetaEst;
+
+              // Estimare venituri totale (livrate + tranzit estimat 95% COD + card)
+              const revenueEst_livrate = totalRevenue;
+              const revenueEst_tranzit = tranzitEstTotal; // deja calculat cu 5% retur
+              const revenueEst_total = revenueEst_livrate + revenueEst_tranzit;
+
+              // COGS estimat total
+              const cogsEst_livrate = cogs;
+              const cogsEst_total = cogsEst_livrate + tranzitCOGS;
+
+              // Transport estimat total
+              const transportEst_livrate = effectiveTransportCost;
+              const transportEst_tranzit = tranzitOrders.length * costPerParcel;
+              const transportEst_total = transportEst_livrate + transportEst_tranzit;
+
+              // Costuri fixe estimate (deja calculate)
+              const fixedEst = totalFixed + totalOther;
+
+              // Retur transport (livrate deja returnate + estimat tranzit)
+              const returTransportEst = (returnedCount + Math.round(tranzitCOD.length * 0.05)) * costPerParcel;
+
+              // Profit net estimat
+              const profitEst = revenueEst_total - cogsEst_total - metaCuTVA - transportEst_total - fixedEst - returTransportEst;
+              const marginEst = revenueEst_total > 0 ? (profitEst / revenueEst_total) * 100 : 0;
+
+              return (
+                <div style={{background:'rgba(168,85,247,.05)',border:'1px solid rgba(168,85,247,.25)',borderRadius:12,padding:'14px 16px',marginBottom:14}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+                    <span style={{fontSize:18}}>🎯</span>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:800,color:'#a855f7',textTransform:'uppercase',letterSpacing:.8}}>
+                        Estimare profit total din costuri Meta
+                      </div>
+                      <div style={{fontSize:10,color:'var(--c-text4)',marginTop:1}}>
+                        Meta {fmt(metaEstNum)} RON{tvaMetaEst>0?` + TVA ${fmt(tvaMetaEst)} RON = ${fmt(metaCuTVA)} RON`:''} · {totalExpediateEst} colete expediate total
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CPA estimat */}
+                  <div style={{background:'rgba(168,85,247,.08)',border:'1px solid rgba(168,85,247,.2)',borderRadius:8,padding:'10px 12px',marginBottom:10}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                      <div>
+                        <div style={{fontSize:9,color:'#a855f7',textTransform:'uppercase',letterSpacing:.8,fontWeight:700,marginBottom:3}}>CPA estimat (Meta ÷ expediate)</div>
+                        <div style={{fontSize:22,fontWeight:900,color:'#a855f7',fontFamily:'monospace',letterSpacing:-.5}}>{fmt(cpaEst)} RON</div>
+                        <div style={{fontSize:10,color:'var(--c-text4)',marginTop:3,lineHeight:1.6}}>
+                          {fmt(metaEstNum)} RON ÷ {totalExpediateEst} colete<br/>
+                          ({livrate} livrate + {tranzitCount} în livrare + {refuzate} refuzate)
+                        </div>
+                      </div>
+                      {tvaMetaEst > 0 && (
+                        <div style={{textAlign:'right'}}>
+                          <div style={{fontSize:9,color:'var(--c-yellow)',textTransform:'uppercase',letterSpacing:.6,fontWeight:700,marginBottom:3}}>Meta + TVA 21%</div>
+                          <div style={{fontSize:16,fontWeight:800,color:'var(--c-yellow)',fontFamily:'monospace'}}>{fmt(metaCuTVA)} RON</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Detaliu colete */}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:10}}>
+                    {[
+                      {label:'✅ Livrate',      val:livrate,      color:'#10b981', sub:`${fmt(revenueEst_livrate)} RON`,     note:'confirmate'},
+                      {label:'🚚 În livrare',   val:tranzitCount, color:'#3b82f6', sub:`~${fmt(revenueEst_tranzit)} RON est.`, note:`5% retur COD`},
+                      {label:'↩ Refuzate',      val:refuzate,     color:'#f43f5e', sub:`transport: -${fmt(returTransportEst)} RON`, note:'transport retur'},
+                    ].map(({label,val,color,sub,note})=>(
+                      <div key={label} style={{background:`rgba(0,0,0,.3)`,border:`1px solid ${color}22`,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                        <div style={{fontSize:10,color,fontWeight:700,marginBottom:2}}>{label}</div>
+                        <div style={{fontSize:18,fontWeight:900,color,fontFamily:'monospace'}}>{val}</div>
+                        <div style={{fontSize:9,color:'var(--c-text4)',marginTop:2}}>{sub}</div>
+                        <div style={{fontSize:8,color:'#334155',marginTop:1}}>{note}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* P&L estimat complet */}
+                  <div style={{background:'rgba(0,0,0,.3)',borderRadius:8,padding:'10px 12px',marginBottom:10}}>
+                    <div style={{fontSize:10,color:'var(--c-text4)',fontWeight:700,textTransform:'uppercase',letterSpacing:.6,marginBottom:8}}>P&L estimat (dacă se livrează tot)</div>
+                    {[
+                      {label:'💰 Venituri estimate (livrate + ~tranzit)',  val:revenueEst_total,                    sign:'+', color:'#f97316'},
+                      {label:'📦 Cost produse (COGS estimate)',             val:cogsEst_total,                       sign:'-', color:'#f43f5e'},
+                      {label:'🚚 Transport estimate',                       val:transportEst_total,                  sign:'-', color:'#f59e0b'},
+                      {label:'📣 Meta Ads' + (tvaMetaEst>0 ? ' + TVA 21%':''), val:metaCuTVA,                       sign:'-', color:'#a855f7'},
+                      {label:'↩ Transport retur estimate',                  val:returTransportEst,                   sign:'-', color:'#f43f5e'},
+                      {label:'🔧 Costuri fixe',                             val:fixedEst,                            sign:'-', color:'#64748b'},
+                    ].map(({label,val,sign,color})=>(
+                      <div key={label} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)',fontSize:11}}>
+                        <span style={{color:'var(--c-text3)'}}>{label}</span>
+                        <span style={{fontFamily:'monospace',fontWeight:700,color}}>{sign}{fmt(val)} RON</span>
+                      </div>
+                    ))}
+                    <div style={{display:'flex',justifyContent:'space-between',padding:'8px 0',marginTop:4,borderTop:'2px solid rgba(255,255,255,.08)'}}>
+                      <span style={{fontSize:12,fontWeight:800,color:'var(--c-text)'}}>🚀 Profit net estimat</span>
+                      <span style={{fontSize:14,fontWeight:900,fontFamily:'monospace',color:profitEst>=0?'#10b981':'#f43f5e'}}>{profitEst>=0?'+':''}{fmt(profitEst)} RON</span>
+                    </div>
+                    <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4,display:'flex',justifyContent:'space-between'}}>
+                      <span>Marjă estimată</span>
+                      <span style={{fontWeight:700,color:marginEst>=0?'#10b981':'#f43f5e'}}>{marginEst.toFixed(1)}%</span>
+                    </div>
+                    {tvaMetaEst > 0 && (
+                      <div style={{marginTop:8,padding:'6px 8px',background:'rgba(245,158,11,.06)',borderRadius:6,fontSize:10,color:'var(--c-yellow)',lineHeight:1.7}}>
+                        ⚠️ TVA 21% pe Meta ({fmt(tvaMetaEst)} RON) este inclusă în calcul deoarece ai activat opțiunea TVA Meta.
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{fontSize:10,color:'var(--c-text4)',lineHeight:1.7,padding:'6px 8px',background:'rgba(255,255,255,.03)',borderRadius:6}}>
+                    💡 <strong>Cum funcționează:</strong> CPA estimat = Meta total ÷ toate coletele expediate (livrate + în livrare + refuzate). Estimarea tranzit aplică 5% retur pe comenzile COD. Cărțile de credit sunt considerate încasate 100%.
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="pf-stitle">TVA intracomunitară</div>
             <div className="pf-card">
               <div className="pf-card-header"><span className="pf-card-icon">🧾</span><span className="pf-card-title">TVA de plată · 21%</span><span className="pf-card-status" style={{color:'var(--c-yellow)'}}>{fmt(totalTVA)} RON</span></div>
