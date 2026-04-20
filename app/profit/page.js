@@ -931,7 +931,9 @@ export default function ProfitPage() {
 
   // ── ESTIMARE ÎNCASĂRI TRANZIT (cu rată retur 5% COD) ──────────────────
   const RETUR_RATE = 0.05;
-  const tranzitOrders = allShopifyOrders.filter(o => ['incurs','outfor'].includes(o.ts));
+  const glsMapTranzit = getGlsAwbMap();
+  const sdMapTranzit  = getSdAwbMap();
+  const tranzitOrders = allShopifyOrders.filter(o => ['incurs','outfor'].includes(getFinalStatus(o, glsMapTranzit, sdMapTranzit)));
   const tranzitCOD    = tranzitOrders.filter(o => {
     const gw = (o.gateway||'').toLowerCase();
     return !['shopify_payments','stripe','paypal'].some(g => gw.includes(g));
