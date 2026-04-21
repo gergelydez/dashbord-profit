@@ -19,10 +19,13 @@
     "@tanstack/react-query": "^5.51.0",
     "bullmq": "^5.12.0",
     "ioredis": "^5.4.1",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
     "next": "14.2.0",
     "react": "^18",
     "react-dom": "^18",
     "redis": "^4.7.0",
+    "xlsx": "^0.18.5",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
