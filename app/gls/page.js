@@ -640,27 +640,59 @@ export default function GLSPage() {
     }
   };
 
-  // ── Download Label PDF ─────────────────────────────────────────────────────
-  const downloadLabel = (awbData, orderName) => {
-    if (!awbData?.labelBase64) {
-      toast('Eticheta PDF nu este disponibilă pentru acest AWB', 'warn');
-      return;
-    }
-    const blob = b64ToBlob(awbData.labelBase64, 'application/pdf');
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `AWB_GLS_${awbData.awb}_${orderName || ''}.pdf`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast('Etichetă descărcată!', 'success');
-  };
-
+  // ── b64 → Blob helper ─────────────────────────────────────────────────────
   const b64ToBlob = (b64, mime) => {
     const bytes = atob(b64);
     const arr = new Uint8Array(bytes.length);
     for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
     return new Blob([arr], { type: mime });
+  };
+
+  const triggerPdfDownload = (base64, filename) => {
+    const blob = b64ToBlob(base64, 'application/pdf');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  // ── Download Label PDF (local cache first, then re-fetch from GLS) ─────────
+  const downloadLabel = async (awbData, orderName) => {
+    // If we already have the PDF cached locally — use it instantly
+    if (awbData?.labelBase64) {
+      triggerPdfDownload(awbData.labelBase64, `AWB_GLS_${awbData.awb}_${orderName||''}.pdf`);
+      toast('✅ Etichetă descărcată!', 'success');
+      return;
+    }
+
+    // No cached PDF — re-fetch from GLS using ParcelId (required by API docs)
+    if (!awbData?.parcelId) {
+      toast('⚠️ Eticheta nu este disponibilă. ParcelId lipsă — regenerează AWB-ul.', 'warn');
+      return;
+    }
+
+    toast('⏳ Se descarcă eticheta din GLS...', 'info');
+    try {
+      const res = await fetch('/api/gls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Server uses ENV credentials — we only send action + parcelId
+        body: JSON.stringify({ action: 'get_label', parcelId: awbData.parcelId, awb: awbData.awb }),
+      });
+      const data = await res.json();
+      if (data.ok && data.labelBase64) {
+        // Cache it locally so next download is instant
+        const updated = { ...awbData, labelBase64: data.labelBase64 };
+        awbStore.save(awbData.orderId || awbData.awb, updated);
+        setAwbMap(awbStore.get());
+        triggerPdfDownload(data.labelBase64, `AWB_GLS_${awbData.awb}_${orderName||''}.pdf`);
+        toast('✅ Etichetă descărcată și salvată local!', 'success');
+      } else {
+        toast('❌ ' + (data.error || 'Eticheta nu a putut fi obținută din GLS'), 'error');
+      }
+    } catch(e) {
+      toast('❌ Eroare rețea: ' + e.message, 'error');
+    }
   };
 
   // ── Delete AWB ─────────────────────────────────────────────────────────────
