@@ -24,9 +24,10 @@ export async function OPTIONS() {
 export async function POST(req) {
   try {
     const body = await req.json();
-    const user   = body.username     || ENV_USER;
-    const pass   = body.password     || ENV_PASS;
-    const client = body.clientNumber || ENV_CLIENT;
+    // Security: credentials come ONLY from ENV vars — body values ignored
+    const user   = ENV_USER;
+    const pass   = ENV_PASS;
+    const client = ENV_CLIENT;
 
     if (!user || !pass) {
       return NextResponse.json({ ok: false, error: 'Credentiale GLS lipsa.' }, { headers: CORS });
@@ -91,4 +92,3 @@ export async function POST(req) {
     return NextResponse.json({ ok: false, error: e.message }, { status: 500, headers: CORS });
   }
 }
-
