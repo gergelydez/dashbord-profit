@@ -53,24 +53,78 @@ function validateAddr(a) {
 }
 
 function procOrder(o) {
+  // ── Support BOTH raw Shopify orders AND pre-processed glamx orders ──────────
+  // Pre-processed orders (from main dashboard localStorage) already have flat fields
+  const isProcessed = !!(o.client !== undefined && o.fin !== undefined && !o.financial_status);
+
+  if (isProcessed) {
+    // Already processed by main dashboard — just enrich with GLS detection
+    const tc = (o.courier || o.trackingCompany || '').toLowerCase();
+    const trackingNo = o.trackingNo || o.tracking_number || '';
+    const isGLS = tc.includes('gls') || tc.includes('mygls') ||
+      (o.trackingNo && !tc) || // has tracking but courier unknown = likely GLS
+      false;
+    return {
+      ...o,
+      id: String(o.id || ''),
+      trackingNo,
+      isGLS,
+      addrIssues: validateAddr({
+        name: o.client, address: o.address,
+        city: o.city, zip: o.zip, phone: o.phone,
+      }),
+    };
+  }
+
+  // ── Raw Shopify order ────────────────────────────────────────────────────────
   const addr = o.shipping_address || o.billing_address || {};
-  const fulfillmentData = (o.fulfillments || []).find(f => f.tracking_company || f.tracking_number);
+
+  // Find best fulfillment — prefer GLS, then last
+  const fulfillments = o.fulfillments || [];
+  const glsFulfillment = fulfillments.find(f => {
+    const tc = (f.tracking_company || '').toLowerCase();
+    return tc.includes('gls') || tc.includes('mygls');
+  });
+  const fulfillmentData = glsFulfillment || fulfillments[fulfillments.length - 1] || null;
+
   const trackingNo = fulfillmentData?.tracking_number || '';
   const tc = (fulfillmentData?.tracking_company || '').toLowerCase();
-  const isGLS = tc.includes('gls') || tc.includes('mygls');
-  const isCOD = (o.financial_status || '') === 'pending' ||
+  const isGLS = tc.includes('gls') || tc.includes('mygls') ||
+    (trackingNo && /^\d{10,13}$/.test(trackingNo.replace(/\s/g, '')));
+
+  const isFulfilled = (o.fulfillment_status || '').toLowerCase() === 'fulfilled';
+
+  const isOnlinePay = ['shopify_payments','stripe','paypal','card'].some(g =>
+    (o.payment_gateway || '').toLowerCase().includes(g)
+  );
+  const isCOD = !isOnlinePay && (
+    (o.financial_status || '') === 'pending' ||
     (o.payment_gateway || '').toLowerCase().includes('cod') ||
-    (!(o.payment_gateway || '').toLowerCase().includes('stripe') &&
-     !(o.payment_gateway || '').toLowerCase().includes('paypal') &&
-     !(o.payment_gateway || '').toLowerCase().includes('shopify_payments'));
+    (o.payment_gateway || '').toLowerCase().includes('cash') ||
+    (o.payment_gateway || '').toLowerCase().includes('ramburs')
+  );
+
   const lineItems = o.line_items || [];
   const notes = o.note_attributes || [];
+
+  // Total: try total_price, then subtotal, then sum line items
+  let total = parseFloat(o.total_price || 0);
+  if (!total) total = parseFloat(o.subtotal_price || 0);
+  if (!total) total = lineItems.reduce((s, i) => s + parseFloat(i.price || 0) * (i.quantity || 1), 0);
+
+  const clientName = addr.name ||
+    [addr.first_name, addr.last_name].filter(Boolean).join(' ') ||
+    o.customer?.first_name && (o.customer.first_name + ' ' + (o.customer.last_name || '')).trim() ||
+    '';
+
+  const phone = (o.phone || addr.phone || o.customer?.phone || '').replace(/\s/g, '');
+
   return {
     id: String(o.id || ''),
     name: o.name || '',
-    client: addr.name || '',
-    phone: (o.phone || addr.phone || '').replace(/\s/g, ''),
-    email: o.email || '',
+    client: clientName,
+    phone,
+    email: o.email || o.customer?.email || '',
     address: addr.address1 || '',
     address2: addr.address2 || '',
     city: addr.city || '',
@@ -78,8 +132,9 @@ function procOrder(o) {
     zip: (addr.zip || '').replace(/\s/g, ''),
     fin: (o.financial_status || '').toLowerCase(),
     fulfillmentStatus: (o.fulfillment_status || '').toLowerCase(),
+    isFulfilled,
     createdAt: o.created_at || '',
-    total: parseFloat(o.total_price || 0),
+    total,
     currency: o.currency || 'RON',
     gateway: o.payment_gateway || '',
     trackingNo,
@@ -87,7 +142,7 @@ function procOrder(o) {
     isCOD,
     items: lineItems.map(i => ({ name: i.name || '', sku: i.sku || '', qty: i.quantity || 1, price: parseFloat(i.price || 0) })),
     prods: lineItems.map(i => i.name).join(', '),
-    addrIssues: validateAddr({ name: addr.name, address: addr.address1, city: addr.city, zip: addr.zip, phone: o.phone || addr.phone }),
+    addrIssues: validateAddr({ name: clientName, address: addr.address1, city: addr.city, zip: addr.zip, phone }),
   };
 }
 
@@ -110,11 +165,8 @@ const awbStore = {
   remove: (orderId) => { const m = awbStore.get(); delete m[orderId]; awbStore.set(m); },
 };
 
-// ── GLS Credentials ────────────────────────────────────────────────────────────
-const credStore = {
-  get: () => { try { const s = ls.get('gx_gls_creds'); return s ? JSON.parse(s) : null; } catch { return null; } },
-  set: (c) => { try { ls.set('gx_gls_creds', JSON.stringify(c)); } catch {} },
-};
+// ── GLS Config — loaded from server ENV, never stored client-side ─────────────
+// No credential storage on client. All auth happens server-side via ENV vars.
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&display=swap');
@@ -340,10 +392,10 @@ export default function GLSPage() {
   const [tab, setTab] = useState('orders'); // orders | awbs | settings | stats
   const { toasts, add: toast } = useToast();
 
-  // ── Credentials ──
-  const [creds, setCreds] = useState({ username: '', password: '', clientNumber: '', pickupName: '', pickupStreet: '', pickupCity: '', pickupZip: '', pickupCounty: '', pickupPhone: '' });
-  const [connStatus, setConnStatus] = useState('idle'); // idle | ok | err | loading
-  const [connMsg, setConnMsg] = useState('');
+  // ── GLS Config (from Vercel ENV, fetched server-side) ──
+  // No credentials stored on client — all auth is ENV-only on server
+  const [glsConfig, setGlsConfig] = useState(null); // null = loading, false = not configured, obj = config
+  const [configLoading, setConfigLoading] = useState(true);
 
   // ── Orders ──
   const [orders, setOrders] = useState([]);
@@ -381,17 +433,18 @@ export default function GLSPage() {
   const [glsDays, setGlsDays] = useState(30);
 
   const loadGlsParcels = async () => {
-    if (!creds.username || !creds.password) { toast('Configurează credențialele GLS mai întâi!', 'error'); return; }
+    if (!glsConfig?.configured) { toast('GLS neconfigurat în Vercel ENV', 'error'); return; }
     setGlsParcelsLoading(true); setGlsParcelsErr('');
     try {
+      // No credentials sent from browser — server uses ENV vars
       const res = await fetch('/api/gls-parcellist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: creds.username, password: creds.password, clientNumber: creds.clientNumber || '553003585', days: glsDays }),
+        body: JSON.stringify({ days: glsDays }),
       });
       const data = await res.json();
-      if (data.ok) { setGlsParcels(data.parcels || []); toast(data.count + ' colete incarcate din GLS', 'success'); }
-      else { setGlsParcelsErr(data.error || 'Eroare'); toast('Eroare GLS: ' + data.error, 'error'); }
+      if (data.ok) { setGlsParcels(data.parcels || []); toast(data.count + ' colete încărcate din GLS', 'success'); }
+      else { setGlsParcelsErr(data.error || 'Eroare'); toast('Eroare GLS: ' + (data.error || '?'), 'error'); }
     } catch (e) { setGlsParcelsErr(e.message); }
     finally { setGlsParcelsLoading(false); }
   };
@@ -404,41 +457,67 @@ export default function GLSPage() {
 
   // ── Load ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    const saved = credStore.get();
-    if (saved) setCreds(saved);
+    // 1. Fetch GLS config status from server (ENV vars — no credentials sent to client)
+    setConfigLoading(true);
+    fetch('/api/gls-config')
+      .then(r => r.json())
+      .then(cfg => { setGlsConfig(cfg); setConfigLoading(false); })
+      .catch(() => { setGlsConfig({ configured: false, missing: ['API error'] }); setConfigLoading(false); });
 
+    // 2. Load orders from localStorage
     const sk = getShopKey();
     const raw = ls.get(ordersKey(sk));
     if (raw) {
       try {
         const all = JSON.parse(raw);
-        setOrders(all.map(procOrder));
-      } catch { }
+        const processed = all.map(o => {
+          try { return procOrder(o); }
+          catch(e) { console.warn('[GLS] procOrder error for', o?.id, e.message); return null; }
+        }).filter(Boolean);
+        setOrders(processed);
+        console.log('[GLS] Loaded', processed.length, 'orders');
+      } catch(e) {
+        console.error('[GLS] Failed to load orders:', e.message);
+      }
     }
+
+    // 3. Load saved AWBs
     setAwbMap(awbStore.get());
   }, []);
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const savedAwbs = Object.values(awbMap);
-  const ordersWithStatus = orders.map(o => ({
-    ...o,
-    awbData: awbMap[o.id] || null,
-    hasAwb: !!(o.trackingNo || awbMap[o.id]),
-  }));
+  const ordersWithStatus = orders.map(o => {
+    const awbData = awbMap[o.id] || null;
+    // hasAwb: check trackingNo from Shopify fulfillment, local awbMap, OR isFulfilled with GLS
+    const effectiveTrackingNo = o.trackingNo || awbData?.awb || '';
+    const hasAwb = !!(effectiveTrackingNo) || !!(o.isFulfilled && o.isGLS);
+    return {
+      ...o,
+      awbData,
+      hasAwb,
+      effectiveTrackingNo,
+    };
+  });
 
   const filtered = ordersWithStatus.filter(o => {
-    if (filter === 'pending') return !o.hasAwb && o.fin !== 'refunded' && o.fin !== 'cancelled';
-    if (filter === 'hasawb') return o.hasAwb;
-    if (filter === 'issues') return o.addrIssues.length > 0;
-    if (filter === 'cod') return o.isCOD && !o.hasAwb;
-    if (filter === 'online') return !o.isCOD && !o.hasAwb;
-    return true;
+    if (filter === 'pending') return !o.hasAwb && o.fin !== 'refunded' && o.fin !== 'cancelled' && !o.isFulfilled;
+    if (filter === 'hasawb') return o.hasAwb || (o.isFulfilled && o.isGLS);
+    if (filter === 'fulfilled') return o.isFulfilled;
+    if (filter === 'issues') return o.addrIssues.length > 0 && !o.hasAwb;
+    if (filter === 'cod') return o.isCOD;
+    if (filter === 'online') return !o.isCOD;
+    return true; // 'all'
   }).filter(o => {
     if (!search) return true;
     const s = search.toLowerCase();
-    return o.name.toLowerCase().includes(s) || o.client.toLowerCase().includes(s) ||
-      o.phone.includes(s) || o.city.toLowerCase().includes(s) ||
-      (o.trackingNo || '').includes(s) || (o.awbData?.awb || '').includes(s);
+    return o.name.toLowerCase().includes(s) ||
+      (o.client || '').toLowerCase().includes(s) ||
+      (o.phone || '').includes(s) ||
+      (o.city || '').toLowerCase().includes(s) ||
+      (o.effectiveTrackingNo || '').includes(s) ||
+      (o.awbData?.awb || '').includes(s) ||
+      (o.prods || '').toLowerCase().includes(s);
   });
 
   const PAGE_SIZE = 20;
@@ -448,31 +527,39 @@ export default function GLSPage() {
   // KPIs
   const kpis = {
     total: orders.length,
-    pending: ordersWithStatus.filter(o => !o.hasAwb && o.fin !== 'refunded').length,
-    hasAwb: ordersWithStatus.filter(o => o.hasAwb).length,
-    issues: ordersWithStatus.filter(o => o.addrIssues.length > 0 && !o.hasAwb).length,
+    pending: ordersWithStatus.filter(o => !o.hasAwb && !o.isFulfilled && o.fin !== 'refunded' && o.fin !== 'cancelled').length,
+    hasAwb: ordersWithStatus.filter(o => o.hasAwb || (o.isFulfilled && o.isGLS)).length,
+    fulfilled: ordersWithStatus.filter(o => o.isFulfilled).length,
+    issues: ordersWithStatus.filter(o => o.addrIssues.length > 0 && !o.hasAwb && !o.isFulfilled).length,
     savedAwbs: savedAwbs.length,
+    totalCOD: ordersWithStatus.filter(o => o.isCOD && !o.hasAwb && !o.isFulfilled).reduce((s, o) => s + (o.total || 0), 0),
   };
 
-  // ── Credentials / Connection ──────────────────────────────────────────────
-  const saveCreds = () => {
-    credStore.set(creds);
-    toast('Credentiale salvate!', 'success');
+  // ── Config / Connection ───────────────────────────────────────────────────
+  // Credentials live 100% in Vercel ENV — never on client
+  const refreshConfig = async () => {
+    setConfigLoading(true);
+    try {
+      const r = await fetch('/api/gls-config');
+      const cfg = await r.json();
+      setGlsConfig(cfg);
+    } catch { setGlsConfig({ configured: false, missing: ['API error'] }); }
+    finally { setConfigLoading(false); }
   };
 
   const testConnection = async () => {
-    if (!creds.username || !creds.password) { toast('Completeaza username și parolă GLS', 'error'); return; }
-    setConnStatus('loading'); setConnMsg('');
+    if (!glsConfig?.configured) { toast('Configureaza GLS_USERNAME și GLS_PASSWORD în Vercel ENV', 'error'); return; }
     try {
       const res = await fetch('/api/gls', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...creds, clientNumber: creds.clientNumber || '553003585', action: 'test_connection' }),
+        // No credentials sent — server uses ENV vars
+        body: JSON.stringify({ action: 'test_connection' }),
       });
       const data = await res.json();
-      if (data.ok) { setConnStatus('ok'); setConnMsg(data.message || 'Conectat!'); toast('GLS conectat cu succes! ✅', 'success'); }
-      else { setConnStatus('err'); setConnMsg(data.error || 'Eroare necunoscută'); toast('Eroare conexiune GLS: ' + (data.error || '?'), 'error'); }
-    } catch (e) { setConnStatus('err'); setConnMsg(e.message); toast('Eroare rețea: ' + e.message, 'error'); }
+      if (data.ok) { toast('✅ GLS conectat! ' + (data.message || ''), 'success'); refreshConfig(); }
+      else { toast('❌ Eroare GLS: ' + (data.error || '?'), 'error'); }
+    } catch (e) { toast('Eroare rețea: ' + e.message, 'error'); }
   };
 
   // ── Open AWB Modal ─────────────────────────────────────────────────────────
@@ -491,46 +578,36 @@ export default function GLSPage() {
   };
 
   // ── Create AWB ─────────────────────────────────────────────────────────────
+  // Credentials are 100% server-side (Vercel ENV). Client never sees them.
   const createAWB = async (order, opts = {}) => {
     const addr = opts.addr || editAddr || {};
-    const svc = opts.services || selectedServices;
-    const w = opts.weight || weight;
-    const p = opts.parcels || parcels;
-    const cnt = opts.content || content;
+    const svc  = opts.services || selectedServices;
+    const w    = opts.weight   || weight;
+    const p    = opts.parcels  || parcels;
+    const cnt  = opts.content  || content;
 
-    if (!creds.username || !creds.password) {
-      return { ok: false, error: 'Configureaza credentialele GLS în Setări' };
+    if (!glsConfig?.configured) {
+      return { ok: false, error: 'GLS neconfigurat — adaugă GLS_USERNAME și GLS_PASSWORD în Vercel ENV' };
     }
 
+    // NO username/password sent from browser — server reads them from ENV
     const payload = {
-      username: creds.username,
-      password: creds.password,
-      clientNumber: creds.clientNumber || '553003585',
-      // Pickup (optional overrides)
-      ...(creds.pickupName ? {
-        pickupName: creds.pickupName,
-        pickupStreet: creds.pickupStreet,
-        pickupCity: creds.pickupCity,
-        pickupZip: creds.pickupZip,
-        pickupCounty: creds.pickupCounty,
-        pickupPhone: creds.pickupPhone,
-      } : {}),
-      recipientName: addr.name || order.client,
-      phone: addr.phone || order.phone,
-      email: addr.email || order.email,
-      address: addr.address || order.address,
-      city: addr.city || order.city,
-      county: addr.county || order.county,
-      zip: (addr.zip || order.zip || '').replace(/\s/g, ''),
-      weight: parseFloat(w) || 1,
-      parcels: parseInt(p) || 1,
-      content: cnt || order.prods?.slice(0, 40) || 'Colet',
-      codAmount: order.isCOD ? order.total : 0,
-      codCurrency: order.currency || 'RON',
-      orderName: order.name,
-      orderId: order.id,
+      recipientName: addr.name    || order.client,
+      phone:         addr.phone   || order.phone,
+      email:         addr.email   || order.email,
+      address:       addr.address || order.address,
+      city:          addr.city    || order.city,
+      county:        addr.county  || order.county,
+      zip:           (addr.zip    || order.zip || '').replace(/\s/g, ''),
+      weight:        parseFloat(w) || 1,
+      parcels:       parseInt(p)  || 1,
+      content:       cnt || order.prods?.slice(0, 40) || 'Colet',
+      codAmount:     order.isCOD ? order.total : 0,
+      codCurrency:   order.currency || 'RON',
+      orderName:     order.name,
+      orderId:       order.id,
       selectedServices: svc,
-      observations: observation || '',
+      observations:  observation || '',
     };
 
     const res = await fetch('/api/gls', {
@@ -598,7 +675,7 @@ export default function GLSPage() {
   const startBulk = async () => {
     const targets = [...selected].map(id => ordersWithStatus.find(o => o.id === id)).filter(Boolean).filter(o => !o.hasAwb);
     if (!targets.length) { toast('Selectează comenzi fără AWB!', 'warn'); return; }
-    if (!creds.username || !creds.password) { toast('Configureaza credentialele GLS!', 'error'); return; }
+    if (!glsConfig?.configured) { toast('GLS neconfigurat — adaugă credențialele în Vercel ENV', 'error'); return; }
 
     const results = targets.map(o => ({ orderId: o.id, name: o.name, status: 'pending', awb: null, error: null }));
     setBulkResults(results);
@@ -671,12 +748,21 @@ export default function GLSPage() {
   const clearSelected = () => setSelected(new Set());
 
   // ── Render helpers ─────────────────────────────────────────────────────────
-  const ConnDot = () => (
-    <span className="gls-conn">
-      <span className={`gls-conn-dot ${connStatus === 'ok' ? 'ok' : connStatus === 'err' ? 'err' : 'idle'}`} />
-      {connStatus === 'ok' ? 'Conectat' : connStatus === 'err' ? 'Eroare' : connStatus === 'loading' ? 'Se verifică...' : 'Neconfigurat'}
-    </span>
-  );
+  const ConnDot = () => {
+    if (configLoading) return <span className="gls-conn"><span className="gls-conn-dot idle" /><span style={{color:'#475569'}}>Se verifică...</span></span>;
+    if (glsConfig?.configured) return (
+      <span className="gls-conn">
+        <span className="gls-conn-dot ok" />
+        <span style={{color:'#10b981'}}>Configurat{glsConfig.pickupName ? ` · ${glsConfig.pickupName}` : ''}</span>
+      </span>
+    );
+    return (
+      <span className="gls-conn">
+        <span className="gls-conn-dot err" />
+        <span style={{color:'#f43f5e'}}>Neconfigurat</span>
+      </span>
+    );
+  };
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -714,20 +800,25 @@ export default function GLSPage() {
             <div className="gls-kpi-v">{kpis.hasAwb}</div>
             <div className="gls-kpi-l">AWBuri active</div>
           </div>
-          <div className="gls-kpi" style={{ '--kpi-glow': '#f43f5e', '--kpi-color': kpis.issues > 0 ? '#f43f5e' : '#334155' }} onClick={() => { setFilter('issues'); setTab('orders'); }}>
-            <div className="gls-kpi-icon">⚠️</div>
-            <div className="gls-kpi-v" style={{ color: kpis.issues > 0 ? '#f43f5e' : undefined }}>{kpis.issues}</div>
-            <div className="gls-kpi-l">Adrese cu probleme</div>
+          <div className="gls-kpi" style={{ '--kpi-glow': '#3b82f6', '--kpi-color': '#60a5fa' }} onClick={() => { setFilter('fulfilled'); setTab('orders'); }}>
+            <div className="gls-kpi-icon">📦</div>
+            <div className="gls-kpi-v" style={{ color: '#60a5fa' }}>{kpis.fulfilled}</div>
+            <div className="gls-kpi-l">Fulfilled GLS</div>
           </div>
         </div>
 
-        {/* ── Credentials warning ── */}
-        {!creds.username && tab !== 'settings' && (
+        {/* ── ENV Config warning ── */}
+        {!configLoading && !glsConfig?.configured && tab !== 'settings' && (
           <div className="gls-noconfig">
             <div style={{ fontSize: 28, marginBottom: 8 }}>🔑</div>
-            <div style={{ fontWeight: 700, color: '#f59e0b', marginBottom: 4 }}>Credentiale GLS neconfigurare</div>
-            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>Introdu datele de acces MyGLS pentru a genera AWBuri</div>
-            <button className="gls-btn gls-btn-primary" onClick={() => setTab('settings')}>⚙️ Configurează acum</button>
+            <div style={{ fontWeight: 700, color: '#f59e0b', marginBottom: 4 }}>GLS neconfigurat în Vercel ENV</div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
+              Lipsesc variabilele de mediu:
+            </div>
+            <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#f97316', marginBottom: 12, lineHeight: 1.8 }}>
+              {(glsConfig?.missing || []).map(m => <div key={m}>• {m}</div>)}
+            </div>
+            <button className="gls-btn gls-btn-primary" onClick={() => setTab('settings')}>📋 Vezi instrucțiuni</button>
           </div>
         )}
 
@@ -756,6 +847,7 @@ export default function GLSPage() {
                 {[
                   { id: 'pending', label: `⏳ Neexpediate (${kpis.pending})` },
                   { id: 'hasawb', label: `✅ Cu AWB (${kpis.hasAwb})` },
+                  { id: 'fulfilled', label: `📦 Fulfilled (${kpis.fulfilled})` },
                   { id: 'issues', label: `⚠️ Probleme (${kpis.issues})` },
                   { id: 'cod', label: '💵 Ramburs' },
                   { id: 'online', label: '💳 Online' },
@@ -815,8 +907,8 @@ export default function GLSPage() {
                     </thead>
                     <tbody>
                       {paginated.map(o => {
-                        const awbData = awbMap[o.id];
-                        const effectiveAwb = o.trackingNo || awbData?.awb;
+                        const awbData = o.awbData;
+                        const effectiveAwb = o.effectiveTrackingNo || '';
                         const sel = selected.has(o.id);
                         return (
                           <tr
@@ -832,12 +924,16 @@ export default function GLSPage() {
                               />
                             </td>
                             <td>
-                              <div style={{ fontWeight: 700, color: '#e2e8f0', fontFamily: 'Space Grotesk,monospace' }}>{o.name}</div>
-                              <div style={{ fontSize: 10, color: '#334155' }}>{fmtD(o.createdAt)}</div>
+                              <div style={{ fontWeight: 700, color: '#e2e8f0', fontFamily: 'Space Grotesk,monospace', fontSize: 13 }}>{o.name}</div>
+                              <div style={{ fontSize: 9, color: '#334155', marginTop: 1 }}>{fmtD(o.createdAt)}</div>
+                              {o.prods && <div style={{ fontSize: 9, color: '#475569', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }} title={o.prods}>{o.prods}</div>}
                             </td>
                             <td>
-                              <div style={{ fontWeight: 600, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.client}</div>
-                              <div style={{ fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>{o.phone}</div>
+                              <div style={{ fontWeight: 700, color: '#e2e8f0', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>
+                                {o.client || <span style={{color:'#475569',fontStyle:'italic'}}>Fără nume</span>}
+                              </div>
+                              <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginTop: 2 }}>{o.phone || '—'}</div>
+                              {o.city && <div style={{ fontSize: 9, color: '#334155', marginTop: 1 }}>{o.city}{o.county ? `, ${o.county}` : ''}</div>}
                             </td>
                             <td className="gls-col-hide">
                               <div style={{ fontSize: 11, color: '#64748b', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -849,7 +945,13 @@ export default function GLSPage() {
                               )}
                             </td>
                             <td>
-                              <div style={{ fontWeight: 700, fontFamily: 'Space Grotesk,monospace', color: '#e2e8f0' }}>{fmt(o.total)} {o.currency}</div>
+                              <div style={{
+                                fontWeight: 700, fontFamily: 'Space Grotesk,monospace',
+                                color: o.total > 0 ? (o.isCOD ? '#f59e0b' : '#10b981') : '#334155',
+                                fontSize: 13,
+                              }}>
+                                {o.total > 0 ? `${fmt(o.total)} ${o.currency}` : '—'}
+                              </div>
                             </td>
                             <td>
                               <span className={`gls-badge ${o.isCOD ? 'gls-badge-warn' : 'gls-badge-blue'}`}>
@@ -858,11 +960,16 @@ export default function GLSPage() {
                             </td>
                             <td>
                               {effectiveAwb ? (
-                                <span className="gls-badge gls-badge-ok">✓ AWB</span>
+                                <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                                  <span className="gls-badge gls-badge-ok">✓ AWB</span>
+                                  {o.isFulfilled && <span className="gls-badge gls-badge-blue" style={{fontSize:9}}>📦 Fulfilled</span>}
+                                </div>
+                              ) : o.isFulfilled ? (
+                                <span className="gls-badge gls-badge-blue">📦 Fulfilled</span>
                               ) : o.addrIssues.length > 0 ? (
                                 <span className="gls-badge gls-badge-warn">⚠ Adresă</span>
                               ) : (
-                                <span className="gls-badge" style={{ background: 'rgba(255,255,255,.05)', color: '#334155' }}>— Neexpediat</span>
+                                <span className="gls-badge" style={{ background: 'rgba(255,255,255,.05)', color: '#475569' }}>⏳ Neexpediat</span>
                               )}
                             </td>
                             <td onClick={e => e.stopPropagation()}>
@@ -870,15 +977,24 @@ export default function GLSPage() {
                                 <div className="gls-act-grp">
                                   <span className="gls-awbn">{effectiveAwb}</span>
                                   {awbData?.labelBase64 && (
-                                    <button className="gls-btn gls-btn-green gls-btn-sm" onClick={() => downloadLabel(awbData, o.name)} title="Descarcă PDF">⬇ PDF</button>
+                                    <button className="gls-btn gls-btn-green gls-btn-sm" onClick={() => downloadLabel(awbData, o.name)}>⬇ PDF</button>
                                   )}
                                   <a href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${effectiveAwb}`}
                                     target="_blank" rel="noopener noreferrer"
                                     className="gls-btn gls-btn-blue gls-btn-sm"
                                     style={{ textDecoration: 'none' }}>📍 Track</a>
+                                  <a href={`https://mygls.ro/Parcel/Detail/${effectiveAwb}`}
+                                    target="_blank" rel="noopener noreferrer"
+                                    className="gls-btn gls-btn-ghost gls-btn-sm"
+                                    style={{ textDecoration: 'none', fontSize: 10 }}>🌐</a>
                                   {awbData && (
-                                    <button className="gls-btn gls-btn-red gls-btn-sm" onClick={() => deleteAwb(o.id, effectiveAwb)} title="Șterge AWB din local">✕</button>
+                                    <button className="gls-btn gls-btn-red gls-btn-sm" onClick={() => deleteAwb(o.id, effectiveAwb)}>✕</button>
                                   )}
+                                </div>
+                              ) : o.isFulfilled ? (
+                                <div className="gls-act-grp">
+                                  <span style={{fontSize:10,color:'#475569',fontStyle:'italic'}}>Fulfilled extern</span>
+                                  <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={() => openAwbModal(o)}>+ AWB</button>
                                 </div>
                               ) : (
                                 <div className="gls-act-grp">
@@ -888,7 +1004,7 @@ export default function GLSPage() {
                                   >🚚 AWB</button>
                                   {o.addrIssues.length > 0 && (
                                     <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={() => openAwbModal(o)} title={o.addrIssues.join(', ')}>
-                                      ✏️
+                                      ✏️ Fix adresă
                                     </button>
                                   )}
                                 </div>
@@ -1130,133 +1246,112 @@ export default function GLSPage() {
         )}
 
         {/* ══════════════════════════════════════
-            TAB: SETTINGS
+            TAB: SETTINGS — ENV only, no client credentials
         ══════════════════════════════════════ */}
         {tab === 'settings' && (
           <div className="gls-fadein">
-            {/* Connection Status */}
+
+            {/* ── Status curent ENV ── */}
             <div className="gls-panel" style={{ marginBottom: 12 }}>
               <div className="gls-panel-hdr">
                 <div>
-                  <div className="gls-panel-title">🔐 Credentiale MyGLS API</div>
-                  <div className="gls-panel-sub">Datele de acces din panoul MyGLS Romania</div>
+                  <div className="gls-panel-title">🔐 Status configurare GLS</div>
+                  <div className="gls-panel-sub">Credențialele sunt stocate 100% în Vercel ENV — niciodată în browser</div>
                 </div>
-                <ConnDot />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <ConnDot />
+                  <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={refreshConfig} disabled={configLoading}>
+                    {configLoading ? <span className="gls-spin">↻</span> : '↺ Refresh'}
+                  </button>
+                </div>
               </div>
-              <div className="gls-cred-grid">
-                <div className="gls-field">
-                  <label className="gls-lbl">Username GLS</label>
-                  <input className={`gls-inp ${connStatus === 'ok' ? 'ok' : ''}`}
-                    value={creds.username} onChange={e => setCreds(p => ({ ...p, username: e.target.value }))}
-                    placeholder="ex: user@firma.ro" autoComplete="off" />
-                  <div className="gls-hint">Username-ul din contul MyGLS</div>
+
+              {configLoading ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: '#475569', fontSize: 12 }}>
+                  <span className="gls-spin">↻</span> Se verifică configurarea...
                 </div>
-                <div className="gls-field">
-                  <label className="gls-lbl">Parolă GLS</label>
-                  <input className={`gls-inp ${connStatus === 'ok' ? 'ok' : ''}`}
-                    type="password"
-                    value={creds.password} onChange={e => setCreds(p => ({ ...p, password: e.target.value }))}
-                    placeholder="••••••••" autoComplete="new-password" />
-                  <div className="gls-hint">Parola MyGLS (hash SHA-512 automat)</div>
-                </div>
-                <div className="gls-field">
-                  <label className="gls-lbl">Număr client GLS</label>
-                  <input className="gls-inp" value={creds.clientNumber}
-                    onChange={e => setCreds(p => ({ ...p, clientNumber: e.target.value }))}
-                    placeholder="ex: 553003585" />
-                  <div className="gls-hint">ClientNumber din contractul GLS</div>
-                </div>
-                <div className="gls-field" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="gls-btn gls-btn-ghost" style={{ flex: 1 }} onClick={testConnection} disabled={connStatus === 'loading'}>
-                      {connStatus === 'loading' ? <><span className="gls-spin">↻</span> Se verifică...</> : '🔌 Testează conexiune'}
-                    </button>
+              ) : (
+                <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {/* ENV vars status grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {glsConfig?.envSummary && Object.entries(glsConfig.envSummary).map(([key, val]) => (
+                      <div key={key} style={{
+                        background: '#060b10', border: '1px solid rgba(255,255,255,.05)',
+                        borderRadius: 8, padding: '10px 12px',
+                        borderLeft: val.startsWith('✅') ? '3px solid #10b981' : val.startsWith('❌') ? '3px solid #f43f5e' : '3px solid #f59e0b',
+                      }}>
+                        <div style={{ fontSize: 10, fontFamily: 'monospace', color: '#f97316', fontWeight: 700 }}>{key}</div>
+                        <div style={{
+                          fontSize: 11, marginTop: 3,
+                          color: val.startsWith('✅') ? '#10b981' : val.startsWith('❌') ? '#f43f5e' : '#f59e0b'
+                        }}>{val}</div>
+                      </div>
+                    ))}
                   </div>
-                  {connMsg && (
-                    <div style={{ marginTop: 6, fontSize: 11, color: connStatus === 'ok' ? '#10b981' : '#f43f5e' }}>
-                      {connStatus === 'ok' ? '✅' : '❌'} {connMsg}
-                    </div>
+
+                  {/* Test connection */}
+                  {glsConfig?.configured && (
+                    <button className="gls-btn gls-btn-primary" style={{ alignSelf: 'flex-start', marginTop: 4 }} onClick={testConnection}>
+                      🔌 Testează conexiunea GLS
+                    </button>
                   )}
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* Pickup Address */}
-            <div className="gls-panel" style={{ marginBottom: 12 }}>
-              <div className="gls-panel-hdr">
-                <div>
-                  <div className="gls-panel-title">🏢 Adresă Expeditor (Pickup)</div>
-                  <div className="gls-panel-sub">Adresa de unde ridică GLS coletele. Dacă nu completezi, se auto-detectează din istoricul GLS.</div>
-                </div>
-              </div>
-              <div className="gls-cred-grid">
-                <div className="gls-field">
-                  <label className="gls-lbl">Nume firmă</label>
-                  <input className="gls-inp" value={creds.pickupName}
-                    onChange={e => setCreds(p => ({ ...p, pickupName: e.target.value }))}
-                    placeholder="ex: Firma SRL" />
-                </div>
-                <div className="gls-field">
-                  <label className="gls-lbl">Telefon expeditor</label>
-                  <input className="gls-inp" value={creds.pickupPhone}
-                    onChange={e => setCreds(p => ({ ...p, pickupPhone: e.target.value }))}
-                    placeholder="07xx xxx xxx" />
-                </div>
-                <div className="gls-field">
-                  <label className="gls-lbl">Stradă + număr</label>
-                  <input className="gls-inp" value={creds.pickupStreet}
-                    onChange={e => setCreds(p => ({ ...p, pickupStreet: e.target.value }))}
-                    placeholder="ex: Str. Victoriei nr. 10" />
-                </div>
-                <div className="gls-field">
-                  <label className="gls-lbl">Oraș</label>
-                  <input className="gls-inp" value={creds.pickupCity}
-                    onChange={e => setCreds(p => ({ ...p, pickupCity: e.target.value }))}
-                    placeholder="ex: Bucuresti" />
-                </div>
-                <div className="gls-field">
-                  <label className="gls-lbl">Cod poștal (6 cifre)</label>
-                  <input className="gls-inp" value={creds.pickupZip}
-                    onChange={e => setCreds(p => ({ ...p, pickupZip: e.target.value }))}
-                    placeholder="ex: 010101" maxLength={6} />
-                </div>
-                <div className="gls-field">
-                  <label className="gls-lbl">Județ</label>
-                  <input className="gls-inp" value={creds.pickupCounty}
-                    onChange={e => setCreds(p => ({ ...p, pickupCounty: e.target.value }))}
-                    placeholder="ex: Bucuresti" />
-                </div>
-              </div>
-              <div style={{ padding: '0 18px 16px', display: 'flex', justifyContent: 'flex-end' }}>
-                <button className="gls-btn gls-btn-primary" onClick={saveCreds}>💾 Salvează setările</button>
-              </div>
-            </div>
-
-            {/* ENV Vars guide */}
+            {/* ── Instrucțiuni Vercel ── */}
             <div className="gls-panel">
               <div className="gls-panel-hdr">
-                <div className="gls-panel-title">🔧 Variabile de mediu (ENV)</div>
+                <div className="gls-panel-title">📋 Cum configurezi în Vercel</div>
               </div>
-              <div style={{ padding: '12px 18px' }}>
-                <div className="gls-infobox">
-                  <div style={{ fontWeight: 700, color: '#60a5fa', marginBottom: 8 }}>Setează în Vercel / .env.local:</div>
-                  {[
-                    ['GLS_USERNAME', 'Username-ul MyGLS'],
-                    ['GLS_PASSWORD', 'Parola MyGLS (plain text, se hash-uieste automat)'],
-                    ['GLS_CLIENT_NUMBER', 'Numărul de client GLS'],
-                    ['GLS_PICKUP_NAME', 'Numele firmei expeditor'],
-                    ['GLS_PICKUP_STREET', 'Strada expeditor (cu număr)'],
-                    ['GLS_PICKUP_CITY', 'Orasul expeditor'],
-                    ['GLS_PICKUP_ZIP', 'Codul postal expeditor'],
-                    ['GLS_PICKUP_COUNTY', 'Judetul expeditor'],
-                    ['GLS_PICKUP_PHONE', 'Telefonul expeditor'],
-                  ].map(([key, desc]) => (
-                    <div key={key} style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
-                      <code style={{ color: '#f97316', fontFamily: 'monospace', fontSize: 11, flexShrink: 0 }}>{key}</code>
-                      <span style={{ color: '#475569', fontSize: 11 }}>— {desc}</span>
-                    </div>
-                  ))}
+              <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+                <div className="gls-infobox2">
+                  🔒 <strong>Securitate:</strong> Credențialele GLS nu sunt niciodată trimise din browser. 
+                  Sunt citite exclusiv de server din variabilele de mediu Vercel. 
+                  Niciun utilizator nu le poate vedea din dashboard.
                 </div>
+
+                <div className="gls-infobox">
+                  <div style={{ fontWeight: 700, color: '#f97316', marginBottom: 10, fontSize: 12 }}>
+                    Pasul 1 — Vercel Dashboard → Settings → Environment Variables
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {[
+                      ['GLS_USERNAME',      'Email-ul contului MyGLS',               true],
+                      ['GLS_PASSWORD',      'Parola MyGLS (plain text)',              true],
+                      ['GLS_CLIENT_NUMBER', 'Numărul de client din contractul GLS',   false],
+                      ['GLS_PICKUP_NAME',   'Numele firmei expeditor',                true],
+                      ['GLS_PICKUP_STREET', 'Strada + număr expeditor',               true],
+                      ['GLS_PICKUP_CITY',   'Orașul expeditor',                       true],
+                      ['GLS_PICKUP_ZIP',    'Codul poștal expeditor (6 cifre)',        true],
+                      ['GLS_PICKUP_COUNTY', 'Județul expeditor',                      false],
+                      ['GLS_PICKUP_PHONE',  'Telefonul expeditor',                    false],
+                    ].map(([key, desc, required]) => (
+                      <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px', background: 'rgba(255,255,255,.02)', borderRadius: 6 }}>
+                        <code style={{ color: '#f97316', fontFamily: 'monospace', fontSize: 11, flexShrink: 0, minWidth: 180 }}>{key}</code>
+                        <span style={{ color: '#64748b', fontSize: 11, flex: 1 }}>{desc}</span>
+                        <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+                          background: required ? 'rgba(244,63,94,.15)' : 'rgba(245,158,11,.1)',
+                          color: required ? '#f43f5e' : '#f59e0b',
+                          border: `1px solid ${required ? 'rgba(244,63,94,.3)' : 'rgba(245,158,11,.2)'}`,
+                        }}>{required ? 'OBLIGATORIU' : 'opțional'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="gls-infobox">
+                  <div style={{ fontWeight: 700, color: '#60a5fa', marginBottom: 6, fontSize: 12 }}>
+                    Pasul 2 — Redeploy după ce adaugi variabilele
+                  </div>
+                  <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.8 }}>
+                    Vercel → Deployments → Redeploy (sau push un commit nou)<br/>
+                    Variabilele sunt active instant după deploy.<br/>
+                    Apasă <strong style={{color:'#e2e8f0'}}>↺ Refresh</strong> de mai sus pentru a verifica statusul.
+                  </div>
+                </div>
+
               </div>
             </div>
           </div>
@@ -1528,4 +1623,3 @@ export default function GLSPage() {
     </>
   );
 }
-
