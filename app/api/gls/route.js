@@ -87,9 +87,10 @@ async function fetchPickupFromGLS(baseReq) {
 export async function POST(req) {
   try {
     const body = await req.json();
-    const user   = body.username     || ENV_USER   || '';
-    const pass   = body.password     || ENV_PASS   || '';
-    const client = body.clientNumber || ENV_CLIENT || '553003585';
+    // Security: credentials come ONLY from ENV vars — body values ignored
+    const user   = ENV_USER   || '';
+    const pass   = ENV_PASS   || '';
+    const client = ENV_CLIENT || '553003585';
 
     if (!user || !pass) return NextResponse.json({ ok: false, error: 'Completeaza username si parola GLS.' }, { headers: CORS });
 
