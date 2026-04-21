@@ -160,16 +160,25 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     // Rând separator zi
     detailRows.push([`📅 ${ziLabel}`, '', '', '', '', '', '', '', '', '', '', '', '']);
 
+    // Helper câmpuri reale
+    const getF = o => ({
+      client:  o.client  || o.customerName || (o.shipping_address && o.shipping_address.name)  || '',
+      oras:    o.oras    || o.city         || (o.shipping_address && o.shipping_address.city)   || '',
+      adr:     o.address || [o.address1 || (o.shipping_address && o.shipping_address.address1) || '',
+                              o.address2 || (o.shipping_address && o.shipping_address.address2) || ''].filter(Boolean).join(', '),
+      invoice: o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '',
+    });
+
     // GLS
     if (glsCom.length > 0) {
       detailRows.push(['', '── GLS Ramburs ──', '', '', '', '', '', '', '', '', '', '', '']);
       glsCom.forEach(o => {
-        const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
+        const f = getF(o);
         const val = +(fmtNum(o.total));
         detailRows.push([
           ziLabel, 'GLS Ramburs',
-          o.name||o.orderNumber||o.id||'', o.invoiceNo||o.invoice||'',
-          o.customerName||o.customer||'', adr, o.city||'',
+          o.name||o.orderNumber||o.id||'', f.invoice,
+          f.client, f.adr, f.oras,
           val, val, 0, val,
           o.trackingNo||'', 'GLS'
         ]);
@@ -182,12 +191,12 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     if (sdCom.length > 0) {
       detailRows.push(['', '── Sameday Ramburs ──', '', '', '', '', '', '', '', '', '', '', '']);
       sdCom.forEach(o => {
-        const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
+        const f = getF(o);
         const val = +(fmtNum(o.total));
         detailRows.push([
           ziLabel, 'Sameday Ramburs',
-          o.name||o.orderNumber||o.id||'', o.invoiceNo||o.invoice||'',
-          o.customerName||o.customer||'', adr, o.city||'',
+          o.name||o.orderNumber||o.id||'', f.invoice,
+          f.client, f.adr, f.oras,
           val, val, 0, val,
           o.trackingNo||'', 'Sameday'
         ]);
@@ -200,15 +209,15 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     if (spCom.length > 0) {
       detailRows.push(['', '── Shopify / Card ──', '', '', '', '', '', '', '', '', '', '', '']);
       spCom.forEach(o => {
+        const f = getF(o);
         const brut = +(fmtNum(o.total||0));
         const comPct = brut * (shopifyFeePercent / 100);
         const comTot = +(fmtNum(comPct + shopifyFeeFixed));
         const net = +(fmtNum(brut - comTot));
-        const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
         detailRows.push([
           ziLabel, 'Shopify/Card',
-          o.name||o.orderNumber||o.id||'', o.invoiceNo||o.invoice||'',
-          o.customerName||o.customer||'', adr, o.city||'',
+          o.name||o.orderNumber||o.id||'', f.invoice,
+          f.client, f.adr, f.oras,
           brut, brut, comTot, net,
           o.trackingNo||'', (o.courier||'').toUpperCase()||'Online'
         ]);
@@ -219,9 +228,18 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
 
     grandTotal += dayTotal;
 
-    // Subtotal zi
+    // Subtotal zi - detaliat pe fiecare sursa de incasare (pentru reconciliere extras bancar)
+    if (glsCom.length > 0) {
+      detailRows.push([`  ✦ GLS Ramburs ${ziLabel}`, `${glsCom.length} comenzi`, '','','','','', +(fmtNum(dayGLS)), +(fmtNum(dayGLS)), 0, +(fmtNum(dayGLS)), '','']);
+    }
+    if (sdCom.length > 0) {
+      detailRows.push([`  ✦ Sameday Ramburs ${ziLabel}`, `${sdCom.length} comenzi`, '','','','','', +(fmtNum(daySD)), +(fmtNum(daySD)), 0, +(fmtNum(daySD)), '','']);
+    }
+    if (spCom.length > 0) {
+      detailRows.push([`  ✦ Shopify/Card ${ziLabel}`, `${spCom.length} comenzi`, '','','','','', +(fmtNum(dayBrut)), +(fmtNum(dayBrut)), +(fmtNum(dayCom)), +(fmtNum(dayNet)), '','']);
+    }
     detailRows.push([
-      `TOTAL ${ziLabel}`, `${comenzi.length} comenzi`,
+      `▶ TOTAL INCASAT ${ziLabel}`, `${comenzi.length} comenzi`,
       '','','','','',
       +(fmtNum(dayGLS + daySD + dayBrut)),
       +(fmtNum(dayGLS + daySD + dayBrut)),
@@ -258,14 +276,16 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
   const rows2 = [hdr2];
   let totGLS2 = 0;
   glsOrders.forEach(o => {
-    const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
+    const client = o.client || o.customerName || (o.shipping_address && o.shipping_address.name) || '';
+    const oras   = o.oras   || o.city         || (o.shipping_address && o.shipping_address.city) || '';
+    const adr    = o.address || [o.address1 || (o.shipping_address && o.shipping_address.address1) || '', o.address2 || (o.shipping_address && o.shipping_address.address2) || ''].filter(Boolean).join(', ');
+    const inv    = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
     const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
-    const ziInc = addWorkDays(livStr, 2).split('-').reverse().join('.');
-    const val = +(fmtNum(o.total));
+    const ziInc  = addWorkDays(livStr, 2).split('-').reverse().join('.');
+    const val    = +(fmtNum(o.total));
     rows2.push([new Date(o.createdAt).toLocaleDateString('ro-RO'), ziInc,
       o.name||o.orderNumber||o.id||'', o.trackingNo||'',
-      o.customerName||o.customer||'', adr, o.city||'',
-      o.invoiceNo||o.invoice||'', val]);
+      client, adr, oras, inv, val]);
     totGLS2 += val;
   });
   rows2.push(['TOTAL','','','','','','','', +(fmtNum(totGLS2))]);
@@ -284,14 +304,16 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
   const rows3 = [hdr3];
   let totSD3 = 0;
   sdOrders.forEach(o => {
-    const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
+    const client = o.client || o.customerName || (o.shipping_address && o.shipping_address.name) || '';
+    const oras   = o.oras   || o.city         || (o.shipping_address && o.shipping_address.city) || '';
+    const adr    = o.address || [o.address1 || (o.shipping_address && o.shipping_address.address1) || '', o.address2 || (o.shipping_address && o.shipping_address.address2) || ''].filter(Boolean).join(', ');
+    const inv    = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
     const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
-    const ziInc = addWorkDays(livStr, 1).split('-').reverse().join('.');
-    const val = +(fmtNum(o.total));
+    const ziInc  = addWorkDays(livStr, 1).split('-').reverse().join('.');
+    const val    = +(fmtNum(o.total));
     rows3.push([new Date(o.createdAt).toLocaleDateString('ro-RO'), ziInc,
       o.name||o.orderNumber||o.id||'', o.trackingNo||'',
-      o.customerName||o.customer||'', adr, o.city||'',
-      o.invoiceNo||o.invoice||'', val]);
+      client, adr, oras, inv, val]);
     totSD3 += val;
   });
   rows3.push(['TOTAL','','','','','','','', +(fmtNum(totSD3))]);
@@ -315,14 +337,17 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     const comPct=+(fmtNum(brut*(shopifyFeePercent/100)));
     const comTot=+(fmtNum(comPct+shopifyFeeFixed));
     const net=+(fmtNum(brut-comTot));
-    const adr=[o.address1||o.address||'',o.address2||''].filter(Boolean).join(', ');
+    const client4  = o.client || o.customerName || o.shipping_address?.name || '';
+    const oras4    = o.oras   || o.city         || o.shipping_address?.city || '';
+    const adr4     = o.address || [o.address1||o.shipping_address?.address1||'', o.address2||o.shipping_address?.address2||''].filter(Boolean).join(', ');
+    const invoice4 = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
     const base=(o.createdAt||'').slice(0,10);
     const ziInc = addWorkDays(base,2).split('-').reverse().join('.');
     rows4.push([
       new Date(o.createdAt).toLocaleDateString('ro-RO'), ziInc,
       o.name||o.orderNumber||o.id||'',
-      o.customerName||o.customer||'', adr, o.city||'',
-      o.invoiceNo||o.invoice||'',
+      client4, adr4, oras4,
+      invoice4,
       brut, comPct, +(fmtNum(shopifyFeeFixed)), comTot, net
     ]);
     spTotBrut+=brut; spTotCom+=comTot; spTotNet+=net;
