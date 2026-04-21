@@ -9,10 +9,11 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { SidebarStoreSwitcher } from './StoreSwitcher';
 
-const NAV = [
+const NAV: { href: string; icon: string; label: string; badge?: string }[] = [
   { href: '/',                icon: '📦', label: 'Comenzi' },
   { href: '/xconnector',      icon: '⚡', label: 'xConnector' },
   { href: '/fulfillment',     icon: '🚚', label: 'Fulfillment' },
+  { href: '/gls',             icon: '🏷️', label: 'GLS AWB', badge: 'NEW' },
   { href: '/stats',           icon: '📊', label: 'Statistici' },
   { href: '/profit',          icon: '💹', label: 'Profit' },
   { href: '/whatsapp',        icon: '📱', label: 'WhatsApp' },
@@ -56,7 +57,15 @@ export function Sidebar() {
               }}
             >
               <span style={S.navIcon}>{item.icon}</span>
-              <span>{item.label}</span>
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.badge && (
+                <span style={{
+                  fontSize: 8, fontWeight: 800, padding: '2px 5px',
+                  borderRadius: 4, background: 'rgba(249,115,22,0.2)',
+                  color: 'var(--c-orange)', letterSpacing: '.5px',
+                  border: '1px solid rgba(249,115,22,0.3)',
+                }}>{item.badge}</span>
+              )}
             </Link>
           );
         })}
