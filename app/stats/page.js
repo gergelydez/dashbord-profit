@@ -168,7 +168,7 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     const fmtInvoice = (o) => {
       const raw = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
       if (!raw) return '';
-      return raw.startsWith('GLAMX') ? raw : 'GLAMX' + raw;
+      return raw.startsWith('GLA') ? raw : 'GLA' + raw;
     };
     const getF = o => ({
       client:  o.client  || o.customerName || (o.shipping_address && o.shipping_address.name)  || '',
