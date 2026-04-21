@@ -118,10 +118,12 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
   // Construim un map: ziIncasare -> lista comenzi
   const byDay = {};
 
-  // GLS & Sameday livrate (COD – ramburs)
+  // GLS & Sameday livrate (COD – ramburs) — filtrate pe perioada selectată
   allOrders.forEach(o => {
     if (isOnlinePayment(o, onlineIds)) return;
     if (getFinalStatus(o, sdAwbMap) !== 'livrat') return;
+    const created = new Date(o.createdAt);
+    if (created < fromD || created > toD) return;   // ← filtrare perioadă
     const livStr = (o.fulfilledAt || o.createdAt || '').slice(0, 10);
     if (!livStr) return;
     const courier = o.courier === 'sameday' ? 'sameday' : 'gls';
@@ -131,9 +133,11 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     byDay[ziIncasare].push({ ...o, _ziIncasare: ziIncasare, _tip: courier === 'sameday' ? 'Sameday Ramburs' : 'GLS Ramburs' });
   });
 
-  // Shopify/Card (online)
+  // Shopify/Card (online) — filtrate pe perioada selectată
   allOrders.forEach(o => {
     if (!isOnlinePayment(o, onlineIds)) return;
+    const created = new Date(o.createdAt);
+    if (created < fromD || created > toD) return;   // ← filtrare perioadă
     const base = (o.createdAt || '').slice(0, 10);
     if (!base) return;
     const ziIncasare = addWorkDays(base, 2);
@@ -161,12 +165,17 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     detailRows.push([`📅 ${ziLabel}`, '', '', '', '', '', '', '', '', '', '', '', '']);
 
     // Helper câmpuri reale
+    const fmtInvoice = (o) => {
+      const raw = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
+      if (!raw) return '';
+      return raw.startsWith('GLAMX') ? raw : 'GLAMX' + raw;
+    };
     const getF = o => ({
       client:  o.client  || o.customerName || (o.shipping_address && o.shipping_address.name)  || '',
       oras:    o.oras    || o.city         || (o.shipping_address && o.shipping_address.city)   || '',
       adr:     o.address || [o.address1 || (o.shipping_address && o.shipping_address.address1) || '',
                               o.address2 || (o.shipping_address && o.shipping_address.address2) || ''].filter(Boolean).join(', '),
-      invoice: o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '',
+      invoice: fmtInvoice(o),
     });
 
     // GLS
@@ -230,24 +239,24 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
 
     // Subtotal zi - detaliat pe fiecare sursa de incasare (pentru reconciliere extras bancar)
     if (glsCom.length > 0) {
-      detailRows.push([`  ✦ GLS Ramburs ${ziLabel}`, `${glsCom.length} comenzi`, '','','','','', +(fmtNum(dayGLS)), +(fmtNum(dayGLS)), 0, +(fmtNum(dayGLS)), '','']);
+      detailRows.push({ _type: 'subtot_gls', data: [`  ► GLS Ramburs ${ziLabel}`, `${glsCom.length} comenzi`, '','','','','', +(fmtNum(dayGLS)), +(fmtNum(dayGLS)), 0, +(fmtNum(dayGLS)), '',''] });
     }
     if (sdCom.length > 0) {
-      detailRows.push([`  ✦ Sameday Ramburs ${ziLabel}`, `${sdCom.length} comenzi`, '','','','','', +(fmtNum(daySD)), +(fmtNum(daySD)), 0, +(fmtNum(daySD)), '','']);
+      detailRows.push({ _type: 'subtot_sd', data: [`  ► Sameday Ramburs ${ziLabel}`, `${sdCom.length} comenzi`, '','','','','', +(fmtNum(daySD)), +(fmtNum(daySD)), 0, +(fmtNum(daySD)), '',''] });
     }
     if (spCom.length > 0) {
-      detailRows.push([`  ✦ Shopify/Card ${ziLabel}`, `${spCom.length} comenzi`, '','','','','', +(fmtNum(dayBrut)), +(fmtNum(dayBrut)), +(fmtNum(dayCom)), +(fmtNum(dayNet)), '','']);
+      detailRows.push({ _type: 'subtot_sp', data: [`  ► Shopify/Card ${ziLabel}`, `${spCom.length} comenzi`, '','','','','', +(fmtNum(dayBrut)), +(fmtNum(dayBrut)), +(fmtNum(dayCom)), +(fmtNum(dayNet)), '',''] });
     }
-    detailRows.push([
-      `▶ TOTAL INCASAT ${ziLabel}`, `${comenzi.length} comenzi`,
+    detailRows.push({ _type: 'total_zi', data: [
+      `▶▶ TOTAL INCASAT ${ziLabel}`, `${comenzi.length} comenzi`,
       '','','','','',
       +(fmtNum(dayGLS + daySD + dayBrut)),
       +(fmtNum(dayGLS + daySD + dayBrut)),
       +(fmtNum(dayCom)),
       +(fmtNum(dayGLS + daySD + dayNet || dayTotal)),
       '','',
-    ]);
-    detailRows.push(['', '', '', '', '', '', '', '', '', '', '', '', '']); // linie goală separator
+    ]});
+    detailRows.push({ _type: 'spacer', data: ['', '', '', '', '', '', '', '', '', '', '', '', ''] });
   });
 
   // Grand total final
@@ -261,8 +270,15 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     '','',
   ]);
 
-  const ws5 = XLSX.utils.aoa_to_sheet(detailRows);
-  ws5['!cols'] = [18,20,18,16,26,34,16,20,20,20,20,16,10].map(w=>({wch:w}));
+  // Construim sheet din array-ul mixt de obiecte si array-uri simple
+  const flatRows = detailRows.map(r => Array.isArray(r) ? r : r.data);
+  const ws5 = XLSX.utils.aoa_to_sheet(flatRows);
+  ws5['!cols'] = [20,22,16,18,28,36,16,20,20,18,20,16,10].map(w=>({wch:w}));
+
+  // Aplicăm stiluri pe celule (xlsx suportă stiluri doar cu sheetjs-pro, dar putem folosi comentarii ca workaround)
+  // Folosim freeze panes pentru header
+  ws5['!freeze'] = { xSplit: 0, ySplit: 1 };
+
   XLSX.utils.book_append_sheet(wb, ws5, 'Detaliu pe Zile');
 
   // ── Sheet 3 – GLS Ramburs ──────────────────────────────────────────────────
@@ -279,7 +295,8 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     const client = o.client || o.customerName || (o.shipping_address && o.shipping_address.name) || '';
     const oras   = o.oras   || o.city         || (o.shipping_address && o.shipping_address.city) || '';
     const adr    = o.address || [o.address1 || (o.shipping_address && o.shipping_address.address1) || '', o.address2 || (o.shipping_address && o.shipping_address.address2) || ''].filter(Boolean).join(', ');
-    const inv    = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
+    const invRaw2 = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
+    const inv    = invRaw2 && !invRaw2.startsWith('GLAMX') ? 'GLAMX' + invRaw2 : invRaw2;
     const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
     const ziInc  = addWorkDays(livStr, 2).split('-').reverse().join('.');
     const val    = +(fmtNum(o.total));
@@ -307,7 +324,8 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     const client = o.client || o.customerName || (o.shipping_address && o.shipping_address.name) || '';
     const oras   = o.oras   || o.city         || (o.shipping_address && o.shipping_address.city) || '';
     const adr    = o.address || [o.address1 || (o.shipping_address && o.shipping_address.address1) || '', o.address2 || (o.shipping_address && o.shipping_address.address2) || ''].filter(Boolean).join(', ');
-    const inv    = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
+    const invRaw3 = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
+    const inv    = invRaw3 && !invRaw3.startsWith('GLAMX') ? 'GLAMX' + invRaw3 : invRaw3;
     const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
     const ziInc  = addWorkDays(livStr, 1).split('-').reverse().join('.');
     const val    = +(fmtNum(o.total));
@@ -340,7 +358,8 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     const client4  = o.client || o.customerName || o.shipping_address?.name || '';
     const oras4    = o.oras   || o.city         || o.shipping_address?.city || '';
     const adr4     = o.address || [o.address1||o.shipping_address?.address1||'', o.address2||o.shipping_address?.address2||''].filter(Boolean).join(', ');
-    const invoice4 = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
+    const invRaw4 = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
+    const invoice4 = invRaw4 && !invRaw4.startsWith('GLAMX') ? 'GLAMX' + invRaw4 : invRaw4;
     const base=(o.createdAt||'').slice(0,10);
     const ziInc = addWorkDays(base,2).split('-').reverse().join('.');
     rows4.push([
@@ -365,87 +384,348 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORT PDF
 // ─────────────────────────────────────────────────────────────────────────────
-async function exportPDF({ incasariList, from, to, shopifyFeePercent, shopifyFeeFixed }) {
+async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, to, shopifyFeePercent, shopifyFeeFixed }) {
   const { jsPDF } = await import('jspdf');
   await import('jspdf-autotable');
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const label = `${from.split('-').reverse().join('.')} - ${to.split('-').reverse().join('.')}`;
   const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const fromD = new Date(from + 'T00:00:00');
+  const toD   = new Date(to   + 'T23:59:59');
 
-  // Header
-  doc.setFillColor(8, 12, 16);
-  doc.rect(0, 0, pageW, 22, 'F');
-  doc.setTextColor(249, 115, 22);
-  doc.setFontSize(15); doc.setFont('helvetica', 'bold');
-  doc.text('GLAMX', 14, 13);
-  doc.setTextColor(232, 237, 242);
-  doc.setFontSize(11); doc.setFont('helvetica', 'normal');
-  doc.text(`Raport Incasari  ${label}`, 38, 13);
-  doc.setTextColor(148, 163, 184);
-  doc.setFontSize(8);
-  doc.text(`Generat: ${new Date().toLocaleDateString('ro-RO')} ${new Date().toLocaleTimeString('ro-RO')}  |  Comision Shopify: ${shopifyFeePercent}% + ${shopifyFeeFixed} RON fix`,
-    pageW - 14, 13, { align: 'right' });
+  // Culori temă
+  const C = {
+    bg:       [8,  12, 16],
+    bgRow:    [13, 21, 32],
+    bgAlt:    [16, 26, 40],
+    bgHead:   [22, 29, 36],
+    bgDayBan: [18, 28, 45],   // banner zi - albastru închis
+    bgGLS:    [22, 40, 28],   // verde închis subtot GLS
+    bgSD:     [22, 35, 50],   // albastru subtot SD
+    bgSP:     [40, 25, 50],   // mov subtot Shopify
+    bgTotal:  [30, 20, 10],   // portocaliu închis total zi
+    orange:   [249, 115, 22],
+    green:    [16,  185, 129],
+    blue:     [59,  130, 246],
+    purple:   [168, 85,  247],
+    red:      [244, 63,  94],
+    text:     [220, 230, 240],
+    text2:    [148, 163, 184],
+    white:    [255, 255, 255],
+    yellow:   [250, 204, 21],
+  };
 
-  let yPos = 28;
-  doc.setTextColor(249, 115, 22);
+  // ── Helper addWorkDays ─────────────────────────────────────────────────────
+  const addWorkDays = (str, n) => {
+    if (!str) return '';
+    const d = new Date(str + 'T12:00:00'); let added = 0;
+    while (added < n) { d.setDate(d.getDate() + 1); const day = d.getDay(); if (day !== 0 && day !== 6) added++; }
+    const p = x => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const fmtInv = (o) => {
+    const raw = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
+    if (!raw) return '-';
+    return raw.startsWith('GLAMX') ? raw : 'GLAMX' + raw;
+  };
+  const getClient = o => o.client || o.customerName || (o.shipping_address && o.shipping_address.name) || '-';
+  const getOras   = o => o.oras   || o.city         || (o.shipping_address && o.shipping_address.city) || '';
+
+  // ── Construim byDay exact ca în Excel ─────────────────────────────────────
+  const byDay = {};
+  allOrders.forEach(o => {
+    if (isOnlinePayment(o, onlineIds)) return;
+    if (getFinalStatus(o, sdAwbMap) !== 'livrat') return;
+    const created = new Date(o.createdAt);
+    if (created < fromD || created > toD) return;
+    const livStr = (o.fulfilledAt || o.createdAt || '').slice(0, 10);
+    if (!livStr) return;
+    const courier = o.courier === 'sameday' ? 'sameday' : 'gls';
+    const zi = addWorkDays(livStr, courier === 'sameday' ? 1 : 2);
+    if (!byDay[zi]) byDay[zi] = [];
+    byDay[zi].push({ ...o, _tip: courier === 'sameday' ? 'Sameday' : 'GLS' });
+  });
+  allOrders.forEach(o => {
+    if (!isOnlinePayment(o, onlineIds)) return;
+    const created = new Date(o.createdAt);
+    if (created < fromD || created > toD) return;
+    const base = (o.createdAt || '').slice(0, 10);
+    if (!base) return;
+    const zi = addWorkDays(base, 2);
+    if (!byDay[zi]) byDay[zi] = [];
+    byDay[zi].push({ ...o, _tip: 'Shopify' });
+  });
+  const zileSort = Object.keys(byDay).sort((a, b) => b.localeCompare(a));
+
+  // ── Funcție header pagină ──────────────────────────────────────────────────
+  const drawHeader = () => {
+    doc.setFillColor(...C.bg);
+    doc.rect(0, 0, pageW, 20, 'F');
+    doc.setTextColor(...C.orange);
+    doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+    doc.text('GLAMX', 14, 13);
+    doc.setTextColor(...C.text);
+    doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+    doc.text(`Raport Incasari  ${label}`, 40, 13);
+    doc.setTextColor(...C.text2);
+    doc.setFontSize(7.5);
+    doc.text(`Comision Shopify: ${shopifyFeePercent}% + ${shopifyFeeFixed} RON  |  Generat: ${new Date().toLocaleDateString('ro-RO')}`, pageW - 14, 13, { align: 'right' });
+  };
+
+  // ── Funcție footer pagină ──────────────────────────────────────────────────
+  const addFooters = () => {
+    const pgCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pgCount; i++) {
+      doc.setPage(i);
+      doc.setFillColor(...C.bgHead);
+      doc.rect(0, pageH - 10, pageW, 10, 'F');
+      doc.setFontSize(7); doc.setTextColor(...C.text2);
+      doc.text(`Pagina ${i} / ${pgCount}`, pageW / 2, pageH - 4, { align: 'center' });
+      doc.text('GLAMX Dashboard | Raport contabil intern', 14, pageH - 4);
+      doc.setTextColor(...C.orange);
+      doc.text(label, pageW - 14, pageH - 4, { align: 'right' });
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PAGINA 1 — REZUMAT PE ZILE
+  // ═══════════════════════════════════════════════════════════════════════════
+  drawHeader();
+
+  let yPos = 26;
+  doc.setFillColor(...C.bgHead);
+  doc.rect(14, yPos, pageW - 28, 7, 'F');
+  doc.setTextColor(...C.orange);
   doc.setFontSize(8); doc.setFont('helvetica', 'bold');
-  doc.text('REZUMAT INCASARI PE ZILE', 14, yPos);
-  yPos += 3;
+  doc.text('REZUMAT INCASARI PE ZILE', 17, yPos + 5);
+  yPos += 9;
 
   let tGLS=0, tSD=0, tSPBrut=0, tSPCom=0, tSPNet=0, tTot=0, tCnt=0;
-  const tableBody = (incasariList||[]).map(([zi,v]) => {
+  const rezBody = (incasariList||[]).map(([zi,v]) => {
     const sBrut=v.shopifyBrut||0, sCom=v.shopifyComision||0, sNet=v.shopify||0;
     tGLS+=v.gls; tSD+=v.sameday; tSPBrut+=sBrut; tSPCom+=sCom; tSPNet+=sNet; tTot+=v.total; tCnt+=v.count;
-    return [
-      zi.split('-').reverse().join('.'),
-      String(v.count),
-      v.gls>0 ? fmtNum(v.gls) : '-',
-      v.sameday>0 ? fmtNum(v.sameday) : '-',
-      sBrut>0 ? fmtNum(sBrut) : '-',
-      sCom>0 ? fmtNum(sCom) : '-',
-      sNet>0 ? fmtNum(sNet) : '-',
-      fmtNum(v.total),
-    ];
+    return [zi.split('-').reverse().join('.'), String(v.count),
+      v.gls>0?fmtNum(v.gls):'-', v.sameday>0?fmtNum(v.sameday):'-',
+      sBrut>0?fmtNum(sBrut):'-', sCom>0?fmtNum(sCom):'-', sNet>0?fmtNum(sNet):'-', fmtNum(v.total)];
   });
-  tableBody.push(['TOTAL', String(tCnt),
-    fmtNum(tGLS), fmtNum(tSD), fmtNum(tSPBrut), fmtNum(tSPCom), fmtNum(tSPNet), fmtNum(tTot)]);
+  rezBody.push(['TOTAL', String(tCnt), fmtNum(tGLS), fmtNum(tSD), fmtNum(tSPBrut), fmtNum(tSPCom), fmtNum(tSPNet), fmtNum(tTot)]);
 
   doc.autoTable({
     startY: yPos,
-    head: [['Data','Colete','GLS (RON)','Sameday (RON)','Card Brut','Comision SP','Card Net','Total (RON)']],
-    body: tableBody,
-    styles: { fontSize: 7.5, cellPadding: 2.5, font: 'helvetica', textColor: [220, 230, 240], fillColor: [13, 21, 32] },
-    headStyles: { fillColor: [22, 29, 36], textColor: [148, 163, 184], fontStyle: 'bold', fontSize: 7 },
-    alternateRowStyles: { fillColor: [16, 26, 40] },
+    head: [['Data Incasare','Colete','GLS Ramburs','Sameday Ramburs','Card Brut','Comision Shopify','Card Net','TOTAL']],
+    body: rezBody,
+    styles: { fontSize: 7.5, cellPadding: 2.5, font: 'helvetica', textColor: C.text, fillColor: C.bgRow },
+    headStyles: { fillColor: C.bgHead, textColor: C.text2, fontStyle: 'bold', fontSize: 7 },
+    alternateRowStyles: { fillColor: C.bgAlt },
     columnStyles: {
-      0: { cellWidth: 23 },
+      0: { cellWidth: 28, fontStyle: 'bold' },
       1: { cellWidth: 14, halign: 'center' },
-      2: { cellWidth: 30, halign: 'right', textColor: [249, 115, 22] },
-      3: { cellWidth: 30, halign: 'right', textColor: [59, 130, 246] },
-      4: { cellWidth: 28, halign: 'right', textColor: [168, 85, 247] },
-      5: { cellWidth: 25, halign: 'right', textColor: [244, 63, 94] },
-      6: { cellWidth: 25, halign: 'right', textColor: [168, 85, 247] },
-      7: { cellWidth: 32, halign: 'right', fontStyle: 'bold', textColor: [16, 185, 129] },
+      2: { cellWidth: 30, halign: 'right', textColor: C.orange },
+      3: { cellWidth: 32, halign: 'right', textColor: C.blue },
+      4: { cellWidth: 28, halign: 'right', textColor: C.purple },
+      5: { cellWidth: 28, halign: 'right', textColor: C.red },
+      6: { cellWidth: 26, halign: 'right', textColor: C.purple },
+      7: { cellWidth: 32, halign: 'right', fontStyle: 'bold', textColor: C.green },
     },
     didParseCell: (data) => {
-      if (data.row.index === tableBody.length - 1) {
-        data.cell.styles.fillColor = [22, 29, 36];
+      if (data.row.index === rezBody.length - 1) {
+        data.cell.styles.fillColor = [28, 20, 8];
         data.cell.styles.fontStyle = 'bold';
-        if (data.column.index === 0) data.cell.styles.textColor = [249, 115, 22];
+        data.cell.styles.textColor = data.column.index === 7 ? C.yellow : data.column.index === 0 ? C.orange : C.white;
       }
     },
     margin: { left: 14, right: 14 },
   });
 
-  // Footer
-  const pgCount = doc.internal.getNumberOfPages();
-  for (let i = 1; i <= pgCount; i++) {
-    doc.setPage(i);
-    doc.setFontSize(7); doc.setTextColor(74, 85, 104);
-    doc.text(`Pagina ${i} / ${pgCount}`, pageW/2, doc.internal.pageSize.getHeight()-6, { align: 'center' });
-    doc.text(`GLAMX Dashboard | Raport contabil ${label}`, 14, doc.internal.pageSize.getHeight()-6);
-  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PAGINILE URMĂTOARE — DETALIU PE ZILE
+  // ═══════════════════════════════════════════════════════════════════════════
+  let grandGLS=0, grandSD=0, grandBrut=0, grandCom=0, grandNet=0;
+
+  zileSort.forEach(zi => {
+    const comenzi = byDay[zi];
+    const ziLabel = zi.split('-').reverse().join('.');
+    const glsCom = comenzi.filter(o => o._tip === 'GLS');
+    const sdCom  = comenzi.filter(o => o._tip === 'Sameday');
+    const spCom  = comenzi.filter(o => o._tip === 'Shopify');
+
+    let dayGLS=0, daySD=0, dayBrut=0, dayCom=0, dayNet=0;
+
+    // ── Banner zi ────────────────────────────────────────────────────────────
+    doc.addPage();
+    drawHeader();
+    yPos = 26;
+
+    doc.setFillColor(...C.bgDayBan);
+    doc.rect(14, yPos, pageW - 28, 9, 'F');
+    doc.setFillColor(...C.blue);
+    doc.rect(14, yPos, 3, 9, 'F');
+    doc.setTextColor(...C.white);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.text(`📅  ${ziLabel}`, 22, yPos + 6.5);
+    doc.setTextColor(...C.text2);
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal');
+    doc.text(`${comenzi.length} comenzi`, pageW - 16, yPos + 6.5, { align: 'right' });
+    yPos += 13;
+
+    const drawSectionTable = (rows, sursa, colTip) => {
+      if (!rows.length) return;
+
+      // Label secțiune
+      doc.setFillColor(...colTip);
+      doc.rect(14, yPos, pageW - 28, 6, 'F');
+      doc.setTextColor(...C.white);
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+      doc.text(`  ${sursa}`, 16, yPos + 4.5);
+      yPos += 7;
+
+      const isShopify = sursa.includes('Shopify');
+      let secTotal = 0;
+      const tableData = rows.map(o => {
+        const brut = +(fmtNum(o.total || 0));
+        let comTot = 0, net = brut;
+        if (isShopify) {
+          comTot = +(fmtNum(brut * (shopifyFeePercent / 100) + shopifyFeeFixed));
+          net    = +(fmtNum(brut - comTot));
+        }
+        secTotal += isShopify ? net : brut;
+        const row = [
+          o.name || o.orderNumber || o.id || '',
+          fmtInv(o),
+          getClient(o),
+          getOras(o),
+          fmtNum(brut),
+        ];
+        if (isShopify) row.push(fmtNum(comTot), fmtNum(net));
+        return row;
+      });
+
+      const head = isShopify
+        ? [['Nr. Comandă','Nr. Factură','Client','Oraș','Valoare (RON)','Comision (RON)','NET (RON)']]
+        : [['Nr. Comandă','Nr. Factură','Client','Oraș','Valoare Incasată (RON)']];
+
+      const colStyles = isShopify ? {
+        0: { cellWidth: 28 }, 1: { cellWidth: 26 }, 2: { cellWidth: 55 },
+        3: { cellWidth: 28 }, 4: { cellWidth: 28, halign:'right', textColor: C.text },
+        5: { cellWidth: 25, halign:'right', textColor: C.red },
+        6: { cellWidth: 28, halign:'right', textColor: C.green, fontStyle:'bold' },
+      } : {
+        0: { cellWidth: 32 }, 1: { cellWidth: 26 }, 2: { cellWidth: 80 },
+        3: { cellWidth: 35 }, 4: { cellWidth: 35, halign:'right', textColor: C.green, fontStyle:'bold' },
+      };
+
+      doc.autoTable({
+        startY: yPos,
+        head,
+        body: tableData,
+        styles: { fontSize: 7, cellPadding: 2, font: 'helvetica', textColor: C.text, fillColor: C.bgRow },
+        headStyles: { fillColor: C.bgHead, textColor: C.text2, fontStyle: 'bold', fontSize: 6.5 },
+        alternateRowStyles: { fillColor: C.bgAlt },
+        columnStyles: colStyles,
+        margin: { left: 14, right: 14 },
+        didDrawPage: () => { drawHeader(); },
+      });
+
+      yPos = doc.lastAutoTable.finalY + 2;
+
+      // Subtotal secțiune
+      const subColor = isShopify ? C.bgSP : sursa.includes('GLS') ? C.bgGLS : C.bgSD;
+      const subTextColor = isShopify ? C.purple : sursa.includes('GLS') ? C.orange : C.blue;
+      doc.setFillColor(...subColor);
+      doc.rect(14, yPos, pageW - 28, 7, 'F');
+      doc.setTextColor(...subTextColor);
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+      const subLabel = isShopify
+        ? `  ► Shopify/Card ${ziLabel}  |  ${rows.length} comenzi  |  Brut: ${fmtNum(dayBrut + (secTotal - dayNet || 0))} RON  |  Comision: ${fmtNum(dayCom)} RON  |  NET: `
+        : `  ► ${sursa} ${ziLabel}  |  ${rows.length} comenzi  |  Total incasat: `;
+      doc.text(subLabel, 16, yPos + 5);
+      doc.setTextColor(...C.yellow);
+      const subValX = 14 + doc.getTextWidth(subLabel) + 2;
+      doc.text(`${fmtNum(secTotal)} RON`, subValX, yPos + 5);
+      yPos += 10;
+
+      return secTotal;
+    };
+
+    if (glsCom.length > 0) {
+      const t = drawSectionTable(glsCom, 'GLS Ramburs', C.bgGLS);
+      dayGLS = t; grandGLS += t;
+    }
+    if (sdCom.length > 0) {
+      const t = drawSectionTable(sdCom, 'Sameday Ramburs', C.bgSD);
+      daySD = t; grandSD += t;
+    }
+    if (spCom.length > 0) {
+      // calculăm net pentru Shopify
+      spCom.forEach(o => {
+        const brut = o.total || 0;
+        const com  = brut * (shopifyFeePercent / 100) + shopifyFeeFixed;
+        dayBrut += brut; dayCom += com; dayNet += (brut - com);
+      });
+      drawSectionTable(spCom, 'Shopify / Card', C.bgSP);
+      grandBrut += dayBrut; grandCom += dayCom; grandNet += dayNet;
+    }
+
+    // ── Total zi ─────────────────────────────────────────────────────────────
+    const totalZi = dayGLS + daySD + dayNet;
+    doc.setFillColor(...C.bgTotal);
+    doc.rect(14, yPos, pageW - 28, 9, 'F');
+    doc.setFillColor(...C.orange);
+    doc.rect(14, yPos, 3, 9, 'F');
+    doc.setTextColor(...C.white);
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
+    const totLine = `  ▶▶ TOTAL INCASAT ${ziLabel}   |   GLS: ${fmtNum(dayGLS)} RON   |   Sameday: ${fmtNum(daySD)} RON   |   Shopify NET: ${fmtNum(dayNet)} RON   |   TOTAL: `;
+    doc.text(totLine, 17, yPos + 6.5);
+    doc.setTextColor(...C.yellow);
+    doc.text(`${fmtNum(totalZi)} RON`, 17 + doc.getTextWidth(totLine), yPos + 6.5);
+    yPos += 12;
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ULTIMA PAGINĂ — GRAND TOTAL
+  // ═══════════════════════════════════════════════════════════════════════════
+  const grandTotal = grandGLS + grandSD + grandNet;
+  doc.addPage();
+  drawHeader();
+  yPos = 35;
+
+  doc.setFillColor(...C.bgHead);
+  doc.rect(14, yPos, pageW - 28, 8, 'F');
+  doc.setTextColor(...C.orange);
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold');
+  doc.text('SUMAR TOTAL PERIOADĂ', 17, yPos + 5.5);
+  yPos += 13;
+
+  doc.autoTable({
+    startY: yPos,
+    head: [['Sursa Incasare', 'Total Brut (RON)', 'Comision (RON)', 'NET Incasat (RON)']],
+    body: [
+      ['GLS Ramburs', fmtNum(grandGLS), '0.00', fmtNum(grandGLS)],
+      ['Sameday Ramburs', fmtNum(grandSD), '0.00', fmtNum(grandSD)],
+      ['Shopify / Card', fmtNum(grandBrut), fmtNum(grandCom), fmtNum(grandNet)],
+      ['TOTAL GENERAL', fmtNum(grandGLS + grandSD + grandBrut), fmtNum(grandCom), fmtNum(grandTotal)],
+    ],
+    styles: { fontSize: 9, cellPadding: 4, font: 'helvetica', textColor: C.text, fillColor: C.bgRow },
+    headStyles: { fillColor: C.bgHead, textColor: C.text2, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: 60, fontStyle: 'bold' },
+      1: { cellWidth: 50, halign: 'right', textColor: C.text },
+      2: { cellWidth: 50, halign: 'right', textColor: C.red },
+      3: { cellWidth: 50, halign: 'right', fontStyle: 'bold', textColor: C.green },
+    },
+    didParseCell: (data) => {
+      if (data.row.index === 3) {
+        data.cell.styles.fillColor = [28, 20, 8];
+        data.cell.styles.fontSize = 10;
+        data.cell.styles.textColor = data.column.index === 3 ? C.yellow : C.white;
+      }
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  addFooters();
 
   const fileLabel = `${from.split('-').reverse().join('.')}_${to.split('-').reverse().join('.')}`;
   doc.save(`Incasari_GLAMX_${fileLabel}.pdf`);
@@ -697,7 +977,7 @@ export default function Stats() {
   const handlePDFExport = useCallback(async () => {
     setExporting('pdf');
     try {
-      await exportPDF({ incasariList: stats.incasariList, from, to, shopifyFeePercent, shopifyFeeFixed });
+      await exportPDF({ incasariList: stats.incasariList, allOrders, onlineIds, sdAwbMap, from, to, shopifyFeePercent, shopifyFeeFixed });
     } catch(e) { console.error(e); alert('Eroare export PDF: ' + e.message); }
     setExporting('');
   }, [stats.incasariList, from, to, shopifyFeePercent, shopifyFeeFixed]);
