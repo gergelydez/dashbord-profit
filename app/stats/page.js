@@ -78,9 +78,17 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
   const fromD = new Date(from + 'T00:00:00');
   const toD   = new Date(to   + 'T23:59:59');
 
-  // Sheet 1 – Rezumat pe zile
-  const hdr1 = ['Data', 'Nr. Colete', 'GLS Ramburs (RON)', 'Sameday Ramburs (RON)',
-    'Card Brut (RON)', 'Comision Shopify (RON)', 'Card Net (RON)', 'Total Incasat (RON)'];
+  const addWorkDays = (str, n) => {
+    if (!str) return '';
+    const d = new Date(str + 'T12:00:00'); let added = 0;
+    while (added < n) { d.setDate(d.getDate() + 1); const day = d.getDay(); if (day !== 0 && day !== 6) added++; }
+    const p = x => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+
+  // ── Sheet 1 – Rezumat pe zile ──────────────────────────────────────────────
+  const hdr1 = ['Data Incasare', 'Nr. Comenzi', 'GLS Ramburs (RON)', 'Sameday Ramburs (RON)',
+    'Card Brut (RON)', 'Comision Shopify (RON)', 'Card Net (RON)', 'TOTAL INCASAT (RON)'];
   const rows1 = [hdr1];
   let tGLS=0,tSD=0,tSPBrut=0,tSPCom=0,tSPNet=0,tTot=0,tCnt=0;
   (incasariList||[]).forEach(([zi,v]) => {
@@ -91,76 +99,238 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
   });
   rows1.push(['TOTAL', tCnt, +fmtNum(tGLS), +fmtNum(tSD), +fmtNum(tSPBrut), +fmtNum(tSPCom), +fmtNum(tSPNet), +fmtNum(tTot)]);
   const ws1 = XLSX.utils.aoa_to_sheet(rows1);
-  ws1['!cols'] = [14,10,20,22,18,22,18,20].map(w=>({wch:w}));
+  ws1['!cols'] = [18,14,22,24,20,24,20,22].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws1, 'Rezumat pe zile');
 
-  // Sheet 2 – GLS Ramburs (COD, livrate, din perioada selectata)
+  // ── Sheet 2 – DETALIU PE ZILE (principalul pentru contabilă) ─────────────
+  // Reconstituim ziua de încasare pentru fiecare comandă livrată
+  const detailRows = [];
+  const hdr5 = [
+    'Data Incasare','Sursa Incasare',
+    'Nr. Comanda','Nr. Factura',
+    'Client','Adresa','Oras',
+    'Valoare Factura (RON)',
+    'Valoare Bruta (RON)','Comision Shopify (RON)','NET Incasat (RON)',
+    'AWB','Courier'
+  ];
+  detailRows.push(hdr5);
+
+  // Construim un map: ziIncasare -> lista comenzi
+  const byDay = {};
+
+  // GLS & Sameday livrate (COD – ramburs)
+  allOrders.forEach(o => {
+    if (isOnlinePayment(o, onlineIds)) return;
+    if (getFinalStatus(o, sdAwbMap) !== 'livrat') return;
+    const livStr = (o.fulfilledAt || o.createdAt || '').slice(0, 10);
+    if (!livStr) return;
+    const courier = o.courier === 'sameday' ? 'sameday' : 'gls';
+    const zile = courier === 'sameday' ? 1 : 2;
+    const ziIncasare = addWorkDays(livStr, zile);
+    if (!byDay[ziIncasare]) byDay[ziIncasare] = [];
+    byDay[ziIncasare].push({ ...o, _ziIncasare: ziIncasare, _tip: courier === 'sameday' ? 'Sameday Ramburs' : 'GLS Ramburs' });
+  });
+
+  // Shopify/Card (online)
+  allOrders.forEach(o => {
+    if (!isOnlinePayment(o, onlineIds)) return;
+    const base = (o.createdAt || '').slice(0, 10);
+    if (!base) return;
+    const ziIncasare = addWorkDays(base, 2);
+    if (!byDay[ziIncasare]) byDay[ziIncasare] = [];
+    byDay[ziIncasare].push({ ...o, _ziIncasare: ziIncasare, _tip: 'Shopify/Card' });
+  });
+
+  // Sortăm zilele descrescător
+  const zileSort = Object.keys(byDay).sort((a, b) => b.localeCompare(a));
+
+  let grandTotalGLS = 0, grandTotalSD = 0, grandTotalBrut = 0, grandTotalCom = 0, grandTotalNet = 0, grandTotal = 0;
+
+  zileSort.forEach(zi => {
+    const comenzi = byDay[zi];
+    const ziLabel = zi.split('-').reverse().join('.');
+
+    // Separăm pe tipuri pentru subtotaluri
+    const glsCom   = comenzi.filter(o => o._tip === 'GLS Ramburs');
+    const sdCom    = comenzi.filter(o => o._tip === 'Sameday Ramburs');
+    const spCom    = comenzi.filter(o => o._tip === 'Shopify/Card');
+
+    let dayGLS=0, daySD=0, dayBrut=0, dayCom=0, dayNet=0, dayTotal=0;
+
+    // Rând separator zi
+    detailRows.push([`📅 ${ziLabel}`, '', '', '', '', '', '', '', '', '', '', '', '']);
+
+    // GLS
+    if (glsCom.length > 0) {
+      detailRows.push(['', '── GLS Ramburs ──', '', '', '', '', '', '', '', '', '', '', '']);
+      glsCom.forEach(o => {
+        const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
+        const val = +(fmtNum(o.total));
+        detailRows.push([
+          ziLabel, 'GLS Ramburs',
+          o.name||o.orderNumber||o.id||'', o.invoiceNo||o.invoice||'',
+          o.customerName||o.customer||'', adr, o.city||'',
+          val, val, 0, val,
+          o.trackingNo||'', 'GLS'
+        ]);
+        dayGLS += val; dayTotal += val;
+      });
+      grandTotalGLS += dayGLS;
+    }
+
+    // Sameday
+    if (sdCom.length > 0) {
+      detailRows.push(['', '── Sameday Ramburs ──', '', '', '', '', '', '', '', '', '', '', '']);
+      sdCom.forEach(o => {
+        const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
+        const val = +(fmtNum(o.total));
+        detailRows.push([
+          ziLabel, 'Sameday Ramburs',
+          o.name||o.orderNumber||o.id||'', o.invoiceNo||o.invoice||'',
+          o.customerName||o.customer||'', adr, o.city||'',
+          val, val, 0, val,
+          o.trackingNo||'', 'Sameday'
+        ]);
+        daySD += val; dayTotal += val;
+      });
+      grandTotalSD += daySD;
+    }
+
+    // Shopify/Card
+    if (spCom.length > 0) {
+      detailRows.push(['', '── Shopify / Card ──', '', '', '', '', '', '', '', '', '', '', '']);
+      spCom.forEach(o => {
+        const brut = +(fmtNum(o.total||0));
+        const comPct = brut * (shopifyFeePercent / 100);
+        const comTot = +(fmtNum(comPct + shopifyFeeFixed));
+        const net = +(fmtNum(brut - comTot));
+        const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
+        detailRows.push([
+          ziLabel, 'Shopify/Card',
+          o.name||o.orderNumber||o.id||'', o.invoiceNo||o.invoice||'',
+          o.customerName||o.customer||'', adr, o.city||'',
+          brut, brut, comTot, net,
+          o.trackingNo||'', (o.courier||'').toUpperCase()||'Online'
+        ]);
+        dayBrut += brut; dayCom += comTot; dayNet += net; dayTotal += net;
+      });
+      grandTotalBrut += dayBrut; grandTotalCom += dayCom; grandTotalNet += dayNet;
+    }
+
+    grandTotal += dayTotal;
+
+    // Subtotal zi
+    detailRows.push([
+      `TOTAL ${ziLabel}`, `${comenzi.length} comenzi`,
+      '','','','','',
+      +(fmtNum(dayGLS + daySD + dayBrut)),
+      +(fmtNum(dayGLS + daySD + dayBrut)),
+      +(fmtNum(dayCom)),
+      +(fmtNum(dayGLS + daySD + dayNet || dayTotal)),
+      '','',
+    ]);
+    detailRows.push(['', '', '', '', '', '', '', '', '', '', '', '', '']); // linie goală separator
+  });
+
+  // Grand total final
+  detailRows.push([
+    'TOTAL GENERAL', `${Object.values(byDay).flat().length} comenzi`,
+    '','','','','',
+    +(fmtNum(grandTotalGLS + grandTotalSD + grandTotalBrut)),
+    +(fmtNum(grandTotalGLS + grandTotalSD + grandTotalBrut)),
+    +(fmtNum(grandTotalCom)),
+    +(fmtNum(grandTotalGLS + grandTotalSD + grandTotalNet)),
+    '','',
+  ]);
+
+  const ws5 = XLSX.utils.aoa_to_sheet(detailRows);
+  ws5['!cols'] = [18,20,18,16,26,34,16,20,20,20,20,16,10].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws5, 'Detaliu pe Zile');
+
+  // ── Sheet 3 – GLS Ramburs ──────────────────────────────────────────────────
   const glsOrders = allOrders.filter(o => {
     if (o.courier !== 'gls') return false;
     if (isOnlinePayment(o, onlineIds)) return false;
     if (getFinalStatus(o, sdAwbMap) !== 'livrat') return false;
     const c = new Date(o.createdAt); return c >= fromD && c <= toD;
   });
-  const hdr2 = ['Data Comanda','Nr. Comanda Shopify','AWB','Client','Adresa','Oras','Nr. Factura','Valoare Factura (RON)','Status'];
+  const hdr2 = ['Data Comanda','Data Incasare (est.)','Nr. Comanda','AWB','Client','Adresa','Oras','Nr. Factura','Valoare Incasata (RON)'];
   const rows2 = [hdr2];
+  let totGLS2 = 0;
   glsOrders.forEach(o => {
     const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
-    rows2.push([new Date(o.createdAt).toLocaleDateString('ro-RO'),
+    const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
+    const ziInc = addWorkDays(livStr, 2).split('-').reverse().join('.');
+    const val = +(fmtNum(o.total));
+    rows2.push([new Date(o.createdAt).toLocaleDateString('ro-RO'), ziInc,
       o.name||o.orderNumber||o.id||'', o.trackingNo||'',
       o.customerName||o.customer||'', adr, o.city||'',
-      o.invoiceNo||o.invoice||'', +fmtNum(o.total), getFinalStatus(o,sdAwbMap)]);
+      o.invoiceNo||o.invoice||'', val]);
+    totGLS2 += val;
   });
+  rows2.push(['TOTAL','','','','','','','', +(fmtNum(totGLS2))]);
   const ws2 = XLSX.utils.aoa_to_sheet(rows2);
-  ws2['!cols'] = [14,20,16,24,32,16,16,18,12].map(w=>({wch:w}));
+  ws2['!cols'] = [16,18,18,16,26,34,16,16,20].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws2, 'GLS Ramburs');
 
-  // Sheet 3 – Sameday Ramburs
+  // ── Sheet 4 – Sameday Ramburs ──────────────────────────────────────────────
   const sdOrders = allOrders.filter(o => {
     if (o.courier !== 'sameday') return false;
     if (isOnlinePayment(o, onlineIds)) return false;
     if (getFinalStatus(o, sdAwbMap) !== 'livrat') return false;
     const c = new Date(o.createdAt); return c >= fromD && c <= toD;
   });
-  const hdr3 = ['Data Comanda','Nr. Comanda Shopify','AWB','Client','Adresa','Oras','Nr. Factura','Valoare Factura (RON)','Status'];
+  const hdr3 = ['Data Comanda','Data Incasare (est.)','Nr. Comanda','AWB','Client','Adresa','Oras','Nr. Factura','Valoare Incasata (RON)'];
   const rows3 = [hdr3];
+  let totSD3 = 0;
   sdOrders.forEach(o => {
     const adr = [o.address1||o.address||'', o.address2||''].filter(Boolean).join(', ');
-    rows3.push([new Date(o.createdAt).toLocaleDateString('ro-RO'),
+    const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
+    const ziInc = addWorkDays(livStr, 1).split('-').reverse().join('.');
+    const val = +(fmtNum(o.total));
+    rows3.push([new Date(o.createdAt).toLocaleDateString('ro-RO'), ziInc,
       o.name||o.orderNumber||o.id||'', o.trackingNo||'',
       o.customerName||o.customer||'', adr, o.city||'',
-      o.invoiceNo||o.invoice||'', +fmtNum(o.total), getFinalStatus(o,sdAwbMap)]);
+      o.invoiceNo||o.invoice||'', val]);
+    totSD3 += val;
   });
+  rows3.push(['TOTAL','','','','','','','', +(fmtNum(totSD3))]);
   const ws3 = XLSX.utils.aoa_to_sheet(rows3);
-  ws3['!cols'] = [14,20,16,24,32,16,16,18,12].map(w=>({wch:w}));
+  ws3['!cols'] = [16,18,18,16,26,34,16,16,20].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws3, 'Sameday Ramburs');
 
-  // Sheet 4 – Shopify Card (toate comenzile online din perioada)
+  // ── Sheet 5 – Shopify Card ─────────────────────────────────────────────────
   const spOrders = allOrders.filter(o => {
     if (!isOnlinePayment(o, onlineIds)) return false;
     const c = new Date(o.createdAt); return c >= fromD && c <= toD;
   });
-  const hdr4 = ['Data Comanda','Nr. Comanda Shopify','Client','Adresa','Oras','Nr. Factura',
-    'Valoare Factura (RON)','Incasat Card (RON)','Comision % Shopify','Comision Fix (RON)','Comision Total (RON)','Net Incasat (RON)'];
+  const hdr4 = [
+    'Data Comanda','Data Incasare (est.)','Nr. Comanda','Client','Adresa','Oras','Nr. Factura',
+    'Valoare Comanda (RON)','Comision % (' + shopifyFeePercent + '%)','Comision Fix (RON)','Comision TOTAL (RON)','NET Incasat (RON)'
+  ];
   const rows4 = [hdr4];
   let spTotBrut=0, spTotCom=0, spTotNet=0;
   spOrders.forEach(o => {
-    const brut=o.total||0;
-    const comPct=brut*(shopifyFeePercent/100);
-    const comTot=comPct+shopifyFeeFixed;
-    const net=brut-comTot;
+    const brut=+(fmtNum(o.total||0));
+    const comPct=+(fmtNum(brut*(shopifyFeePercent/100)));
+    const comTot=+(fmtNum(comPct+shopifyFeeFixed));
+    const net=+(fmtNum(brut-comTot));
     const adr=[o.address1||o.address||'',o.address2||''].filter(Boolean).join(', ');
-    rows4.push([new Date(o.createdAt).toLocaleDateString('ro-RO'),
+    const base=(o.createdAt||'').slice(0,10);
+    const ziInc = addWorkDays(base,2).split('-').reverse().join('.');
+    rows4.push([
+      new Date(o.createdAt).toLocaleDateString('ro-RO'), ziInc,
       o.name||o.orderNumber||o.id||'',
       o.customerName||o.customer||'', adr, o.city||'',
       o.invoiceNo||o.invoice||'',
-      +fmtNum(brut), +fmtNum(brut), +fmtNum(shopifyFeePercent), +fmtNum(shopifyFeeFixed),
-      +fmtNum(comTot), +fmtNum(net)]);
+      brut, comPct, +(fmtNum(shopifyFeeFixed)), comTot, net
+    ]);
     spTotBrut+=brut; spTotCom+=comTot; spTotNet+=net;
   });
-  rows4.push(['TOTAL','','','','','',
-    +fmtNum(spTotBrut), +fmtNum(spTotBrut), '', '', +fmtNum(spTotCom), +fmtNum(spTotNet)]);
+  rows4.push(['TOTAL','','','','','','',
+    +(fmtNum(spTotBrut)), '', '', +(fmtNum(spTotCom)), +(fmtNum(spTotNet))]);
   const ws4 = XLSX.utils.aoa_to_sheet(rows4);
-  ws4['!cols'] = [14,20,24,32,16,16,18,16,16,14,18,16].map(w=>({wch:w}));
+  ws4['!cols'] = [16,18,18,26,34,16,16,20,18,14,20,20].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws4, 'Shopify Card');
 
   const label = `${from.split('-').reverse().join('.')}_${to.split('-').reverse().join('.')}`;
