@@ -412,6 +412,9 @@ export default function GLSPage() {
   const [trackModal, setTrackModal] = useState(null); // { awb, order }
   const [bulkModal, setBulkModal] = useState(null); // bulk progress
 
+  // ── Download state ──
+  const [downloadingAwb, setDownloadingAwb] = useState(null); // awb string being downloaded
+
   // ── AWB form ──
   const [weight, setWeight] = useState('1');
   const [parcels, setParcels] = useState('1');
@@ -656,42 +659,69 @@ export default function GLSPage() {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   };
 
-  // ── Download Label PDF (local cache first, then re-fetch from GLS) ─────────
-  const downloadLabel = async (awbData, orderName) => {
-    // If we already have the PDF cached locally — use it instantly
-    if (awbData?.labelBase64) {
-      triggerPdfDownload(awbData.labelBase64, `AWB_GLS_${awbData.awb}_${orderName||''}.pdf`);
-      toast('✅ Etichetă descărcată!', 'success');
-      return;
-    }
+  // ── Download Label PDF ────────────────────────────────────────────────────
+  // Works for: cached PDF, parcelId re-fetch, or AWB number fallback
+  const downloadLabel = async (awbData, orderName, fallbackAwb) => {
+    const awbNum = awbData?.awb || fallbackAwb || '';
+    setDownloadingAwb(awbNum);
 
-    // No cached PDF — re-fetch from GLS using ParcelId (required by API docs)
-    if (!awbData?.parcelId) {
-      toast('⚠️ Eticheta nu este disponibilă. ParcelId lipsă — regenerează AWB-ul.', 'warn');
-      return;
-    }
-
-    toast('⏳ Se descarcă eticheta din GLS...', 'info');
     try {
-      const res = await fetch('/api/gls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // Server uses ENV credentials — we only send action + parcelId
-        body: JSON.stringify({ action: 'get_label', parcelId: awbData.parcelId, awb: awbData.awb }),
-      });
-      const data = await res.json();
-      if (data.ok && data.labelBase64) {
-        // Cache it locally so next download is instant
-        const updated = { ...awbData, labelBase64: data.labelBase64 };
-        awbStore.save(awbData.orderId || awbData.awb, updated);
-        setAwbMap(awbStore.get());
-        triggerPdfDownload(data.labelBase64, `AWB_GLS_${awbData.awb}_${orderName||''}.pdf`);
-        toast('✅ Etichetă descărcată și salvată local!', 'success');
-      } else {
-        toast('❌ ' + (data.error || 'Eticheta nu a putut fi obținută din GLS'), 'error');
+      // 1. Local cache hit → instant download
+      if (awbData?.labelBase64) {
+        triggerPdfDownload(awbData.labelBase64, `AWB_GLS_${awbNum}_${orderName||''}.pdf`);
+        toast('✅ Etichetă descărcată!', 'success');
+        return;
       }
+
+      // 2. Have parcelId → GetPrintedLabels (correct API call)
+      if (awbData?.parcelId) {
+        toast('⏳ Se descarcă eticheta din GLS...', 'info');
+        const res = await fetch('/api/gls', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get_label', parcelId: awbData.parcelId, awb: awbNum }),
+        });
+        const data = await res.json();
+        if (data.ok && data.labelBase64) {
+          const updated = { ...awbData, labelBase64: data.labelBase64 };
+          awbStore.save(awbData.orderId || awbNum, updated);
+          setAwbMap(awbStore.get());
+          triggerPdfDownload(data.labelBase64, `AWB_GLS_${awbNum}_${orderName||''}.pdf`);
+          toast('✅ Etichetă descărcată!', 'success');
+          return;
+        }
+        // Fall through to AWB number method if parcelId fails
+        console.warn('[GLS] parcelId method failed:', data.error);
+      }
+
+      // 3. Fallback: fetch by AWB number (for old AWBs from Shopify without parcelId)
+      if (awbNum) {
+        toast('⏳ Se descarcă eticheta (AWB number)...', 'info');
+        const res = await fetch('/api/gls', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get_label_by_awb', awb: awbNum }),
+        });
+        const data = await res.json();
+        if (data.ok && data.labelBase64) {
+          if (awbData) {
+            const updated = { ...awbData, labelBase64: data.labelBase64, parcelId: data.parcelId || awbData.parcelId };
+            awbStore.save(awbData.orderId || awbNum, updated);
+            setAwbMap(awbStore.get());
+          }
+          triggerPdfDownload(data.labelBase64, `AWB_GLS_${awbNum}_${orderName||''}.pdf`);
+          toast('✅ Etichetă descărcată!', 'success');
+          return;
+        }
+        toast('❌ ' + (data.error || 'Eticheta nu a putut fi obținută din GLS'), 'error');
+        return;
+      }
+
+      toast('⚠️ Nu există date suficiente pentru descărcare. Regenerează AWB-ul.', 'warn');
     } catch(e) {
-      toast('❌ Eroare rețea: ' + e.message, 'error');
+      toast('❌ Eroare: ' + e.message, 'error');
+    } finally {
+      setDownloadingAwb(null);
     }
   };
 
@@ -1006,22 +1036,34 @@ export default function GLSPage() {
                             </td>
                             <td onClick={e => e.stopPropagation()}>
                               {effectiveAwb ? (
-                                <div className="gls-act-grp">
-                                  <span className="gls-awbn">{effectiveAwb}</span>
-                                  {awbData?.labelBase64 && (
-                                    <button className="gls-btn gls-btn-green gls-btn-sm" onClick={() => downloadLabel(awbData, o.name)}>⬇ PDF</button>
-                                  )}
-                                  <a href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${effectiveAwb}`}
-                                    target="_blank" rel="noopener noreferrer"
-                                    className="gls-btn gls-btn-blue gls-btn-sm"
-                                    style={{ textDecoration: 'none' }}>📍 Track</a>
-                                  <a href={`https://mygls.ro/Parcel/Detail/${effectiveAwb}`}
-                                    target="_blank" rel="noopener noreferrer"
-                                    className="gls-btn gls-btn-ghost gls-btn-sm"
-                                    style={{ textDecoration: 'none', fontSize: 10 }}>🌐</a>
-                                  {awbData && (
-                                    <button className="gls-btn gls-btn-red gls-btn-sm" onClick={() => deleteAwb(o.id, effectiveAwb)}>✕</button>
-                                  )}
+                                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                                  {/* AWB number — prominent */}
+                                  <span className="gls-awbn" style={{fontSize:13,letterSpacing:.5}}>{effectiveAwb}</span>
+                                  {/* Action row */}
+                                  <div className="gls-act-grp">
+                                    {/* ⬇ PDF — ALWAYS visible for any AWB */}
+                                    <button
+                                      className="gls-btn gls-btn-green gls-btn-sm"
+                                      style={{fontWeight:800}}
+                                      disabled={downloadingAwb === effectiveAwb}
+                                      onClick={() => downloadLabel(awbData, o.name, effectiveAwb)}
+                                    >
+                                      {downloadingAwb === effectiveAwb
+                                        ? <><span className="gls-spin">↻</span> ...</>
+                                        : '⬇ PDF'}
+                                    </button>
+                                    <a href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${effectiveAwb}`}
+                                      target="_blank" rel="noopener noreferrer"
+                                      className="gls-btn gls-btn-blue gls-btn-sm"
+                                      style={{ textDecoration: 'none' }}>📍 Track</a>
+                                    <a href={`https://mygls.ro/Parcel/Detail/${effectiveAwb}`}
+                                      target="_blank" rel="noopener noreferrer"
+                                      className="gls-btn gls-btn-ghost gls-btn-sm"
+                                      style={{ textDecoration: 'none', fontSize: 10 }}>🌐</a>
+                                    {awbData && (
+                                      <button className="gls-btn gls-btn-red gls-btn-sm" onClick={() => deleteAwb(o.id, effectiveAwb)}>✕</button>
+                                    )}
+                                  </div>
                                 </div>
                               ) : o.isFulfilled ? (
                                 <div className="gls-act-grp">
@@ -1115,15 +1157,23 @@ export default function GLSPage() {
                           </div>
                         )}
                         <div className="gls-act-grp">
-                          {a.labelBase64 && (
-                            <button className="gls-btn gls-btn-green gls-btn-sm" onClick={() => downloadLabel(a, order?.name)}>⬇ PDF</button>
-                          )}
+                          {/* ⬇ PDF — always visible */}
+                          <button
+                            className="gls-btn gls-btn-green gls-btn-sm"
+                            style={{fontWeight:800}}
+                            disabled={downloadingAwb === a.awb}
+                            onClick={() => downloadLabel(a, order?.name, a.awb)}
+                          >
+                            {downloadingAwb === a.awb
+                              ? <><span className="gls-spin">↻</span> ...</>
+                              : a.labelBase64 ? '⬇ PDF' : '⬇ PDF GLS'}
+                          </button>
                           <a href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${a.awb}`}
                             target="_blank" rel="noopener noreferrer"
-                            className="gls-btn gls-btn-blue gls-btn-sm" style={{ textDecoration: 'none' }}>📍 Tracking</a>
+                            className="gls-btn gls-btn-blue gls-btn-sm" style={{ textDecoration: 'none' }}>📍 Track</a>
                           <a href={`https://mygls.ro/Parcel/Detail/${a.awb}`}
                             target="_blank" rel="noopener noreferrer"
-                            className="gls-btn gls-btn-ghost gls-btn-sm" style={{ textDecoration: 'none' }}>🌐 MyGLS</a>
+                            className="gls-btn gls-btn-ghost gls-btn-sm" style={{ textDecoration: 'none' }}>🌐</a>
                           <button className="gls-btn gls-btn-red gls-btn-sm" onClick={() => deleteAwb(a.orderId, a.awb)}>✕</button>
                         </div>
                       </div>
