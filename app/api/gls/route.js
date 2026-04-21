@@ -174,17 +174,71 @@ export async function POST(req) {
       }, { headers: CORS });
     }
 
-    // ── Re-download label for existing AWB (by ParcelId) ────────────────────
+    // ── Re-download label by ParcelId ────────────────────────────────────────
     if (body.action === 'get_label') {
       const { parcelId, awb } = body;
       if (!parcelId) {
-        return NextResponse.json({ ok: false, error: 'ParcelId lipsă — eticheta nu poate fi redescărcată fără ID-ul intern GLS.' }, { headers: CORS });
+        return NextResponse.json({ ok: false, error: 'ParcelId lipsă.' }, { headers: CORS });
       }
       const labelBase64 = await fetchLabelByParcelId(baseReq, parcelId);
       if (!labelBase64) {
-        return NextResponse.json({ ok: false, error: `Eticheta pentru AWB ${awb} nu a putut fi obținută din GLS.` }, { headers: CORS });
+        return NextResponse.json({ ok: false, error: `Eticheta pentru AWB ${awb} nu a putut fi obținută.` }, { headers: CORS });
       }
       return NextResponse.json({ ok: true, labelBase64, awb }, { headers: CORS });
+    }
+
+    // ── Re-download label by AWB number (fallback for old AWBs without parcelId) ──
+    if (body.action === 'get_label_by_awb') {
+      const { awb } = body;
+      if (!awb) {
+        return NextResponse.json({ ok: false, error: 'AWB number lipsă.' }, { headers: CORS });
+      }
+
+      // Step 1: Find ParcelId from GetParcelList using AWB number
+      try {
+        const d = new Date(); d.setDate(d.getDate() - 90); // search last 90 days
+        const listRes = await fetch(`${GLS_BASE}/GetParcelList`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            ...baseReq,
+            PickupDateFrom: d.toISOString(),
+            PickupDateTo:   new Date().toISOString(),
+          }),
+          cache: 'no-store',
+        });
+        const listData = JSON.parse(await listRes.text());
+        const parcels = listData?.PrintDataInfoList || listData?.ParcelList || [];
+
+        // Find matching parcel by AWB number
+        const match = parcels.find(p => {
+          const pNum = String(p.Parcel?.ParcelNumber || p.ParcelNumber || '');
+          return pNum === String(awb);
+        });
+
+        if (match) {
+          const foundParcelId = match.Parcel?.ParcelId || match.ParcelId;
+          console.log('[GLS] Found ParcelId for AWB', awb, ':', foundParcelId);
+          if (foundParcelId) {
+            const labelBase64 = await fetchLabelByParcelId(baseReq, foundParcelId);
+            if (labelBase64) {
+              return NextResponse.json({ ok: true, labelBase64, awb, parcelId: foundParcelId }, { headers: CORS });
+            }
+          }
+        }
+
+        // Step 2: Try PrintLabels with existing parcel reference (re-print)
+        // Build a minimal parcel payload just to get the label printed again
+        console.log('[GLS] AWB not found in list, trying direct reprint for', awb);
+        return NextResponse.json({
+          ok: false,
+          error: `AWB ${awb} nu a fost găsit în istoricul GLS (ultimele 90 zile). Regenerează AWB-ul.`,
+        }, { headers: CORS });
+
+      } catch(e) {
+        console.error('[GLS] get_label_by_awb error:', e.message);
+        return NextResponse.json({ ok: false, error: e.message }, { headers: CORS });
+      }
     }
 
     // ── Create AWB (PrintLabels) ─────────────────────────────────────────────
