@@ -73,7 +73,7 @@ const PRESETS = [
 // EXPORT EXCEL
 // ─────────────────────────────────────────────────────────────────────────────
 async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed, from, to }) {
-  const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+  const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
   const fromD = new Date(from + 'T00:00:00');
   const toD   = new Date(to   + 'T23:59:59');
@@ -171,8 +171,8 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
 // EXPORT PDF
 // ─────────────────────────────────────────────────────────────────────────────
 async function exportPDF({ incasariList, from, to, shopifyFeePercent, shopifyFeeFixed }) {
-  const { jsPDF } = await import('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
-  await import('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
+  const { jsPDF } = await import('jspdf');
+  await import('jspdf-autotable');
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const label = `${from.split('-').reverse().join('.')} - ${to.split('-').reverse().join('.')}`;
