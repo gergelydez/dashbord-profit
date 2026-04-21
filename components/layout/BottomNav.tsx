@@ -14,6 +14,7 @@ const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺' };
 const NAV_ITEMS = [
   { href: '/',                   icon: '📦', label: 'Comenzi' },
   { href: '/xconnector',         icon: '⚡', label: 'xConnector' },
+  { href: '/gls',                icon: '🏷️', label: 'GLS' },
   { href: '/stats',              icon: '📊', label: 'Stats' },
   { href: '/profit',             icon: '💹', label: 'Profit' },
   { href: '/import',             icon: '🚢', label: 'Import' },
