@@ -189,7 +189,22 @@ function InvoiceSection({
             <div><div style={S.fieldLabel}>Serie/Număr</div><div style={{ ...S.fieldValue, fontWeight: 700, color: '#f97316', fontFamily: 'monospace' }}>{order.invoice.series}{order.invoice.number}</div></div>
             <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice.status} color="green" /></div></div>
           </div>
-          <a href={order.invoice.url} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none', width: 'fit-content' }}>
+          <a
+            href={(() => {
+              try {
+                const u = new URL(order.invoice.url);
+                const sbEmail = localStorage.getItem('sb_email') || '';
+                const sbToken = localStorage.getItem('sb_token') || '';
+                const sbCif   = localStorage.getItem('sb_cif')   || '';
+                if (sbEmail) u.searchParams.set('sb_email', sbEmail);
+                if (sbToken) u.searchParams.set('sb_token', sbToken);
+                if (sbCif)   u.searchParams.set('sb_cif', sbCif);
+                return u.toString();
+              } catch { return order.invoice.url; }
+            })()}
+            target="_blank" rel="noreferrer"
+            style={{ ...S.btnPrimary, textDecoration: 'none', width: 'fit-content' }}
+          >
             📥 Descarcă PDF
           </a>
         </div>
