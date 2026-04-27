@@ -73,7 +73,10 @@ export async function ensureInvoice(
   if (options.invoiceSeries) cfg.series = options.invoiceSeries;
   if (options.paymentSeries) cfg.paymentSeries = options.paymentSeries;
   // Override useStock daca e cerut manual
-  if (options.forceStock) cfg.useStock = true;
+  if (options.forceStock) {
+    cfg.useStock = true;
+    cfg.warehouseName = cfg.warehouseName || 'Marfuri'; // gestiunea predatoare default
+  }
   const lineItems = (order.lineItems as Array<{ name: string; sku: string; qty: number; price: number }>).map(
     (i) => ({ name: i.name, sku: i.sku, quantity: i.qty, price: i.price }),
   );
