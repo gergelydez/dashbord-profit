@@ -1138,7 +1138,7 @@ export default function XConnectorPage() {
     addToast('info', `Generez facturi pentru ${selected.size} comenzi…`);
     let ok = 0, fail = 0;
     for (const id of Array.from(selected)) {
-      try { await invoiceMut.mutateAsync(id); ok++; } catch { fail++; }
+      try { await invoiceMut.mutateAsync({ shopifyOrderId: id, forceCollect: false, forceStock: false }); ok++; } catch { fail++; }
     }
     setBulkLoading(false);
     addToast(fail === 0 ? 'ok' : 'err', `${ok} facturi generate${fail ? `, ${fail} erori` : ''}`);
