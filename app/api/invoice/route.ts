@@ -127,8 +127,17 @@ export async function GET(request: Request) {
     }
   }
 
-  // ── 6. Option D: Pagina HTML cu instrucțiuni ──────────────────────────────
-  // invoiceUrl din SmartBill poate fi gol sau invalid — nu redirectăm
+  // ── 6. Option D: Redirect la URL public SmartBill (nu necesita auth) ────────
+  const viewUrl = sbCif
+    ? `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(sbCif)}&series=${encodeURIComponent(invoice.series)}&number=${encodeURIComponent(invoice.number)}`
+    : invoice.invoiceUrl;
+
+  if (viewUrl) {
+    log.info('Redirecting to SmartBill public view', { invoiceId: id });
+    return NextResponse.redirect(viewUrl);
+  }
+
+  // ── 7. Option E: Pagina HTML cu instrucțiuni ──────────────────────────────
   const hasCreds = !!(sbEmail && sbToken && sbCif);
   const html = `<!DOCTYPE html>
 <html lang="ro">
