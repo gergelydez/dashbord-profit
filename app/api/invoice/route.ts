@@ -81,13 +81,38 @@ export async function GET(request: Request) {
     return pdfResponse(Buffer.from(invoice.pdfData), filename);
   }
 
-  // Option C: No PDF stored — redirect to SmartBill cloud URL (no auth required)
+  // Option C: No local PDF — descarcă live din SmartBill și cache-uiește
+  try {
+    const { downloadInvoicePdf, loadSmartBillConfig } = await import('@/lib/invoicing/smartbill');
+    const { storePdf, isDbKey } = await import('@/lib/storage/s3');
+    const cfg = loadSmartBillConfig();
+    if (cfg.email && cfg.token && cfg.cif) {
+      const pdfBuffer = await downloadInvoicePdf(cfg, invoice.series, invoice.number);
+      if (pdfBuffer) {
+        // Cache pentru data viitoare
+        const stored = await storePdf(pdfBuffer, 'invoices', id);
+        await db.invoice.update({
+          where: { id },
+          data: {
+            pdfStorageKey: stored.key,
+            pdfData: isDbKey(stored.key) ? pdfBuffer : undefined,
+          },
+        });
+        log.info('PDF fetched live from SmartBill and cached', { invoiceId: id });
+        return pdfResponse(pdfBuffer, filename);
+      }
+    }
+  } catch (liveErr) {
+    log.warn('Live SmartBill PDF fetch failed', { error: (liveErr as Error).message });
+  }
+
+  // Option D: Redirect la SmartBill URL dacă există
   if (invoice.invoiceUrl) {
-    log.info('No local PDF — redirecting to SmartBill', { invoiceId: id });
+    log.info('Redirecting to SmartBill URL', { invoiceId: id });
     return NextResponse.redirect(invoice.invoiceUrl);
   }
 
-  // Option D: Nothing available
+  // Option E: Nimic disponibil
   log.error('Invoice PDF not available anywhere', { invoiceId: id });
   return NextResponse.json(
     { error: 'PDF not available. Please download it directly from SmartBill.' },
