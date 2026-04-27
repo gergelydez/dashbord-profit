@@ -28,8 +28,8 @@ async function fetchPdfFromSmartBill(
     const res = await fetch(url, {
       headers: {
         'Authorization': `Basic ${auth}`,
-        'Accept':        'application/pdf, */*',
-        'Content-Type':  'application/json',
+        'Accept':        'application/octet-stream',
+        // FARA Content-Type — SmartBill returneaza JSON cu eroare daca e prezent
       },
       cache: 'no-store',
     });
