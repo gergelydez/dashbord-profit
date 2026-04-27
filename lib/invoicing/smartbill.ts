@@ -88,13 +88,19 @@ async function sbFetch(
   path: string,
   options: Partial<RequestInit> = {},
 ): Promise<Response> {
+  const customHeaders = (options.headers as Record<string, string>) || {};
+  // Pentru PDF requests nu adaugam Content-Type/Accept JSON
+  const isPdfRequest = (customHeaders['Accept'] || '').includes('octet-stream') ||
+                       (customHeaders['Accept'] || '').includes('pdf');
   return fetch(`${BASE}${path}`, {
     ...options,
     headers: {
       Authorization:  `Basic ${auth}`,
-      'Content-Type': 'application/json',
-      Accept:         'application/json',
-      ...(options.headers as Record<string, string> | undefined),
+      ...(!isPdfRequest ? {
+        'Content-Type': 'application/json',
+        Accept:         'application/json',
+      } : {}),
+      ...customHeaders,
     },
     cache: 'no-store',
   });
@@ -232,8 +238,8 @@ export async function downloadInvoicePdf(
   const auth = makeAuth(cfg.email, cfg.token);
 
   try {
-    const res = await sbFetch(auth, `/invoice/pdf?cif=${cfg.cif}&series=${series}&number=${number}`, {
-      headers: { Accept: 'application/pdf, */*' },
+    const res = await sbFetch(auth, `/invoice/pdf?cif=${encodeURIComponent(cfg.cif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`, {
+      headers: { Accept: 'application/octet-stream' },
     });
 
     if (!res.ok) {
