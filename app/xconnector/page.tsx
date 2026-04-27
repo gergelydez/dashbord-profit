@@ -1,4 +1,5 @@
 'use client';
+import React from 'react';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -189,7 +190,7 @@ function InvoiceSection({
             <div><div style={S.fieldLabel}>Serie/Număr</div><div style={{ ...S.fieldValue, fontWeight: 700, color: '#f97316', fontFamily: 'monospace' }}>{order.invoice.series}{order.invoice.number}</div></div>
             <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice.status} color="green" /></div></div>
           </div>
-          <InvoiceDownloadBtn url={order.invoice.url} />
+          <InvoiceDownloadBtn url={order.invoice.url} series={order.invoice.series} number={order.invoice.number} />
         </div>
       </div>
     );
@@ -817,30 +818,76 @@ type AwbResultMap = Record<string, {
 }>;
 
 // ── Invoice Download Button — adaugă credențiale SmartBill în URL ─────────────
-function InvoiceDownloadBtn({ url }: { url: string }) {
-  // Construieste URL-ul cu credentiale la click — nu la render
-  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+function InvoiceDownloadBtn({ url, series, number }: { url: string; series: string; number: string }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState('');
+
+  const handleClick = async (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
+    setLoading(true);
+    setError('');
+
     try {
-      const u = new URL(url);
       const sbEmail = localStorage.getItem('sb_email') || '';
       const sbToken = localStorage.getItem('sb_token') || '';
       const sbCif   = localStorage.getItem('sb_cif')   || '';
-      if (sbEmail) u.searchParams.set('sb_email', sbEmail);
-      if (sbToken) u.searchParams.set('sb_token', sbToken);
-      if (sbCif)   u.searchParams.set('sb_cif',   sbCif);
-      window.open(u.toString(), '_blank', 'noreferrer');
-    } catch {
-      window.open(url, '_blank', 'noreferrer');
+
+      if (!sbEmail || !sbToken || !sbCif) {
+        // Deschide direct URL-ul din SmartBill (xConnector URL)
+        window.open(url, '_blank', 'noreferrer');
+        setLoading(false);
+        return;
+      }
+
+      // Download direct din browser (ocoleste restrictia de IP a Vercel)
+      const auth = btoa(`${sbEmail.trim()}:${sbToken.trim()}`);
+      const pdfUrl = `https://ws.smartbill.ro/SBORO/api/invoice/pdf?cif=${encodeURIComponent(sbCif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`;
+
+      const res = await fetch(pdfUrl, {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/octet-stream',
+        },
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`SmartBill ${res.status}: ${txt.slice(0, 100)}`);
+      }
+
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `Factura-${series}${number}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+
+    } catch (err) {
+      setError((err as Error).message);
+      // Fallback - deschide URL original
+      setTimeout(() => window.open(url, '_blank', 'noreferrer'), 500);
+    } finally {
+      setLoading(false);
     }
   };
+
   return (
-    <a href={url} onClick={handleClick} target="_blank" rel="noreferrer"
-      style={{ display:'inline-flex', alignItems:'center', gap:6, background:'#f97316',
-        color:'white', textDecoration:'none', padding:'10px 18px', borderRadius:8,
-        fontSize:13, fontWeight:700, width:'fit-content', cursor:'pointer' }}>
-      📥 Descarcă PDF
-    </a>
+    <div>
+      <a href={url} onClick={handleClick}
+        style={{ display:'inline-flex', alignItems:'center', gap:6,
+          background: loading ? '#7c3a00' : '#f97316',
+          color:'white', textDecoration:'none', padding:'10px 18px', borderRadius:8,
+          fontSize:13, fontWeight:700, width:'fit-content', cursor: loading ? 'wait' : 'pointer',
+          opacity: loading ? 0.7 : 1 }}>
+        {loading ? '⏳ Se descarcă...' : '📥 Descarcă PDF'}
+      </a>
+      {error && (
+        <div style={{ fontSize:11, color:'#f43f5e', marginTop:6, maxWidth:300 }}>
+          ⚠ {error} — s-a deschis SmartBill ca fallback
+        </div>
+      )}
+    </div>
   );
 }
 
