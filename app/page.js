@@ -1816,7 +1816,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                               {isOnlinePayment(o)?'💳 Card':'💵 COD'}
                             </button>
                           </td>
-                          <td style={mobH}>{(()=>{
+                          <td style={{whiteSpace:'nowrap'}}>{(()=>{
                             const invRes=sbInvResults[o.id];
                             const invLoading=sbInvLoading[o.id];
                             if(invRes?.ok) return (
