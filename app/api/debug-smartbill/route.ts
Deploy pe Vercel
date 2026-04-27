@@ -1,0 +1,117 @@
+/**
+ * app/api/debug-smartbill/route.ts
+ * TEMPORAR — sterge dupa debugging
+ * GET /api/debug-smartbill?email=X&token=Y&cif=Z&series=GLA&number=2763
+ */
+import { NextResponse } from 'next/server';
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const email  = searchParams.get('email')  || process.env.SMARTBILL_EMAIL || '';
+  const token  = searchParams.get('token')  || process.env.SMARTBILL_TOKEN || '';
+  const cif    = searchParams.get('cif')    || process.env.SMARTBILL_CIF   || '';
+  const series = searchParams.get('series') || 'GLA';
+  const number = searchParams.get('number') || '2763';
+
+  const results: Record<string, unknown> = {
+    hasEmail: !!email,
+    hasToken: !!token,
+    hasCif:   !!cif,
+    series,
+    number,
+    envEmail: !!process.env.SMARTBILL_EMAIL,
+    envToken: !!process.env.SMARTBILL_TOKEN,
+    envCif:   !!process.env.SMARTBILL_CIF,
+  };
+
+  if (!email || !token || !cif) {
+    return NextResponse.json({ error: 'Lipsesc credentiale', results });
+  }
+
+  const auth = Buffer.from(`${email.trim()}:${token.trim()}`).toString('base64');
+  const BASE = 'https://ws.smartbill.ro/SBORO/api';
+
+  // Test 1: series list (JSON) — verifica autentificarea
+  try {
+    const r1 = await fetch(`${BASE}/series?cif=${encodeURIComponent(cif)}&type=f`, {
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    const t1 = await r1.text();
+    results['auth_test'] = { status: r1.status, ok: r1.ok, body: t1.slice(0, 300) };
+  } catch (e) {
+    results['auth_test'] = { error: (e as Error).message };
+  }
+
+  // Test 2: PDF cu Accept: application/octet-stream (fara Content-Type)
+  try {
+    const r2 = await fetch(
+      `${BASE}/invoice/pdf?cif=${encodeURIComponent(cif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`,
+      {
+        headers: { Authorization: `Basic ${auth}`, Accept: 'application/octet-stream' },
+        cache: 'no-store',
+      }
+    );
+    const buf2 = Buffer.from(await r2.arrayBuffer());
+    const first5 = buf2.slice(0, 5).toString('ascii');
+    results['pdf_octet'] = {
+      status: r2.status,
+      ok: r2.ok,
+      contentType: r2.headers.get('content-type'),
+      size: buf2.length,
+      isPdf: first5 === '%PDF-',
+      first20: buf2.slice(0, 20).toString('ascii'),
+    };
+  } catch (e) {
+    results['pdf_octet'] = { error: (e as Error).message };
+  }
+
+  // Test 3: PDF cu Accept: application/pdf
+  try {
+    const r3 = await fetch(
+      `${BASE}/invoice/pdf?cif=${encodeURIComponent(cif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`,
+      {
+        headers: { Authorization: `Basic ${auth}`, Accept: 'application/pdf' },
+        cache: 'no-store',
+      }
+    );
+    const buf3 = Buffer.from(await r3.arrayBuffer());
+    const first5 = buf3.slice(0, 5).toString('ascii');
+    results['pdf_appdf'] = {
+      status: r3.status,
+      ok: r3.ok,
+      contentType: r3.headers.get('content-type'),
+      size: buf3.length,
+      isPdf: first5 === '%PDF-',
+      first20: buf3.slice(0, 20).toString('ascii'),
+    };
+  } catch (e) {
+    results['pdf_appdf'] = { error: (e as Error).message };
+  }
+
+  // Test 4: PDF fara niciun Accept header explicit
+  try {
+    const r4 = await fetch(
+      `${BASE}/invoice/pdf?cif=${encodeURIComponent(cif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`,
+      {
+        headers: { Authorization: `Basic ${auth}` },
+        cache: 'no-store',
+      }
+    );
+    const buf4 = Buffer.from(await r4.arrayBuffer());
+    const first5 = buf4.slice(0, 5).toString('ascii');
+    results['pdf_noaccept'] = {
+      status: r4.status,
+      ok: r4.ok,
+      contentType: r4.headers.get('content-type'),
+      size: buf4.length,
+      isPdf: first5 === '%PDF-',
+      first20: buf4.slice(0, 20).toString('ascii'),
+    };
+  } catch (e) {
+    results['pdf_noaccept'] = { error: (e as Error).message };
+  }
+
+  return NextResponse.json(results, { status: 200 });
+}
