@@ -216,8 +216,8 @@ export default function Dashboard() {
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
   const [connected, setConnected] = useState(false);
-  const [domain, setDomain]     = useState('glamxonline.myshopify.com');
-  const [token, setToken]       = useState('');
+  const [domain, setDomain]     = useState(() => { try { const sk=getShopKey(); return ls.get(domainKey(sk))||(sk==='ro'?ls.get('gx_d'):null)||'glamxonline.myshopify.com'; } catch { return 'glamxonline.myshopify.com'; } });
+  const [token, setToken]       = useState(() => { try { const sk=getShopKey(); return ls.get(tokenKey(sk))||(sk==='ro'?ls.get('gx_t'):null)||''; } catch { return ''; } });
   const [filter, setFilter]     = useState('toate');
   const [search, setSearch]     = useState('');
   const [pg, setPg]             = useState(1);
@@ -324,7 +324,6 @@ export default function Dashboard() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Aplicăm overrides direct în o.ts la încărcare — stabile imediat
         const parsedWithOv = applyTrackingOverrides(parsed);
         setAllOrders(parsedWithOv);
         setConnected(true);
@@ -334,6 +333,9 @@ export default function Dashboard() {
         if (ff) setFetchedFrom(ff);
         applyDateFilter(parsedWithOv, 'last_30', '', '');
       } catch {}
+    } else if (t && d) {
+      // Are credentiale dar nu are cache — auto-fetch (ex: magazin HU fara date)
+      setTimeout(() => fetchOrders(), 300);
     }
   }, []);
 
