@@ -339,15 +339,26 @@ export default function Dashboard() {
     }
   }, []);
 
-  // ── Shop switch — reîncarcă credențialele și comenzile când se schimbă magazinul
+  // ── Shop switch — navighează la pagina corectă per shop
   useEffect(() => {
+    const navigateToShop = (key) => {
+      if (!key) key = getShopKey();
+      const target = key === 'ro' ? '/' : `/${key}`;
+      if (window.location.pathname !== target) {
+        window.location.href = target;
+      } else {
+        window.location.reload();
+      }
+    };
     const onStorage = (e) => {
       if (e.key !== 'glamx-shop') return;
-      // Reload pagina la schimbare magazin — cel mai simplu și sigur
-      window.location.reload();
+      try {
+        const p = JSON.parse(e.newValue);
+        navigateToShop(p?.state?.currentShop);
+      } catch { window.location.reload(); }
     };
-    const onGlamxShop = () => {
-      window.location.reload();
+    const onGlamxShop = (e) => {
+      navigateToShop(e?.detail);
     };
     window.addEventListener('storage', onStorage);
     window.addEventListener('glamx:shop', onGlamxShop);
@@ -355,7 +366,7 @@ export default function Dashboard() {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener('glamx:shop', onGlamxShop);
     };
-  }, []); // applyDateFilter is stable (useCallback []) — safe to omit from deps
+  }, []);
 
   const applyDateFilter = useCallback((ords, p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
