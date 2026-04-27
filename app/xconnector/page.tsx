@@ -818,25 +818,27 @@ type AwbResultMap = Record<string, {
 
 // ── Invoice Download Button — adaugă credențiale SmartBill în URL ─────────────
 function InvoiceDownloadBtn({ url }: { url: string }) {
-  const href = (() => {
+  // Construieste URL-ul cu credentiale la click — nu la render
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
     try {
       const u = new URL(url);
-      if (typeof window !== 'undefined') {
-        const e = localStorage.getItem('sb_email') || '';
-        const t = localStorage.getItem('sb_token') || '';
-        const c = localStorage.getItem('sb_cif')   || '';
-        if (e) u.searchParams.set('sb_email', e);
-        if (t) u.searchParams.set('sb_token', t);
-        if (c) u.searchParams.set('sb_cif',   c);
-      }
-      return u.toString();
-    } catch { return url; }
-  })();
+      const sbEmail = localStorage.getItem('sb_email') || '';
+      const sbToken = localStorage.getItem('sb_token') || '';
+      const sbCif   = localStorage.getItem('sb_cif')   || '';
+      if (sbEmail) u.searchParams.set('sb_email', sbEmail);
+      if (sbToken) u.searchParams.set('sb_token', sbToken);
+      if (sbCif)   u.searchParams.set('sb_cif',   sbCif);
+      window.open(u.toString(), '_blank', 'noreferrer');
+    } catch {
+      window.open(url, '_blank', 'noreferrer');
+    }
+  };
   return (
-    <a href={href} target="_blank" rel="noreferrer"
+    <a href={url} onClick={handleClick} target="_blank" rel="noreferrer"
       style={{ display:'inline-flex', alignItems:'center', gap:6, background:'#f97316',
         color:'white', textDecoration:'none', padding:'10px 18px', borderRadius:8,
-        fontSize:13, fontWeight:700, width:'fit-content' }}>
+        fontSize:13, fontWeight:700, width:'fit-content', cursor:'pointer' }}>
       📥 Descarcă PDF
     </a>
   );
