@@ -1457,7 +1457,7 @@ export default function XConnectorPage() {
             </div>
             <div style={{ fontSize:12, color:'var(--c-text3)', marginBottom:20 }}>
               Shop activ: <strong style={{color:'var(--c-orange)'}}>{activeShop?.toUpperCase()}</strong>
-              {' · '}Configurație SmartBill: {activeShop === 'ro' ? 'Romania' : 'Ungaria'}
+              {' · '}Țara clientului se preia automat din comandă
             </div>
 
             {/* Optiune incasare */}
