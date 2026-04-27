@@ -85,7 +85,14 @@ export async function GET(request: Request) {
   try {
     const { downloadInvoicePdf, loadSmartBillConfig } = await import('@/lib/invoicing/smartbill');
     const { storePdf, isDbKey } = await import('@/lib/storage/s3');
-    const cfg = loadSmartBillConfig();
+    const envCfg = loadSmartBillConfig();
+    // Acceptă credențiale și din query params (trimise din browser când env vars lipsesc)
+    const cfg = {
+      ...envCfg,
+      email: searchParams.get('sb_email') || envCfg.email,
+      token: searchParams.get('sb_token') || envCfg.token,
+      cif:   searchParams.get('sb_cif')   || envCfg.cif,
+    };
     if (cfg.email && cfg.token && cfg.cif) {
       const pdfBuffer = await downloadInvoicePdf(cfg, invoice.series, invoice.number);
       if (pdfBuffer) {
@@ -106,18 +113,50 @@ export async function GET(request: Request) {
     log.warn('Live SmartBill PDF fetch failed', { error: (liveErr as Error).message });
   }
 
-  // Option D: Redirect la SmartBill URL dacă există
-  if (invoice.invoiceUrl) {
-    log.info('Redirecting to SmartBill URL', { invoiceId: id });
-    return NextResponse.redirect(invoice.invoiceUrl);
-  }
+  // Option D: Pagina HTML cu link SmartBill (redirect direct nu merge fara auth)
+  const sbUrl = invoice.invoiceUrl ||
+    `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=&series=${encodeURIComponent(invoice.series)}&number=${encodeURIComponent(invoice.number)}`;
 
-  // Option E: Nimic disponibil
-  log.error('Invoice PDF not available anywhere', { invoiceId: id });
-  return NextResponse.json(
-    { error: 'PDF not available. Please download it directly from SmartBill.' },
-    { status: 404 },
-  );
+  log.info('Serving HTML fallback page', { invoiceId: id, sbUrl });
+  const html = `<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Factură ${invoice.series}${invoice.number}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .card { background: #1e293b; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 32px 28px; max-width: 420px; width: 100%; text-align: center; }
+    .icon { font-size: 48px; margin-bottom: 16px; }
+    h1 { font-size: 20px; font-weight: 700; color: #f97316; margin-bottom: 8px; }
+    p { font-size: 14px; color: #94a3b8; line-height: 1.6; margin-bottom: 24px; }
+    .btn { display: inline-block; background: #f97316; color: white; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-size: 15px; font-weight: 700; margin-bottom: 12px; width: 100%; }
+    .btn-sec { display: inline-block; background: transparent; color: #60a5fa; text-decoration: none; padding: 10px 20px; border-radius: 10px; font-size: 13px; border: 1px solid rgba(96,165,250,0.3); width: 100%; }
+    .info { font-size: 11px; color: #475569; margin-top: 16px; }
+    code { background: #0f172a; padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #f97316; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📄</div>
+    <h1>Factură ${invoice.series}${invoice.number}</h1>
+    <p>PDF-ul nu este stocat local. Descarcă factura direct din SmartBill Cloud.</p>
+    <a href="${sbUrl}" class="btn" target="_blank">📥 Deschide în SmartBill</a>
+    <a href="https://cloud.smartbill.ro" class="btn-sec" target="_blank">🔑 Mergi la SmartBill Cloud</a>
+    <p class="info">Serie: <code>${invoice.series}</code> &nbsp; Număr: <code>${invoice.number}</code></p>
+  </div>
+  <script>
+    // Încearcă auto-redirect după 1 secundă
+    setTimeout(() => { window.location.href = "${sbUrl}"; }, 1000);
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
