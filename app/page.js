@@ -1780,29 +1780,33 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 <h3>Comenzi Shopify</h3>
                 <span className="rbadge">{filtered.length} comenzi</span>
               </div>
-              <div className="tscroll">
-                <table>
+              <div style={{fontSize:10,color:'#f97316',padding:'4px 14px 2px',opacity:.7,letterSpacing:.3}}>
+                ← Trage stânga pentru detalii →
+              </div>
+              <div className="tscroll" style={{overflowX:'scroll',WebkitOverflowScrolling:'touch'}}>
+                <table style={{minWidth:900}}>
                   <thead><tr>
-                    {[['name','Comandă',false],['ts','Status',false],['fin','Plată',true],['client','Client',false],['oras','Oraș',true],['','Produse',true],['total','Total',false],['','Factură',true],['createdAt','Data',true],['fulfilledAt','Livrat',true],['','Curier',false]].map(([col,lbl,h])=>(
-                      <th key={lbl} style={h?{display:'var(--mob-hide,table-cell)'}:{}} onClick={()=>col&&handleSort(col)}>{lbl}{col?' ↕':''}</th>
+                    {[['name','Comandă'],['ts','Status'],['fin','Plată'],['client','Client'],['phone','Telefon'],['oras','Oraș'],['address','Adresă'],['','Produse'],['total','Total'],['','Factură'],['createdAt','Data'],['fulfilledAt','Livrat'],['','Curier']].map(([col,lbl])=>(
+                      <th key={lbl} style={{whiteSpace:'nowrap'}} onClick={()=>col&&handleSort(col)}>{lbl}{col?' ↕':''}</th>
                     ))}
                   </tr></thead>
                   <tbody>
                     {slice.length===0?(
-                      <tr><td colSpan={11}><div className="empty">📭 Nicio comandă în perioada selectată.</div></td></tr>
+                      <tr><td colSpan={13}><div className="empty">📭 Nicio comandă în perioada selectată.</div></td></tr>
                     ):slice.map(o=>{
                       const st=STATUS_MAP[o.ts]||{label:o.ts};
                       const bcc=bc[o.ts]||'badge-gray';
                       const mc=o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':'mg-y';
-                      const mobH={display:'var(--mob-hide,table-cell)'};
                       return (
                         <tr key={o.id} style={o.fin==='paid'&&!o.hasInvoice?{background:'rgba(245,158,11,0.05)'}:{}}>
-                          <td><span className="ref">{o.name}</span></td>
-                          <td><span className={`badge ${bcc}`}>{st.label}</span></td>
-                          <td style={mobH}><span className={`badge ${o.fin==='paid'?'badge-green':o.fin==='pending'?'badge-yellow':'badge-gray'}`}>{o.fin}</span></td>
-                          <td title={o.client}>{o.client||'—'}</td>
-                          <td style={mobH}>{o.oras||'—'}</td>
-                          <td title={o.prods} className="pc" style={mobH}>{o.prodShort||'—'}</td>
+                          <td style={{position:'sticky',left:0,background:o.fin==='paid'&&!o.hasInvoice?'#0f1217':'#0a0f14',zIndex:1,boxShadow:'2px 0 6px rgba(0,0,0,.4)'}}><span className="ref">{o.name}</span></td>
+                          <td style={{whiteSpace:'nowrap'}}><span className={`badge ${bcc}`}>{st.label}</span></td>
+                          <td style={{whiteSpace:'nowrap'}}><span className={`badge ${o.fin==='paid'?'badge-green':o.fin==='pending'?'badge-yellow':'badge-gray'}`}>{o.fin}</span></td>
+                          <td style={{whiteSpace:'nowrap'}} title={o.client}>{o.client||'—'}</td>
+                          <td style={{whiteSpace:'nowrap'}}>{o.phone?<a href={`tel:${o.phone}`} style={{color:'#60a5fa',textDecoration:'none'}}>{o.phone}</a>:'—'}</td>
+                          <td style={{whiteSpace:'nowrap'}}>{o.oras||'—'}</td>
+                          <td style={{whiteSpace:'nowrap',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis'}} title={o.address}>{o.address||'—'}</td>
+                          <td title={o.prods} className="pc" style={{whiteSpace:'nowrap',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis'}}>{o.prodShort||'—'}</td>
                           <td style={{whiteSpace:'nowrap'}}>
                             <span className={`mg ${mc}`}>{fmt(o.total)} RON</span>
                             {' '}
@@ -1839,8 +1843,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                             if(o.fin==='paid') return <button onClick={()=>openInvoiceModal(o)} disabled={invLoading} style={{fontSize:9,background:'rgba(245,158,11,.15)',border:'1px solid rgba(245,158,11,.4)',color:'#f59e0b',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:invLoading?.5:1}}>{invLoading?'⟳':'+ Factură'}</button>;
                             return <span style={{fontSize:10,color:'#4a5568'}}>—</span>;
                           })()}</td>
-                          <td style={{...mobH,fontSize:'10px',color:'#94a3b8'}}>{fmtD(o.createdAt)}</td>
-                          <td style={{...mobH,fontSize:'10px',color:'#94a3b8'}}>{o.fulfilledAt?fmtD(o.fulfilledAt):<span className="mg mg-m">—</span>}</td>
+                          <td style={{fontSize:'10px',color:'#94a3b8',whiteSpace:'nowrap'}}>{fmtD(o.createdAt)}</td>
+                          <td style={{fontSize:'10px',color:'#94a3b8',whiteSpace:'nowrap'}}>{o.fulfilledAt?fmtD(o.fulfilledAt):<span className="mg mg-m">—</span>}</td>
                           <td>
                             {o.courier==='gls'&&<span style={{fontSize:9,background:'rgba(249,115,22,.15)',color:'#f97316',border:'1px solid rgba(249,115,22,.2)',padding:'1px 5px',borderRadius:4}}>GLS</span>}
                             {o.courier==='sameday'&&(()=>{
@@ -2178,34 +2182,42 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               ))}
             </div>
             <div style={{margin:'0 16px',background:'#0a0f1a',border:'1px solid #1a2535',borderRadius:12,overflow:'hidden'}}>
-              <div style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 70px',gap:0,padding:'7px 14px',borderBottom:'1px solid #1a2535',background:'rgba(255,255,255,.02)'}}>
-                {['Comandă','Client','Produse','Total','Livrat'].map(h=>(
-                  <div key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700}}>{h}</div>
+              <div style={{overflowX:'scroll',WebkitOverflowScrolling:'touch'}}>
+              <table style={{width:'100%',minWidth:520,borderCollapse:'collapse'}}>
+              <thead><tr style={{background:'rgba(255,255,255,.02)'}}>
+                {['Comandă','Client','Telefon','Adresă','Produse','Total','Livrat'].map(h=>(
+                  <th key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700,padding:'7px 14px',textAlign:'left',whiteSpace:'nowrap'}}>{h}</th>
                 ))}
-              </div>
+              </tr></thead>
+              <tbody>
               {livrateOrders.length === 0 ? (
-                <div style={{padding:24,textAlign:'center',color:'#334155',fontSize:13}}>Nicio comandă livrată în această perioadă.</div>
+                <tr><td colSpan={7} style={{padding:24,textAlign:'center',color:'#334155',fontSize:13}}>Nicio comandă livrată în această perioadă.</td></tr>
               ) : livrateOrders.map(o => (
-                <div key={o.id} style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 70px',gap:0,padding:'10px 14px',borderBottom:'1px solid #0d1520',alignItems:'center'}}
+                <tr key={o.id} style={{borderBottom:'1px solid #0d1520'}}
                   onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.02)'}
                   onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                  <div>
+                  <td style={{padding:'10px 14px',whiteSpace:'nowrap',position:'sticky',left:0,background:'#0a0f1a',zIndex:1,boxShadow:'2px 0 6px rgba(0,0,0,.4)'}}>
                     <div style={{fontSize:11,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{o.name}</div>
                     <div style={{fontSize:9,color:'#334155',marginTop:1}}>
                       {o.courier==='gls'?'🚚 GLS':o.courier==='sameday'?'⚡ SD':'📦'}
                       {isOnlinePayment(o)&&<span style={{marginLeft:4,color:'#3b82f6',fontWeight:700}}>CARD</span>}
                     </div>
-                  </div>
-                  <div style={{fontSize:11,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>{o.client}</div>
-                  <div style={{fontSize:10,color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>{o.prodShort}</div>
-                  <div style={{fontSize:12,fontWeight:700,color:'#10b981',fontFamily:'monospace'}}>{fmt(o.total)}</div>
-                  <div style={{fontSize:10,color:'#475569'}}>{(o.fulfilledAt||'').slice(0,10).split('-').reverse().join('.')}</div>
-                </div>
+                  </td>
+                  <td style={{padding:'10px 14px',fontSize:11,color:'#94a3b8',whiteSpace:'nowrap'}}>{o.client}</td>
+                  <td style={{padding:'10px 14px',whiteSpace:'nowrap'}}>{o.phone?<a href={`tel:${o.phone}`} style={{fontSize:11,color:'#60a5fa',textDecoration:'none'}}>{o.phone}</a>:<span style={{color:'#4a5568',fontSize:11}}>—</span>}</td>
+                  <td style={{padding:'10px 14px',fontSize:10,color:'#64748b',whiteSpace:'nowrap'}}>{[o.address,o.oras,o.county].filter(Boolean).join(', ')||'—'}</td>
+                  <td style={{padding:'10px 14px',fontSize:10,color:'#64748b',whiteSpace:'nowrap',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis'}}>{o.prodShort}</td>
+                  <td style={{padding:'10px 14px',fontSize:12,fontWeight:700,color:'#10b981',fontFamily:'monospace',whiteSpace:'nowrap'}}>{fmt(o.total)}</td>
+                  <td style={{padding:'10px 14px',fontSize:10,color:'#475569',whiteSpace:'nowrap'}}>{(o.fulfilledAt||'').slice(0,10).split('-').reverse().join('.')}</td>
+                </tr>
               ))}
-              <div style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 70px',gap:0,padding:'10px 14px',background:'rgba(16,185,129,.04)',borderTop:'2px solid rgba(16,185,129,.15)'}}>
-                <div style={{fontSize:11,fontWeight:800,color:'#e2e8f0',gridColumn:'1/4'}}>TOTAL {livrateOrders.length} comenzi</div>
-                <div style={{fontSize:13,fontWeight:900,color:'#10b981',fontFamily:'monospace'}}>{fmt(sI)}</div>
-                <div/>
+              <tr style={{background:'rgba(16,185,129,.04)',borderTop:'2px solid rgba(16,185,129,.15)'}}>
+                <td colSpan={5} style={{padding:'10px 14px',fontSize:11,fontWeight:800,color:'#e2e8f0'}}>TOTAL {livrateOrders.length} comenzi</td>
+                <td style={{padding:'10px 14px',fontSize:13,fontWeight:900,color:'#10b981',fontFamily:'monospace'}}>{fmt(sI)}</td>
+                <td/>
+              </tr>
+              </tbody>
+              </table>
               </div>
             </div>
           </div>
@@ -2253,42 +2265,50 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 ))}
               </div>
               <div style={{margin:'0 16px',background:'#0a0f1a',border:'1px solid #1a2535',borderRadius:12,overflow:'hidden'}}>
-                <div style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 90px',gap:0,padding:'7px 14px',borderBottom:'1px solid #1a2535',background:'rgba(255,255,255,.02)'}}>
-                  {['Comandă','Client','Produse','Total','Sursă'].map(h=>(
-                    <div key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700}}>{h}</div>
+                <div style={{overflowX:'scroll',WebkitOverflowScrolling:'touch'}}>
+                <table style={{width:'100%',minWidth:500,borderCollapse:'collapse'}}>
+                <thead><tr style={{background:'rgba(255,255,255,.02)'}}>
+                  {['Comandă','Client','Telefon','Adresă','Produse','Total','Sursă'].map(h=>(
+                    <th key={h} style={{fontSize:9,color:'#334155',textTransform:'uppercase',letterSpacing:.6,fontWeight:700,padding:'7px 14px',textAlign:'left',whiteSpace:'nowrap'}}>{h}</th>
                   ))}
-                </div>
+                </tr></thead>
+                <tbody>
                 {allRetur.length === 0 ? (
-                  <div style={{padding:24,textAlign:'center',color:'#334155',fontSize:13}}>Nicio comandă returnată în această perioadă.</div>
+                  <tr><td colSpan={7} style={{padding:24,textAlign:'center',color:'#334155',fontSize:13}}>Nicio comandă returnată în această perioadă.</td></tr>
                 ) : allRetur.map(o => {
                   const isGlsEx = glsReturOrdersModal.some(g=>g.id===o.id);
                   const isExtraPeriod = retururiExtra.some(r=>r.id===o.id);
                   return (
-                    <div key={o.id} style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 90px',gap:0,padding:'10px 14px',borderBottom:'1px solid #0d1520',alignItems:'center'}}
+                    <tr key={o.id} style={{borderBottom:'1px solid #0d1520'}}
                       onMouseEnter={e=>e.currentTarget.style.background='rgba(244,63,94,.03)'}
                       onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                      <div>
+                      <td style={{padding:'10px 14px',whiteSpace:'nowrap',position:'sticky',left:0,background:'#0a0f1a',zIndex:1,boxShadow:'2px 0 6px rgba(0,0,0,.4)'}}>
                         <div style={{fontSize:11,fontWeight:800,color:'#f97316',fontFamily:'monospace'}}>{o.name}</div>
                         <div style={{fontSize:9,color:'#334155',marginTop:1}}>{o.courier==='gls'?'🚚 GLS':o.courier==='sameday'?'⚡ SD':'📦'}</div>
-                      </div>
-                      <div style={{fontSize:11,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>{o.client}</div>
-                      <div style={{fontSize:10,color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>{o.prodShort}</div>
-                      <div style={{fontSize:12,fontWeight:700,color:'#f43f5e',fontFamily:'monospace'}}>{fmt(o.total)}</div>
-                      <div style={{fontSize:10}}>
+                      </td>
+                      <td style={{padding:'10px 14px',fontSize:11,color:'#94a3b8',whiteSpace:'nowrap'}}>{o.client}</td>
+                      <td style={{padding:'10px 14px',whiteSpace:'nowrap'}}>{o.phone?<a href={`tel:${o.phone}`} style={{fontSize:11,color:'#60a5fa',textDecoration:'none'}}>{o.phone}</a>:<span style={{color:'#4a5568',fontSize:11}}>—</span>}</td>
+                      <td style={{padding:'10px 14px',fontSize:10,color:'#64748b',whiteSpace:'nowrap'}}>{[o.address,o.oras,o.county].filter(Boolean).join(', ')||'—'}</td>
+                      <td style={{padding:'10px 14px',fontSize:10,color:'#64748b',whiteSpace:'nowrap',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis'}}>{o.prodShort}</td>
+                      <td style={{padding:'10px 14px',fontSize:12,fontWeight:700,color:'#f43f5e',fontFamily:'monospace',whiteSpace:'nowrap'}}>{fmt(o.total)}</td>
+                      <td style={{padding:'10px 14px',fontSize:10,whiteSpace:'nowrap'}}>
                         {isGlsEx
                           ? <span style={{color:'#f59e0b',fontWeight:700,fontSize:9,background:'rgba(245,158,11,.1)',padding:'2px 5px',borderRadius:3}}>GLS Excel</span>
                           : isExtraPeriod
                           ? <span style={{color:'#a855f7',fontWeight:700,fontSize:9,background:'rgba(168,85,247,.1)',padding:'2px 5px',borderRadius:3}}>Altă per.</span>
                           : <span style={{color:'#f43f5e',fontWeight:700,fontSize:9,background:'rgba(244,63,94,.1)',padding:'2px 5px',borderRadius:3}}>Retur</span>}
                         <div style={{color:'#334155',fontSize:9,marginTop:2}}>{(o.createdAt||'').slice(0,10).split('-').reverse().join('.')}</div>
-                      </div>
-                    </div>
+                      </td>
+                    </tr>
                   );
                 })}
-                <div style={{display:'grid',gridTemplateColumns:'80px 1fr 1fr 80px 90px',gap:0,padding:'10px 14px',background:'rgba(244,63,94,.04)',borderTop:'2px solid rgba(244,63,94,.15)'}}>
-                  <div style={{fontSize:11,fontWeight:800,color:'#e2e8f0',gridColumn:'1/4'}}>TOTAL {allRetur.length} retururi</div>
-                  <div style={{fontSize:13,fontWeight:900,color:'#f43f5e',fontFamily:'monospace'}}>-{fmt(totalRetur)}</div>
-                  <div/>
+                <tr style={{background:'rgba(244,63,94,.04)',borderTop:'2px solid rgba(244,63,94,.15)'}}>
+                  <td colSpan={5} style={{padding:'10px 14px',fontSize:11,fontWeight:800,color:'#e2e8f0'}}>TOTAL {allRetur.length} retururi</td>
+                  <td style={{padding:'10px 14px',fontSize:13,fontWeight:900,color:'#f43f5e',fontFamily:'monospace'}}>-{fmt(totalRetur)}</td>
+                  <td/>
+                </tr>
+                </tbody>
+                </table>
                 </div>
               </div>
             </div>
