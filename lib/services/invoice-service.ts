@@ -82,10 +82,7 @@ export async function ensureInvoice(
     lineItems,
   });
 
-  // ── Download PDF ───────────────────────────────────────────────────────────
-  const pdfBuffer = await downloadInvoicePdf(cfg, result.series, result.number);
-
-  // ── Create Invoice row (needed before PDF storage, to get the ID) ──────────
+  // ── Create Invoice row first (needed for ID) ──────────────────────────────
   const invoice = await db.invoice.create({
     data: {
       orderId:    order.id,
@@ -97,6 +94,16 @@ export async function ensureInvoice(
     },
   });
 
+  // ── Download PDF — retry 3x cu delay (SmartBill are nevoie de ~2s) ─────────
+  let pdfBuffer: Buffer | null = null;
+  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1) await sleep(attempt * 1500); // 1.5s, 3s
+    pdfBuffer = await downloadInvoicePdf(cfg, result.series, result.number);
+    if (pdfBuffer) { log.info('PDF downloaded', { attempt }); break; }
+    log.warn('PDF not ready yet, retrying...', { attempt });
+  }
+
   // ── Store PDF ──────────────────────────────────────────────────────────────
   let pdfStorageKey: string | null = null;
   let pdfData:       Buffer | null = null;
@@ -105,14 +112,19 @@ export async function ensureInvoice(
     const stored = await storePdf(pdfBuffer, 'invoices', invoice.id);
     pdfStorageKey = stored.key;
     if (isDbKey(stored.key)) {
-      pdfData = pdfBuffer;  // store inline in DB
+      pdfData = pdfBuffer;
     }
     await db.invoice.update({
       where: { id: invoice.id },
       data:  { pdfStorageKey, pdfData: pdfData ?? undefined },
     });
   } else {
-    log.warn('SmartBill PDF not available, will serve SmartBill URL as fallback');
+    // PDF nu e disponibil — salvăm invoiceUrl SmartBill ca fallback pentru redirect
+    log.warn('SmartBill PDF unavailable after 3 retries — will redirect to SmartBill URL');
+    await db.invoice.update({
+      where: { id: invoice.id },
+      data:  { invoiceUrl: result.invoiceUrl },
+    });
   }
 
   // ── Collect (issue receipt / chitanță) if order is paid ───────────────────
