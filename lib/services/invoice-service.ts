@@ -36,10 +36,19 @@ export interface InvoiceServiceResult {
  * Create an invoice for the given Order row.
  * Idempotent: returns existing invoice if already created.
  */
+export interface InvoiceOptions {
+  shopKey?:      string;   // 'ro' | 'hu' — pentru config SmartBill per-shop
+  forceCollect?: boolean;  // incaseaza indiferent de isPaid
+  forceStock?:   boolean;  // scade stoc indiferent de cfg.useStock
+  paymentSeries?: string;  // serie chitanta override
+  invoiceSeries?: string;  // serie factura override
+}
+
 export async function ensureInvoice(
   order: Order,
   shopifyAccessToken: string,
   shopifyDomain: string,
+  options: InvoiceOptions = {},
 ): Promise<InvoiceServiceResult> {
   const log = logger.child({ module: 'invoice-service', orderId: order.id, orderName: order.shopifyName });
 
@@ -59,7 +68,12 @@ export async function ensureInvoice(
   }
 
   // ── Build SmartBill input ──────────────────────────────────────────────────
-  const cfg = loadSmartBillConfig();
+  const cfg = loadSmartBillConfig(options.shopKey);
+  // Override serie factura / chitanta daca e specificata manual
+  if (options.invoiceSeries) cfg.series = options.invoiceSeries;
+  if (options.paymentSeries) cfg.paymentSeries = options.paymentSeries;
+  // Override useStock daca e cerut manual
+  if (options.forceStock) cfg.useStock = true;
   const lineItems = (order.lineItems as Array<{ name: string; sku: string; qty: number; price: number }>).map(
     (i) => ({ name: i.name, sku: i.sku, quantity: i.qty, price: i.price }),
   );
@@ -78,11 +92,15 @@ export async function ensureInvoice(
       address: order.shippingAddress1,
       city:    order.shippingCity,
       county:  order.shippingProvince,
+      country: (order as any).shippingCountry || 'RO',
     },
     lineItems,
   });
 
-  // ── Create Invoice row first (needed for ID) ──────────────────────────────
+  // ── Download PDF ───────────────────────────────────────────────────────────
+  const pdfBuffer = await downloadInvoicePdf(cfg, result.series, result.number);
+
+  // ── Create Invoice row (needed before PDF storage, to get the ID) ──────────
   const invoice = await db.invoice.create({
     data: {
       orderId:    order.id,
@@ -94,16 +112,6 @@ export async function ensureInvoice(
     },
   });
 
-  // ── Download PDF — retry 3x cu delay (SmartBill are nevoie de ~2s) ─────────
-  let pdfBuffer: Buffer | null = null;
-  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    if (attempt > 1) await sleep(attempt * 1500); // 1.5s, 3s
-    pdfBuffer = await downloadInvoicePdf(cfg, result.series, result.number);
-    if (pdfBuffer) { log.info('PDF downloaded', { attempt }); break; }
-    log.warn('PDF not ready yet, retrying...', { attempt });
-  }
-
   // ── Store PDF ──────────────────────────────────────────────────────────────
   let pdfStorageKey: string | null = null;
   let pdfData:       Buffer | null = null;
@@ -112,28 +120,25 @@ export async function ensureInvoice(
     const stored = await storePdf(pdfBuffer, 'invoices', invoice.id);
     pdfStorageKey = stored.key;
     if (isDbKey(stored.key)) {
-      pdfData = pdfBuffer;
+      pdfData = pdfBuffer;  // store inline in DB
     }
     await db.invoice.update({
       where: { id: invoice.id },
       data:  { pdfStorageKey, pdfData: pdfData ?? undefined },
     });
   } else {
-    // PDF nu e disponibil — salvăm invoiceUrl SmartBill ca fallback pentru redirect
-    log.warn('SmartBill PDF unavailable after 3 retries — will redirect to SmartBill URL');
-    await db.invoice.update({
-      where: { id: invoice.id },
-      data:  { invoiceUrl: result.invoiceUrl },
-    });
+    log.warn('SmartBill PDF not available, will serve SmartBill URL as fallback');
   }
 
   // ── Collect (issue receipt / chitanță) if order is paid ───────────────────
   let collected = false;
-  if (order.isPaid && Number(order.totalPrice) > 0) {
+  const shouldCollect = options.forceCollect || (order.isPaid && Number(order.totalPrice) > 0);
+  if (shouldCollect && Number(order.totalPrice) > 0) {
     const collectResult = await collectInvoice(
       cfg, result.series, result.number,
       Number(order.totalPrice), order.customerName,
       order.currency,
+      (order as any).shippingCountry || 'RO',
     );
     collected = collectResult.ok;
     await db.invoice.update({
