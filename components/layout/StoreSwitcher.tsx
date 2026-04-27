@@ -47,11 +47,6 @@ export function SidebarStoreSwitcher() {
     setSearch('');
     qc.invalidateQueries();
     window.dispatchEvent(new CustomEvent('glamx:shop', { detail: key }));
-    // Navighează la pagina corectă pentru fiecare shop
-    const target = key === 'ro' ? '/' : `/${key}`;
-    if (window.location.pathname !== target) {
-      window.location.href = target;
-    }
   }
 
   if (shops.length === 0) {
@@ -136,11 +131,6 @@ export function TopBarStoreSwitcher() {
     setOpen(false);
     qc.invalidateQueries();
     window.dispatchEvent(new CustomEvent('glamx:shop', { detail: key }));
-    // Navighează la pagina corectă pentru fiecare shop
-    const target = key === 'ro' ? '/' : `/${key}`;
-    if (window.location.pathname !== target) {
-      window.location.href = target;
-    }
   }
 
   if (!current || shops.length <= 1) {
