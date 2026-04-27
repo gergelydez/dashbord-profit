@@ -27,16 +27,22 @@ export interface SmartBillConfig {
   warehouseName?: string;
 }
 
-export function loadSmartBillConfig(): SmartBillConfig {
+export function loadSmartBillConfig(shopKey?: string): SmartBillConfig {
+  // Suport per-shop: SMARTBILL_EMAIL_HU, SMARTBILL_TOKEN_HU etc.
+  // Daca nu exista var per-shop, foloseste var globala
+  const suffix = shopKey && shopKey !== 'ro' ? `_${shopKey.toUpperCase()}` : '';
+  const get = (key: string) =>
+    process.env[`${key}${suffix}`] || process.env[key] || '';
+
   return {
-    email:          process.env.SMARTBILL_EMAIL          || '',
-    token:          process.env.SMARTBILL_TOKEN          || '',
-    cif:            process.env.SMARTBILL_CIF            || '',
-    series:         process.env.SMARTBILL_SERIES         || '',
-    paymentSeries:  process.env.SMARTBILL_PAYMENT_SERIES || undefined,
-    taxPercentage:  parseInt(process.env.SMARTBILL_TAX_PERCENTAGE || '19', 10),
-    useStock:       process.env.SMARTBILL_USE_STOCK === 'true',
-    warehouseName:  process.env.SMARTBILL_WAREHOUSE      || undefined,
+    email:          get('SMARTBILL_EMAIL'),
+    token:          get('SMARTBILL_TOKEN'),
+    cif:            get('SMARTBILL_CIF'),
+    series:         get('SMARTBILL_SERIES'),
+    paymentSeries:  get('SMARTBILL_PAYMENT_SERIES') || undefined,
+    taxPercentage:  parseInt(get('SMARTBILL_TAX_PERCENTAGE') || '19', 10),
+    useStock:       get('SMARTBILL_USE_STOCK') === 'true',
+    warehouseName:  get('SMARTBILL_WAREHOUSE') || undefined,
   };
 }
 
@@ -60,6 +66,7 @@ export interface CreateInvoiceInput {
     address: string;
     city:    string;
     county:  string;
+    country?: string;  // cod tara ISO: 'RO', 'HU' etc — default 'Romania'
   };
   lineItems:   InvoiceLineItem[];
 }
@@ -88,19 +95,13 @@ async function sbFetch(
   path: string,
   options: Partial<RequestInit> = {},
 ): Promise<Response> {
-  const customHeaders = (options.headers as Record<string, string>) || {};
-  // Pentru PDF requests nu adaugam Content-Type/Accept JSON
-  const isPdfRequest = (customHeaders['Accept'] || '').includes('octet-stream') ||
-                       (customHeaders['Accept'] || '').includes('pdf');
   return fetch(`${BASE}${path}`, {
     ...options,
     headers: {
       Authorization:  `Basic ${auth}`,
-      ...(!isPdfRequest ? {
-        'Content-Type': 'application/json',
-        Accept:         'application/json',
-      } : {}),
-      ...customHeaders,
+      'Content-Type': 'application/json',
+      Accept:         'application/json',
+      ...(options.headers as Record<string, string> | undefined),
     },
     cache: 'no-store',
   });
@@ -115,6 +116,19 @@ export async function getSeries(cfg: SmartBillConfig): Promise<string[]> {
   const data = await res.json();
   const list: Array<{ name?: string }> = data.list ?? data.invoiceSeries ?? [];
   return list.map((s) => s.name ?? String(s)).filter(Boolean);
+}
+
+// ─── Country code → full name ────────────────────────────────────────────────
+function countryName(code?: string): string {
+  const map: Record<string, string> = {
+    RO: 'Romania', HU: 'Hungary', DE: 'Germany', FR: 'France',
+    IT: 'Italy',   ES: 'Spain',   PL: 'Poland',  CZ: 'Czech Republic',
+    SK: 'Slovakia',AT: 'Austria', GB: 'United Kingdom', US: 'United States',
+    MD: 'Moldova', BG: 'Bulgaria',HR: 'Croatia', RS: 'Serbia',
+    UA: 'Ukraine', TR: 'Turkey',
+  };
+  if (!code) return 'Romania';
+  return map[code.toUpperCase()] || code;
 }
 
 // ─── Invoice creation ─────────────────────────────────────────────────────────
@@ -176,7 +190,7 @@ export async function createInvoice(
       isTaxPayer: false,
       city:       input.client.city  || '',
       county:     input.client.county || '',
-      country:    'Romania',
+      country:    countryName(input.client.country),
       email:      input.client.email || '',
       saveToDb:   false,
     },
@@ -238,8 +252,8 @@ export async function downloadInvoicePdf(
   const auth = makeAuth(cfg.email, cfg.token);
 
   try {
-    const res = await sbFetch(auth, `/invoice/pdf?cif=${encodeURIComponent(cfg.cif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`, {
-      headers: { Accept: 'application/octet-stream' },
+    const res = await sbFetch(auth, `/invoice/pdf?cif=${cfg.cif}&series=${series}&number=${number}`, {
+      headers: { Accept: 'application/pdf, */*' },
     });
 
     if (!res.ok) {
@@ -273,6 +287,7 @@ export async function collectInvoice(
   value: number,
   clientName: string,
   currency = 'RON',
+  country = 'RO',
 ): Promise<CollectResult> {
   const log = logger.child({ module: 'invoicing/smartbill', action: 'collect' });
   const auth = makeAuth(cfg.email, cfg.token);
@@ -287,7 +302,7 @@ export async function collectInvoice(
       address:    '',
       city:       '',
       county:     '',
-      country:    'Romania',
+      country:    countryName(country),
       saveToDb:   false,
     },
     issueDate,
