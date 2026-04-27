@@ -176,7 +176,7 @@ export async function createInvoice(
         taxPercentage:     cfg.taxPercentage,
         isService:         false,
         saveToDb:          false,
-        ...(cfg.useStock && cfg.warehouseName ? { warehouseName: cfg.warehouseName } : {}),
+        ...(cfg.useStock ? { warehouseName: cfg.warehouseName || 'Marfuri' } : {}),
       },
     ];
   }
@@ -200,7 +200,7 @@ export async function createInvoice(
     currency:     input.currency || 'RON',
     language:     'RO',
     precision:    2,
-    useStock:     cfg.useStock,
+    useStock:     cfg.useStock,  // true = SmartBill scade din gestiunea 'Marfuri'
     observations: `Comanda Shopify ${input.orderName}`,
     mentions:     '',
     products,
@@ -344,9 +344,10 @@ function buildProduct(
   currency: string,
   cfg: SmartBillConfig,
 ): Record<string, unknown> {
+  const warehouse = cfg.warehouseName || 'Marfuri';
   return {
     name:              item.name.slice(0, 255),
-    code:              item.sku || '',
+    code:              item.sku || '',          // SKU: DM56, etc.
     isDiscount:        false,
     measuringUnitName: 'buc',
     currency:          currency || 'RON',
@@ -357,6 +358,6 @@ function buildProduct(
     taxPercentage:     cfg.taxPercentage,
     isService:         false,
     saveToDb:          false,
-    ...(cfg.useStock && cfg.warehouseName ? { warehouseName: cfg.warehouseName } : {}),
+    ...(cfg.useStock ? { warehouseName: warehouse } : {}),
   };
 }
