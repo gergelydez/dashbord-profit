@@ -178,7 +178,7 @@ function InvoiceSection({
 }: {
   order: EnrichedOrder;
   actionState: RowActionState;
-  onInvoice: (id: string) => void;
+  onInvoice: (id: string, isPaid: boolean) => void;
 }) {
   // Extract from DB invoice first
   if (order.invoice) {
@@ -246,7 +246,7 @@ function InvoiceSection({
         <div style={{ fontSize: 13, color: 'var(--c-text3)' }}>Nicio factură generată.</div>
         <button
           style={actionState.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6 } : S.btnPrimary}
-          onClick={() => onInvoice(order.id)}
+          onClick={() => onInvoice(order.id, order.financialStatus === 'paid')}
           disabled={actionState.invoiceLoading || order.cancelled}
         >
           {actionState.invoiceLoading ? <><Spin /> Se generează…</> : '🧾 Generează factură'}
@@ -582,7 +582,7 @@ function OrderDrawer({
   order, onClose, onInvoice, onShipmentWizard, actionState, shop, onAddressFixed, awbResult,
 }: {
   order: EnrichedOrder; onClose: () => void;
-  onInvoice: (id: string) => void;
+  onInvoice: (id: string, isPaid: boolean) => void;
   onShipmentWizard: (order: EnrichedOrder) => void;
   actionState: RowActionState; shop: string;
   onAddressFixed: (orderId: string, newZip: string) => void;
@@ -819,25 +819,27 @@ type AwbResultMap = Record<string, {
 
 // ── Invoice Download Button — adaugă credențiale SmartBill în URL ─────────────
 function InvoiceDownloadBtn({ url, series, number }: { url: string; series: string; number: string }) {
-
-  const getSmartBillViewUrl = () => {
-    // Construieste URL-ul public de vizualizare SmartBill (nu necesita auth)
-    const sbCif = localStorage.getItem('sb_cif') || '';
-    if (sbCif) {
-      return `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(sbCif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`;
+  // url = URL-ul nostru /api/invoice?id=...&token=... SAU URL-ul xConnector
+  // Deschidem direct in browser - fara server intermediar
+  const getFinalUrl = () => {
+    // Daca e URL xConnector (functioneaza direct) - folosim asta
+    if (url.includes('xconnector.app')) return url;
+    // Daca e URL-ul nostru /api/invoice - il deschidem (va face redirect la SmartBill view)
+    if (url.includes('/api/invoice')) {
+      // Adaugam sb_cif din localStorage pentru redirect corect
+      try {
+        const u = new URL(url);
+        const sbCif = localStorage.getItem('sb_cif') || '';
+        if (sbCif) u.searchParams.set('sb_cif', sbCif);
+        return u.toString();
+      } catch { return url; }
     }
-    // Fallback: URL-ul salvat din DB (poate fi corect daca a venit de la SmartBill)
     return url;
   };
 
-  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault();
-    const viewUrl = getSmartBillViewUrl();
-    window.open(viewUrl, '_blank', 'noreferrer');
-  };
-
   return (
-    <a href={url} onClick={handleClick}
+    <a href={getFinalUrl()} target="_blank" rel="noreferrer"
+      onClick={(e) => { e.preventDefault(); window.open(getFinalUrl(), '_blank', 'noreferrer'); }}
       style={{ display:'inline-flex', alignItems:'center', gap:6, background:'#f97316',
         color:'white', textDecoration:'none', padding:'10px 18px', borderRadius:8,
         fontSize:13, fontWeight:700, width:'fit-content', cursor:'pointer' }}>
@@ -960,28 +962,45 @@ export default function XConnectorPage() {
   const setAS = (id: string, patch: Partial<RowActionState>) =>
     setActionStates(p => ({ ...p, [id]: { ...getState(id), ...patch } }));
 
+  /* ── Invoice options modal state ── */
+  const [invoiceModal, setInvoiceModal] = useState<{ orderId: string; isPaid: boolean } | null>(null);
+  const [invOpts, setInvOpts] = useState({ forceCollect: false, forceStock: false });
+
   /* ── Invoice mutation ── */
   const invoiceMut = useMutation({
-    mutationFn: async (shopifyOrderId: string) => {
+    mutationFn: async ({ shopifyOrderId, forceCollect, forceStock }: { shopifyOrderId: string; forceCollect: boolean; forceStock: boolean }) => {
       setAS(shopifyOrderId, { invoiceLoading: true, error: null });
       const res = await fetch('/api/connector/invoice', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shopifyOrderId, shop: activeShop }),
+        body: JSON.stringify({ shopifyOrderId, shop: activeShop, forceCollect, forceStock }),
       });
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || 'Eroare generare factură');
       return json;
     },
-    onSuccess: (data, shopifyOrderId) => {
-      setAS(shopifyOrderId, { invoiceLoading: false });
-      addToast('ok', `Factură ${data.series}${data.number} generată!`);
+    onSuccess: (data, vars) => {
+      setAS(vars.shopifyOrderId, { invoiceLoading: false });
+      const msg = `Factură ${data.series}${data.number} generată${data.collected ? ' + încasată' : ''}!`;
+      addToast('ok', msg);
       qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
+      setInvoiceModal(null);
     },
-    onError: (err: Error, shopifyOrderId) => {
-      setAS(shopifyOrderId, { invoiceLoading: false, error: err.message });
+    onError: (err: Error, vars) => {
+      setAS(vars.shopifyOrderId, { invoiceLoading: false, error: err.message });
       addToast('err', err.message);
+      setInvoiceModal(null);
     },
   });
+
+  const openInvoiceModal = (orderId: string, isPaid: boolean) => {
+    setInvOpts({ forceCollect: isPaid, forceStock: false });
+    setInvoiceModal({ orderId, isPaid });
+  };
+
+  const confirmInvoice = () => {
+    if (!invoiceModal) return;
+    invoiceMut.mutate({ shopifyOrderId: invoiceModal.orderId, ...invOpts });
+  };
 
   /* ── AWB wizard confirm — cheama direct /api/gls sau /api/sameday-awb ca in fulfillment ── */
   const handleWizardConfirm = async (wizData: AwbWizardData) => {
@@ -1304,7 +1323,7 @@ export default function XConnectorPage() {
                       <button
                         style={as.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6, fontSize: 11 } : { ...S.btnPrimary, fontSize: 11 }}
                         disabled={as.invoiceLoading || order.cancelled}
-                        onClick={e => { e.stopPropagation(); invoiceMut.mutate(order.id); }}
+                        onClick={e => { e.stopPropagation(); openInvoiceModal(order.id, order.financialStatus === 'paid'); }}
                       >
                         {as.invoiceLoading ? <Spin /> : '🧾'} Factură
                       </button>
@@ -1393,7 +1412,7 @@ export default function XConnectorPage() {
         <OrderDrawer
           order={drawerOrder}
           onClose={() => setDrawerOrder(null)}
-          onInvoice={id => invoiceMut.mutate(id)}
+          onInvoice={(id, isPaid) => openInvoiceModal(id, isPaid)}
           onShipmentWizard={order => { openWizardForOrder(order); }}
           actionState={getState(drawerOrder.id)}
           shop={activeShop}
@@ -1417,6 +1436,104 @@ export default function XConnectorPage() {
       )}
 
       <Toasts toasts={toasts} />
+
+      {/* ── MODAL OPȚIUNI FACTURĂ ── */}
+      {invoiceModal && (
+        <div style={{
+          position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', zIndex:1000,
+          display:'flex', alignItems:'flex-end', justifyContent:'center',
+        }} onClick={() => setInvoiceModal(null)}>
+          <div style={{
+            background:'var(--c-bg2)', borderRadius:'20px 20px 0 0',
+            border:'1px solid var(--c-border)', width:'100%', maxWidth:480,
+            padding:'24px 20px 40px', boxShadow:'0 -8px 40px rgba(0,0,0,0.4)',
+          }} onClick={e => e.stopPropagation()}>
+
+            {/* Handle */}
+            <div style={{ width:40, height:4, background:'var(--c-border2)', borderRadius:2, margin:'0 auto 20px' }} />
+
+            <div style={{ fontSize:16, fontWeight:700, color:'var(--c-text)', marginBottom:4 }}>
+              🧾 Generează factură
+            </div>
+            <div style={{ fontSize:12, color:'var(--c-text3)', marginBottom:20 }}>
+              Shop activ: <strong style={{color:'var(--c-orange)'}}>{activeShop?.toUpperCase()}</strong>
+              {' · '}Configurație SmartBill: {activeShop === 'ro' ? 'Romania' : 'Ungaria'}
+            </div>
+
+            {/* Optiune incasare */}
+            <div style={{
+              display:'flex', alignItems:'center', justifyContent:'space-between',
+              padding:'14px 16px', background:'var(--c-bg3)',
+              border:`1px solid ${invOpts.forceCollect ? 'var(--c-orange)' : 'var(--c-border)'}`,
+              borderRadius:12, marginBottom:10, cursor:'pointer',
+            }} onClick={() => setInvOpts(p => ({ ...p, forceCollect: !p.forceCollect }))}>
+              <div>
+                <div style={{ fontSize:14, fontWeight:600, color:'var(--c-text)' }}>
+                  💰 Adaugă încasare
+                </div>
+                <div style={{ fontSize:11, color:'var(--c-text3)', marginTop:2 }}>
+                  Emite chitanță și marchează factura ca încasată
+                  {invoiceModal.isPaid && <span style={{color:'#10b981', marginLeft:6}}>✓ comandă plătită</span>}
+                </div>
+              </div>
+              <div style={{
+                width:24, height:24, borderRadius:6, border:`2px solid ${invOpts.forceCollect ? 'var(--c-orange)' : 'var(--c-border)'}`,
+                background: invOpts.forceCollect ? 'var(--c-orange)' : 'transparent',
+                display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+                transition:'all 0.15s',
+              }}>
+                {invOpts.forceCollect && <span style={{color:'#fff', fontSize:14, fontWeight:700}}>✓</span>}
+              </div>
+            </div>
+
+            {/* Optiune gestiune stoc */}
+            <div style={{
+              display:'flex', alignItems:'center', justifyContent:'space-between',
+              padding:'14px 16px', background:'var(--c-bg3)',
+              border:`1px solid ${invOpts.forceStock ? '#10b981' : 'var(--c-border)'}`,
+              borderRadius:12, marginBottom:24, cursor:'pointer',
+            }} onClick={() => setInvOpts(p => ({ ...p, forceStock: !p.forceStock }))}>
+              <div>
+                <div style={{ fontSize:14, fontWeight:600, color:'var(--c-text)' }}>
+                  📦 Scade din gestiune (stoc)
+                </div>
+                <div style={{ fontSize:11, color:'var(--c-text3)', marginTop:2 }}>
+                  Decrementează stocul produselor din SmartBill Gestiune
+                </div>
+              </div>
+              <div style={{
+                width:24, height:24, borderRadius:6, border:`2px solid ${invOpts.forceStock ? '#10b981' : 'var(--c-border)'}`,
+                background: invOpts.forceStock ? '#10b981' : 'transparent',
+                display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+                transition:'all 0.15s',
+              }}>
+                {invOpts.forceStock && <span style={{color:'#fff', fontSize:14, fontWeight:700}}>✓</span>}
+              </div>
+            </div>
+
+            {/* Butoane */}
+            <div style={{ display:'flex', gap:10 }}>
+              <button
+                onClick={() => setInvoiceModal(null)}
+                style={{ flex:1, padding:'12px', borderRadius:10, border:'1px solid var(--c-border)',
+                  background:'transparent', color:'var(--c-text3)', fontSize:14, cursor:'pointer' }}>
+                Anulează
+              </button>
+              <button
+                onClick={confirmInvoice}
+                disabled={invoiceMut.isPending}
+                style={{ flex:2, padding:'12px', borderRadius:10, border:'none',
+                  background: invoiceMut.isPending ? '#7c3a00' : 'var(--c-orange)',
+                  color:'#fff', fontSize:14, fontWeight:700, cursor:'pointer',
+                  opacity: invoiceMut.isPending ? 0.7 : 1 }}>
+                {invoiceMut.isPending
+                  ? '⏳ Se generează...'
+                  : `🧾 Generează${invOpts.forceCollect ? ' + Încasează' : ''}${invOpts.forceStock ? ' + Stoc' : ''}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
