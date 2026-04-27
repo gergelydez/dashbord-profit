@@ -403,8 +403,11 @@ export default function Dashboard() {
     }
   }, [deliveryMode, preset, customFrom, customTo, getLivrateInPeriod, search, sortCol, sortDir, courierFilter, applyFilters]);
 
-  const fetchOrdersRange = async (fromDate, force=false) => {
-    const url = `/api/orders?domain=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
+  const fetchOrdersRange = async (fromDate, force=false, _domain=null, _token=null) => {
+    const sk = getShopKey();
+    const d = _domain || ls.get(domainKey(sk)) || (sk === 'ro' ? ls.get('gx_d') : null) || domain;
+    const t = _token  || ls.get(tokenKey(sk))  || (sk === 'ro' ? ls.get('gx_t') : null) || token;
+    const url = `/api/orders?domain=${encodeURIComponent(d)}&token=${encodeURIComponent(t)}&created_at_min=${fromDate}T00:00:00${force?'&force=1':''}`;
     const res = await fetch(url);
     const data = await res.json();
     if (!res.ok || !data.orders) throw new Error(data.error || 'Răspuns invalid');
@@ -412,12 +415,16 @@ export default function Dashboard() {
   };
 
   const fetchOrders = async (forceMode) => {
-    if (!domain || !token) { setError('Completează domeniul și tokenul!'); return; }
     const sk = getShopKey();
-    ls.set(domainKey(sk), domain);
-    ls.set(tokenKey(sk), token);
-    // Backward compat — RO credentials also saved under legacy keys
-    if (sk === 'ro') { ls.set('gx_d', domain); ls.set('gx_t', token); }
+    // Citim ÎNTOTDEAUNA din localStorage — evităm stale closure când e apelat din useEffect
+    const _domain = ls.get(domainKey(sk)) || (sk === 'ro' ? ls.get('gx_d') : null) || domain;
+    const _token  = ls.get(tokenKey(sk))  || (sk === 'ro' ? ls.get('gx_t') : null) || token;
+    if (!_domain || !_token) { setError('Completează domeniul și tokenul!'); return; }
+    // Actualizăm state-ul și localStorage
+    setDomain(_domain); setToken(_token);
+    ls.set(domainKey(sk), _domain);
+    ls.set(tokenKey(sk), _token);
+    if (sk === 'ro') { ls.set('gx_d', _domain); ls.set('gx_t', _token); }
     setLoading(true); setError('');
 
     // FAZA 1: Ultimele 30 zile — rapid, eroarea e vizibilă
@@ -1243,7 +1250,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
           )}
         </header>
 
-        {!connected && !loading && (
+        {!connected && !loading && !ls.get(tokenKey(getShopKey())) && !(getShopKey() === 'ro' && ls.get('gx_t')) && (
           <div className="setup">
             <h2>🔌 Conectare Shopify</h2>
             {(() => {
