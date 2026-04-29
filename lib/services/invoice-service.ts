@@ -36,19 +36,11 @@ export interface InvoiceServiceResult {
  * Create an invoice for the given Order row.
  * Idempotent: returns existing invoice if already created.
  */
-export interface InvoiceOptions {
-  shopKey?:      string;   // 'ro' | 'hu' — pentru config SmartBill per-shop
-  forceCollect?: boolean;  // incaseaza indiferent de isPaid
-  forceStock?:   boolean;  // scade stoc indiferent de cfg.useStock
-  paymentSeries?: string;  // serie chitanta override
-  invoiceSeries?: string;  // serie factura override
-}
-
 export async function ensureInvoice(
   order: Order,
   shopifyAccessToken: string,
   shopifyDomain: string,
-  options: InvoiceOptions = {},
+  withCollection?: boolean,
 ): Promise<InvoiceServiceResult> {
   const log = logger.child({ module: 'invoice-service', orderId: order.id, orderName: order.shopifyName });
 
@@ -68,15 +60,7 @@ export async function ensureInvoice(
   }
 
   // ── Build SmartBill input ──────────────────────────────────────────────────
-  const cfg = loadSmartBillConfig(options.shopKey);
-  // Override serie factura / chitanta daca e specificata manual
-  if (options.invoiceSeries) cfg.series = options.invoiceSeries;
-  if (options.paymentSeries) cfg.paymentSeries = options.paymentSeries;
-  // Override useStock daca e cerut manual
-  if (options.forceStock) {
-    cfg.useStock = true;
-    cfg.warehouseName = cfg.warehouseName || 'Marfuri'; // gestiunea predatoare default
-  }
+  const cfg = loadSmartBillConfig();
   const lineItems = (order.lineItems as Array<{ name: string; sku: string; qty: number; price: number }>).map(
     (i) => ({ name: i.name, sku: i.sku, quantity: i.qty, price: i.price }),
   );
@@ -95,7 +79,6 @@ export async function ensureInvoice(
       address: order.shippingAddress1,
       city:    order.shippingCity,
       county:  order.shippingProvince,
-      country: (order as any).shippingCountry || 'RO',
     },
     lineItems,
   });
@@ -133,15 +116,14 @@ export async function ensureInvoice(
     log.warn('SmartBill PDF not available, will serve SmartBill URL as fallback');
   }
 
-  // ── Collect (issue receipt / chitanță) if order is paid ───────────────────
+  // ── Collect (issue receipt / chitanță) if order is paid OR explicitly requested ──
   let collected = false;
-  const shouldCollect = options.forceCollect || (order.isPaid && Number(order.totalPrice) > 0);
+  const shouldCollect = withCollection === true || (withCollection === undefined && order.isPaid);
   if (shouldCollect && Number(order.totalPrice) > 0) {
     const collectResult = await collectInvoice(
       cfg, result.series, result.number,
       Number(order.totalPrice), order.customerName,
       order.currency,
-      (order as any).shippingCountry || 'RO',
     );
     collected = collectResult.ok;
     await db.invoice.update({
