@@ -22,22 +22,11 @@ async function fetchShopifyOrder(shopifyId: string, domain: string, token: strin
 }
 
 export async function POST(request: Request) {
-  const body = await request.json() as {
-    shopifyOrderId: string;
-    shop?: string;
-    forceCollect?: boolean;
-    forceStock?: boolean;
-    paymentSeries?: string;
-    invoiceSeries?: string;
-  };
   const {
     shopifyOrderId,
     shop: shopKey = getDefaultShopKey(),
-    forceCollect = false,
-    forceStock   = false,
-    paymentSeries,
-    invoiceSeries,
-  } = body;
+    withCollection,
+  } = await request.json() as { shopifyOrderId: string; shop?: string; withCollection?: boolean };
   if (!shopifyOrderId) return NextResponse.json({ error: 'shopifyOrderId required' }, { status: 400 });
 
   let shopCfg;
@@ -62,13 +51,7 @@ export async function POST(request: Request) {
     }
 
     // Generate invoice (idempotent)
-    const result = await ensureInvoice(order, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, {
-      shopKey,
-      forceCollect,
-      forceStock,
-      paymentSeries,
-      invoiceSeries,
-    });
+    const result = await ensureInvoice(order, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, withCollection);
 
     return NextResponse.json({
       ok:         true,
