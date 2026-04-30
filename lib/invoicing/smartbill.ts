@@ -43,11 +43,12 @@ export function loadSmartBillConfig(): SmartBillConfig {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface InvoiceLineItem {
-  name:       string;
-  sku?:       string;
-  quantity:   number;
-  price:      number;  // unit price (inclusive of tax)
-  warehouse?: string;  // gestiunea SmartBill (overrides cfg.warehouseName)
+  name:        string;
+  sku?:        string;
+  quantity:    number;
+  price:       number;
+  warehouse?:  string;  // gestiunea SmartBill
+  isShipping?: boolean; // transport — no gestiune, no SKU needed
 }
 
 export interface CreateInvoiceInput {
@@ -406,8 +407,8 @@ function buildProduct(
     taxPercentage: cfg.taxPercentage,
     isService:     false,
     saveToDb:      false,
-    // Use item-level warehouse first, then cfg warehouse, then nothing
-    ...(useStockCfg && (item.warehouse || cfg.warehouseName)
+    // Shipping items never use gestiune (no SKU, no warehouse)
+    ...(useStockCfg && !item.isShipping && (item.warehouse || cfg.warehouseName)
       ? { warehouseName: item.warehouse || cfg.warehouseName }
       : {}),
   };
