@@ -163,7 +163,7 @@ export async function createInvoice(
   // items WITHOUT sku → useStock=false (facturate fără gestiune)
   // This matches xConnector native behavior.
   // Transport items are ALWAYS exempt from SKU validation
-  const TRANSPORT_KW = ['szállítás', 'futar', 'futár', 'livrare', 'transport','szallitas','nemzetközi',
+  const TRANSPORT_KW = ['szállítás', 'futar', 'futár', 'livrare', 'transport',
     'shipping', 'delivery', 'fuvar', 'freight', 'postage', 'szerviz', 'courier'];
   const isTransport = (name: string) =>
     !name || TRANSPORT_KW.some(k => name.toLowerCase().includes(k));
