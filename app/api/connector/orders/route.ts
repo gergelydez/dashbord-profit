@@ -144,6 +144,18 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
     sku:      li.sku      || '',
   }));
 
+  // Extract AWB from Shopify fulfillments (for orders created by xConnector original)
+  const fulfillments = o.fulfillments || [];
+  const shopifyAwb = fulfillments.length > 0
+    ? fulfillments[0].tracking_number || fulfillments[0].tracking_numbers?.[0] || null
+    : null;
+  const shopifyTrackingUrl = fulfillments.length > 0
+    ? fulfillments[0].tracking_url || null
+    : null;
+  const shopifyCourier = fulfillments.length > 0
+    ? (fulfillments[0].tracking_company || 'gls').toLowerCase()
+    : 'gls';
+
   return {
     id:        numId,
     gid:       `gid://shopify/Order/${numId}`,
@@ -177,7 +189,15 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
     financialStatus:   fin,
     fulfillmentStatus: ful || null,
     invoice,
-    shipment,
+    // Merge DB shipment with Shopify fulfillment (fallback for xConnector original AWBs)
+    shipment: shipment || (shopifyAwb ? {
+      id: null,
+      courier: shopifyCourier,
+      tracking: shopifyAwb,
+      trackingUrl: shopifyTrackingUrl,
+      labelUrl: null,
+      status: 'CREATED',
+    } : null),
     processingStatus: procStatus,
     processingError:  dbOrder?.error ?? null,
     // Flatten Shopify note_attributes to key→value map
