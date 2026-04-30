@@ -1712,7 +1712,27 @@ export default function XConnectorPage() {
                   <td style={S.td} onClick={() => setDrawerOrder(order)}>{fulBadge(order.fulfillmentStatus)}</td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
                     {invLink ? (
-                      <a href={invLink.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 11 }} title={invLink.url}>📥 {invLink.label}</a>
+                      // Click on invoice number → open modal viewer (not external link)
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          setInvoiceModalOrder(order);
+                          // Pre-populate result so viewer shows immediately
+                          const s = order.invoice?.series || '';
+                          const n = order.invoice?.number || '';
+                          setInvoiceResult({
+                            series: s,
+                            number: n,
+                            downloadUrl: `/api/connector/invoice-pdf?series=${encodeURIComponent(s)}&number=${encodeURIComponent(n)}`,
+                            smartbillUrl: order.invoice?.url || invLink.url,
+                            collected: order.invoice?.status === 'COLLECTED',
+                          });
+                        }}
+                        style={{ ...S.btnGhost, fontSize: 11, cursor: 'pointer' }}
+                        title="Click pentru vizualizare factură"
+                      >
+                        🧾 {invLink.label}
+                      </button>
                     ) : (
                       <button style={as.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6, fontSize: 11 } : { ...S.btnPrimary, fontSize: 11 }}
                         disabled={as.invoiceLoading || order.cancelled}
