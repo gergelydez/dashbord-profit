@@ -96,17 +96,60 @@ export async function ensureInvoice(
   // ── Download PDF ───────────────────────────────────────────────────────────
   const pdfBuffer = await downloadInvoicePdf(cfg, result.series, result.number);
 
-  // ── Create Invoice row (needed before PDF storage, to get the ID) ──────────
-  const invoice = await db.invoice.create({
-    data: {
-      orderId:    order.id,
-      shopId:     order.shopId,
-      series:     result.series,
-      number:     result.number,
-      invoiceUrl: result.invoiceUrl,
-      status:     'CREATED',
+  // ── Create Invoice row — robust against all duplicate scenarios ──────────────
+  // Scenarios handled:
+  // 1. Normal: no existing invoice → create
+  // 2. SmartBill deleted + re-created with SAME number → upsert updates it
+  // 3. SmartBill deleted + re-created with NEW number → delete old record, create new
+  // 4. Race condition (called twice fast) → upsert handles it
+
+  // First, clean up any stale invoice records for this order that have a DIFFERENT number
+  // (happens when user deletes from SmartBill and SmartBill assigns a new number)
+  await db.invoice.deleteMany({
+    where: {
+      orderId: order.id,
+      shopId:  order.shopId,
+      NOT: { series: result.series, number: result.number },
     },
   });
+
+  // Now upsert by series+number (handles same-number re-creation)
+  let invoice;
+  try {
+    invoice = await db.invoice.upsert({
+      where: {
+        shopId_series_number: {
+          shopId: order.shopId,
+          series: result.series,
+          number: result.number,
+        },
+      },
+      create: {
+        orderId:    order.id,
+        shopId:     order.shopId,
+        series:     result.series,
+        number:     result.number,
+        invoiceUrl: result.invoiceUrl,
+        status:     'CREATED',
+      },
+      update: {
+        orderId:    order.id,
+        invoiceUrl: result.invoiceUrl,
+        status:     'CREATED',
+      },
+    });
+  } catch (upsertErr) {
+    // Ultimate fallback: if upsert still fails, find and return existing record
+    log.warn('Invoice upsert failed, falling back to findFirst', { error: (upsertErr as Error).message });
+    const fallback = await db.invoice.findFirst({
+      where: { shopId: order.shopId, series: result.series, number: result.number },
+    });
+    if (fallback) {
+      invoice = fallback;
+    } else {
+      throw upsertErr;
+    }
+  }
 
   // ── Store PDF ──────────────────────────────────────────────────────────────
   let pdfStorageKey: string | null = null;
