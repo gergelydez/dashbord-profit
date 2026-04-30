@@ -26,7 +26,8 @@ export async function POST(request: Request) {
     shopifyOrderId,
     shop: shopKey = getDefaultShopKey(),
     withCollection,
-  } = await request.json() as { shopifyOrderId: string; shop?: string; withCollection?: boolean };
+    useStock,
+  } = await request.json() as { shopifyOrderId: string; shop?: string; withCollection?: boolean; useStock?: boolean };
   if (!shopifyOrderId) return NextResponse.json({ error: 'shopifyOrderId required' }, { status: 400 });
 
   let shopCfg;
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
     }
 
     // Generate invoice (idempotent)
-    const result = await ensureInvoice(order, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, withCollection);
+    const result = await ensureInvoice(order, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, withCollection, useStock);
 
     return NextResponse.json({
       ok:         true,
