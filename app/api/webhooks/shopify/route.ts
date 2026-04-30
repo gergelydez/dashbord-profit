@@ -193,42 +193,40 @@ async function generateInvoiceAsync(orderId: string, shopDomain: string): Promis
   const shopCfg = SHOP_CONFIGS.find(s => s.domain === shopDomain);
   if (!shopCfg) throw new Error(`Shop config not found for domain ${shopDomain}`);
 
-  // Auto-invoice rules:
-  // - withCollection: true ONLY for orders paid online (card)
-  // - useStock: true (always use gestiune for auto-invoice)
-  // - paymentType: 'Card' for online, undefined for others (no collection)
-  const withCollection = order.isPaid;
-  const paymentType    = order.isPaid ? 'Card' : undefined;
+  // Tipul de plată vine direct din Shopify (paymentGateway salvat la webhook)
+  // payment_gateway examples: 'bogus', 'stripe', 'paypal', 'manual', 'cash_on_delivery', 'gift_card'
+  const gw = (order.paymentGateway || '').toLowerCase();
+  const isCashOnDelivery = gw.includes('cash') || gw.includes('ramburs') ||
+                           gw.includes('cod') || gw === 'manual' || !order.isPaid;
 
-  log.info('generateInvoiceAsync: calling ensureInvoice', {
-    orderId, shopDomain, withCollection, paymentType,
+  // withCollection: true dacă e plătit online (nu ramburs)
+  // paymentType: determinat din gateway-ul Shopify
+  const withCollection = order.isPaid && !isCashOnDelivery;
+  const paymentType = withCollection ? 'Card' : undefined;
+
+  log.info('Auto-invoice payment type', {
+    gateway: order.paymentGateway,
+    isPaid: order.isPaid,
+    isCashOnDelivery,
+    withCollection,
+    paymentType,
   });
 
-  // OBLIGATORIU: toate produsele (non-transport) trebuie să aibă SKU
-  // Dacă lipsește SKU → NU generăm factură automat — rămâne pentru generare manuală
-  const lineItemsFromDb = (order.lineItems as Array<{name:string;sku:string;qty:number;price:number;isShipping?:boolean}>);
-  const missingSkuItems = lineItemsFromDb.filter(i => i.price > 0 && !i.isShipping && !i.sku?.trim());
-
-  if (missingSkuItems.length > 0) {
-    throw new Error(
-      `Auto-facturare anulată — produsele "${missingSkuItems.map(i => i.name).join(', ')}" ` +
-      `nu au SKU în Shopify. Adaugă SKU și regenerează manual din dashboard.`
-    );
-  }
+  log.info('Auto-invoice: same as manual button', { orderId, withCollection, paymentType });
 
   const result = await ensureInvoice(
     order,
     shopCfg.accessToken,
     shopDomain,
     withCollection,
-    true, // useStock ÎNTOTDEAUNA pentru auto-facturare
-    undefined,
+    true,      // useStock = true
+    undefined, // lineItems din DB
     paymentType,
   );
 
-  log.info('generateInvoiceAsync: invoice created', {
+  log.info('Auto-invoice created', {
     orderId,
-    invoiceNumber: `${result.invoice.series}${result.invoice.number}`,
+    invoice: `${result.invoice.series}${result.invoice.number}`,
     collected: result.collected,
   });
 }
