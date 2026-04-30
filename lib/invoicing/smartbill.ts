@@ -105,6 +105,22 @@ async function sbFetch(
 
 // ─── Series discovery ─────────────────────────────────────────────────────────
 
+export async function getPaymentSeries(cfg: SmartBillConfig): Promise<string[]> {
+  const auth = makeAuth(cfg.email, cfg.token);
+  // type=p = serii pentru plati/chitante
+  for (const type of ['p', 'receipt', 'chitanta']) {
+    try {
+      const res = await sbFetch(auth, `/series?cif=${cfg.cif}&type=${type}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const list: Array<{ name?: string }> = data.list ?? data.paymentSeries ?? data.series ?? [];
+      const names = list.map((s) => s.name ?? String(s)).filter(Boolean);
+      if (names.length) return names;
+    } catch { continue; }
+  }
+  return [];
+}
+
 export async function getSeries(cfg: SmartBillConfig): Promise<string[]> {
   const auth = makeAuth(cfg.email, cfg.token);
   const res = await sbFetch(auth, `/series?cif=${cfg.cif}&type=f`);
@@ -183,18 +199,7 @@ export async function createInvoice(
     ];
   }
 
-  // ── Payment block (încasare la emitere) ───────────────────────────────────
-  // Per SmartBill docs: embed <payment> in invoice body for same-time collection
-  const paymentBlock = input.withCollection && input.totalPrice > 0
-    ? {
-        payment: {
-          value:         Math.round(input.totalPrice * 100) / 100,
-          type:          'Chitanta',
-          isCash:        true,
-          ...(cfg.paymentSeries ? { paymentSeries: cfg.paymentSeries } : {}),
-        },
-      }
-    : {};
+  // No payment block in invoice body — collection done separately via POST /payment
 
   const invoiceBody = {
     companyVatCode: cfg.cif,
@@ -219,7 +224,6 @@ export async function createInvoice(
     observations: `Comanda Shopify ${input.orderName}`,
     mentions:     '',
     products,
-    ...paymentBlock,
   };
 
   log.debug('Creating SmartBill invoice', { series, orderName: input.orderName });
