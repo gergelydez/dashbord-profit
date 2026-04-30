@@ -12,25 +12,73 @@ import { loadSmartBillConfig } from '@/lib/invoicing/smartbill';
 
 const BASE = 'https://ws.smartbill.ro/SBORO/api';
 
-interface StockItem {
-  productName?: string; productCode?: string; productMeasuringUnit?: string;
-  warehouseName?: string; quantity?: number; price?: number;
+interface StockProduct {
+  productName?: string; productCode?: string;
+  measuringUnit?: string; productMeasuringUnit?: string;
+  quantity?: number; price?: number;
   name?: string; code?: string; [k: string]: unknown;
+}
+
+interface StockWarehouseGroup {
+  warehouse?: { warehouseName?: string; [k: string]: unknown };
+  products?: StockProduct[];
+  // flat format fallback
+  productName?: string; productCode?: string;
+  measuringUnit?: string; quantity?: number; price?: number;
+  [k: string]: unknown;
 }
 
 function makeAuth(e: string, t: string) {
   return Buffer.from(`${e.trim()}:${t.trim()}`).toString('base64');
 }
 
-function mapItem(p: StockItem) {
-  return {
-    code:      String(p.productCode ?? p.code ?? ''),
-    name:      String(p.productName ?? p.name ?? ''),
-    unit:      String(p.productMeasuringUnit ?? 'buc'),
-    price:     Number(p.price) || 0,
-    stock:     Number(p.quantity) || 0,
-    warehouse: String(p.warehouseName ?? ''),
-  };
+/**
+ * SmartBill /stocks returns TWO possible structures:
+ *
+ * NESTED (grouped by warehouse):
+ *   { list: [{ warehouse: { warehouseName }, products: [{ productName, productCode, measuringUnit, quantity, price }] }] }
+ *
+ * FLAT (old format):
+ *   { list: [{ productName, productCode, productMeasuringUnit, quantity, price }] }
+ */
+function extractProducts(data: Record<string, unknown>, warehouseName = ''): Array<{ code: string; name: string; unit: string; price: number; stock: number; warehouse: string }> {
+  const list = (data.list ?? data.stocks ?? data.products ?? data.data ?? []) as StockWarehouseGroup[];
+  const result: Array<{ code: string; name: string; unit: string; price: number; stock: number; warehouse: string }> = [];
+
+  for (const entry of list) {
+    // NESTED format: entry has warehouse + products array
+    if (Array.isArray(entry.products)) {
+      const wh = entry.warehouse?.warehouseName ?? warehouseName;
+      for (const p of entry.products) {
+        const code = String(p.productCode ?? p.code ?? '');
+        const name = String(p.productName ?? p.name ?? '');
+        if (!code && !name) continue;
+        result.push({
+          code,
+          name,
+          unit:      String(p.measuringUnit ?? p.productMeasuringUnit ?? 'buc'),
+          price:     Number(p.price) || 0,
+          stock:     Number(p.quantity) || 0,
+          warehouse: wh,
+        });
+      }
+    } else {
+      // FLAT format: entry is the product directly
+      const code = String(entry.productCode ?? entry.code ?? '');
+      const name = String(entry.productName ?? entry.name ?? '');
+      if (!code && !name) continue;
+      result.push({
+        code,
+        name,
+        unit:      String(entry.measuringUnit ?? entry.productMeasuringUnit ?? 'buc'),
+        price:     Number(entry.price) || 0,
+        stock:     Number(entry.quantity) || 0,
+        warehouse: warehouseName,
+      });
+    }
+  }
+
+  return result;
 }
 
 function norm(s: string) {
@@ -99,14 +147,14 @@ export async function GET(request: Request) {
     if (!result.ok) continue;
 
     const data = result.data as Record<string, unknown>;
-    const raw  = ((data?.list ?? data?.stocks ?? data?.products ?? data?.data ?? []) as StockItem[]);
+    const all  = extractProducts(data, cfg.warehouseName);
 
-    if (!raw.length) continue;
+    if (!all.length) continue;
 
     // Filtrare locală după query
-    const matched = raw
-      .map(mapItem)
-      .filter(p => norm(p.code).includes(qNorm) || norm(p.name).includes(qNorm));
+    const matched = all.filter(p =>
+      norm(p.code).includes(qNorm) || norm(p.name).includes(qNorm)
+    );
 
     if (matched.length > 0) {
       const response: Record<string, unknown> = {
@@ -117,14 +165,12 @@ export async function GET(request: Request) {
       return NextResponse.json(response);
     }
 
-    // Dacă URL-ul a returnat date dar nu a găsit match-ul nostru,
-    // și e un URL "încarcă tot" — înseamnă că produsul nu e în gestiune
-    if (url.includes(`date=${today}`) && !url.includes('productCode') && !url.includes('productName')) {
-      const allMapped = raw.map(mapItem);
+    // URL-ul a returnat date dar query-ul nu s-a găsit — listăm ce există
+    if (url.includes(`date=${today}`) && !url.includes('productCode=') && !url.includes('productName=')) {
       const response: Record<string, unknown> = {
         products: [],
-        allProducts: debug ? allMapped : undefined,
-        error: `Produsul "${q}" nu există în Gestiunea SmartBill. Produse disponibile: ${allMapped.slice(0, 5).map(p => `${p.code} (${p.name})`).join(', ')}${allMapped.length > 5 ? '...' : ''}`,
+        allProducts: debug ? all : undefined,
+        error: `Produsul "${q}" nu există în Gestiunea SmartBill. Produse disponibile: ${all.slice(0, 5).map(p => `${p.code} (${p.name})`).join(', ')}${all.length > 5 ? '...' : ''}`,
       };
       if (debug) response._debug = debugLog;
       return NextResponse.json(response);
