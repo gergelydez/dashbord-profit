@@ -223,13 +223,31 @@ async function generateInvoiceAsync(orderId: string, shopDomain: string): Promis
 
   log.info('Auto-invoice: same as manual button', { orderId, withCollection, paymentType });
 
+  // Build lineItems — transport items have empty SKU so SmartBill treats them as services
+  const SHIP_KW = ['szállítás', 'livrare', 'transport', 'shipping', 'delivery', 'fuvar', 'freight', 'postage'];
+  const rawItems = order.lineItems as Array<{name:string;sku:string;qty:number;price:number}>;
+  const lineItems = rawItems.map(i => {
+    const isTransport = SHIP_KW.some(k => i.name.toLowerCase().includes(k));
+    return {
+      name:     i.name,
+      sku:      isTransport ? '' : (i.sku || ''),  // clear SKU for transport
+      quantity: i.qty,
+      price:    i.price,
+      warehouse: isTransport ? undefined : (process.env.SMARTBILL_WAREHOUSE || undefined),
+    };
+  });
+
+  // useStock only if ALL non-transport items have SKU
+  const nonTransport = lineItems.filter(i => !!i.sku);
+  const useStock = nonTransport.length > 0;
+
   const result = await ensureInvoice(
     order,
     shopCfg.accessToken,
     shopDomain,
     withCollection,
-    true,      // useStock = true
-    undefined, // lineItems din DB
+    useStock,
+    lineItems,
     paymentType,
   );
 
