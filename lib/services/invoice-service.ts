@@ -41,6 +41,7 @@ export async function ensureInvoice(
   shopifyAccessToken: string,
   shopifyDomain: string,
   withCollection?: boolean,
+  useStock?: boolean,
 ): Promise<InvoiceServiceResult> {
   const log = logger.child({ module: 'invoice-service', orderId: order.id, orderName: order.shopifyName });
 
@@ -69,10 +70,11 @@ export async function ensureInvoice(
 
   // ── Call SmartBill ─────────────────────────────────────────────────────────
   const result = await createInvoice(cfg, {
-    orderName:  order.shopifyName,
-    currency:   order.currency,
-    isPaid:     order.isPaid,
-    totalPrice: Number(order.totalPrice),
+    orderName:        order.shopifyName,
+    currency:         order.currency,
+    isPaid:           order.isPaid,
+    totalPrice:       Number(order.totalPrice),
+    useStockOverride: useStock,
     client: {
       name:    order.customerName,
       email:   order.customerEmail || undefined,
