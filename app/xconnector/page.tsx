@@ -265,17 +265,40 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   };
 
   // SmartBill search for a row
-  const searchSb = async (i: number, q: string) => {
+  const sbTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  const [sbErrors, setSbErrors] = useState<Record<number, string>>({});
+
+  const searchSb = (i: number, q: string) => {
     setSbQuery(p => ({ ...p, [i]: q }));
-    if (!q || q.length < 2) { setSbResults(p => ({ ...p, [i]: [] })); return; }
-    setSbLoading(p => ({ ...p, [i]: true }));
-    try {
-      const res = await fetch(`/api/connector/smartbill-products?q=${encodeURIComponent(q)}`);
-      const json = await res.json();
-      setSbResults(p => ({ ...p, [i]: json.products || [] }));
-      setSbOpen(p => ({ ...p, [i]: true }));
-    } catch { /* ignore */ }
-    finally { setSbLoading(p => ({ ...p, [i]: false })); }
+    if (!q || q.length < 1) {
+      setSbResults(p => ({ ...p, [i]: [] }));
+      setSbOpen(p => ({ ...p, [i]: false }));
+      return;
+    }
+    // Debounce 400ms
+    clearTimeout(sbTimers.current[i]);
+    sbTimers.current[i] = setTimeout(async () => {
+      setSbLoading(p => ({ ...p, [i]: true }));
+      setSbErrors(p => ({ ...p, [i]: '' }));
+      try {
+        const res = await fetch(`/api/connector/smartbill-products?q=${encodeURIComponent(q)}`);
+        const json = await res.json();
+        if (!res.ok || json.error) {
+          setSbErrors(p => ({ ...p, [i]: json.error || `Eroare ${res.status}` }));
+          setSbResults(p => ({ ...p, [i]: [] }));
+        } else {
+          setSbResults(p => ({ ...p, [i]: json.products || [] }));
+          setSbOpen(p => ({ ...p, [i]: true }));
+          if ((json.products || []).length === 0) {
+            setSbErrors(p => ({ ...p, [i]: 'Niciun produs găsit în Gestiune.' }));
+          }
+        }
+      } catch (e) {
+        setSbErrors(p => ({ ...p, [i]: (e as Error).message }));
+      } finally {
+        setSbLoading(p => ({ ...p, [i]: false }));
+      }
+    }, 400);
   };
 
   const pickSbProduct = (i: number, p: SbProduct) => {
@@ -547,6 +570,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                               </div>
                               <div style={{ textAlign: 'right' as const }}>
                                 <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316' }}>{p.price > 0 ? `${p.price} RON` : '—'}</div>
+                                {p.stock != null && <div style={{ fontSize: 10, color: p.stock > 0 ? '#10b981' : '#f43f5e' }}>Stoc: {p.stock}</div>}
                                 {p.warehouse && <div style={{ fontSize: 10, color: 'var(--c-text3)' }}>{p.warehouse}</div>}
                               </div>
                             </div>
@@ -555,6 +579,12 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                       )}
                     </div>
                   </div>
+                  {/* Search error / no results message */}
+                  {sbErrors[i] && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: '#f43f5e', lineHeight: 1.4 }}>
+                      ⚠ {sbErrors[i]}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
