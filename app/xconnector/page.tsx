@@ -1417,7 +1417,14 @@ export default function XConnectorPage() {
       }
       const res = await fetch('/api/connector/invoice', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shopifyOrderId, shop: activeShop, withCollection, useStock }),
+        body: JSON.stringify({
+          shopifyOrderId,
+          shop: activeShop,
+          withCollection,
+          useStock,
+          // Pass lineItems with SKUs directly — don't rely on DB which may not have them
+          lineItems: overrides?.lineItems,
+        }),
       });
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || 'Eroare generare factură');
