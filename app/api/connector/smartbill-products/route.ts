@@ -45,7 +45,9 @@ export async function GET(request: Request) {
   const auth = makeAuth(cfg.email, cfg.token);
 
   // Build query params — warehouseName is optional
-  const params = new URLSearchParams({ cif: cfg.cif });
+  // SmartBill /stocks requires a date param
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const params = new URLSearchParams({ cif: cfg.cif, date: today });
   if (cfg.warehouseName) params.set('warehouseName', cfg.warehouseName);
 
   try {
