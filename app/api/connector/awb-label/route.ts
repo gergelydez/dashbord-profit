@@ -43,8 +43,11 @@ async function fetchFromGls(trackingNumber: string): Promise<Buffer | null> {
           cache: 'no-store',
         });
 
+        const responseText = await res.text();
+        console.log(`[awb-label] GLS ${base} status=${res.status} body=${responseText.slice(0, 500)}`);
         if (!res.ok) continue;
-        const data = await res.json();
+        let data: Record<string, unknown>;
+        try { data = JSON.parse(responseText); } catch { continue; }
         const labels = data?.Labels;
 
         let labelBase64: string | null = null;
