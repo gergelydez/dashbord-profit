@@ -282,6 +282,12 @@ export interface WebhookOrderPayload {
     sku?:      string;
     variant?: { sku?: string };
   }>;
+  shipping_lines?: Array<{
+    title?: string;
+    price?: string;
+    code?:  string;
+  }>;
+  total_shipping_price_set?: { shop_money?: { amount?: string } };
 }
 
 /**
@@ -301,12 +307,25 @@ export async function upsertOrderFromWebhook(
     ?? payload.billing_address?.phone
     ?? '';
 
-  const lineItems = (payload.line_items ?? []).map((i) => ({
+  const productItems = (payload.line_items ?? []).map((i) => ({
     name:  i.name  ?? '',
     sku:   i.variant?.sku ?? i.sku ?? '',
     qty:   i.quantity ?? 1,
     price: parseFloat(i.price ?? '0'),
   }));
+
+  // Add shipping as separate line item (no SKU = no gestiune)
+  const shippingItems = (payload.shipping_lines ?? [])
+    .filter(s => parseFloat(s.price ?? '0') > 0)
+    .map(s => ({
+      name:  s.title ?? 'Transport',
+      sku:   '',  // no SKU — invoiced without gestiune
+      qty:   1,
+      price: parseFloat(s.price ?? '0'),
+      isShipping: true,
+    }));
+
+  const lineItems = [...productItems, ...shippingItems];
 
   const isPaid = (payload.financial_status ?? '').toLowerCase() === 'paid';
   const isCancelled = !!payload.cancelled_at;
