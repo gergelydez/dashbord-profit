@@ -402,7 +402,11 @@ function buildProduct(
   cfg: SmartBillConfig,
   useStockCfg = false,
 ): Record<string, unknown> {
-  const isTransport = item.isShipping || !item.sku?.trim();
+  const TRANSPORT_NAMES = ['szállítás', 'futar', 'futár', 'livrare', 'transport',
+    'shipping', 'delivery', 'fuvar', 'freight', 'postage', 'courier'];
+  const isTransport = item.isShipping
+    || TRANSPORT_NAMES.some(k => item.name.toLowerCase().includes(k))
+    || !item.sku?.trim();
 
   if (isTransport) {
     // Transport/shipping: no code, no warehouse, isService=true
