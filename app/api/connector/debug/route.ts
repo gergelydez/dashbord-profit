@@ -51,12 +51,21 @@ export async function GET(request: Request) {
     } catch (e) { shopifyWebhooks = [{ error: (e as Error).message }]; }
   }
 
+  // Check webhook errors specifically
+  const webhookErrors = await db.webhookEvent.findMany({
+    where: { shopDomain: domain, lastError: { not: null }, topic: { not: 'settings' } },
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+    select: { topic: true, lastError: true, createdAt: true, orderId: true },
+  });
+
   return NextResponse.json({
     shop: { key: shopKey, domain, foundInDb: !!shop },
     autoInvoiceSetting: autoInvoice,
     appUrl: process.env.NEXT_PUBLIC_APP_URL,
     shopifyWebhooksRegistered: shopifyWebhooks,
     recentWebhooksReceived: recentWebhooks,
+    webhookErrors,
     recentOrders: recentOrders.map(o => ({
       name: o.shopifyName,
       isPaid: o.isPaid,
