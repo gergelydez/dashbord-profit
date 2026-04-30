@@ -213,56 +213,427 @@ function Field({ label, value, onChange, type = 'text', placeholder, disabled }:
 }
 
 /* INVOICE SECTION */
-function InvoiceSection({ order, actionState, onInvoice }: {
-  order: EnrichedOrder; actionState: RowActionState;
-  onInvoice: (id: string, withCollection: boolean) => void;
-}) {
-  const [withCollection, setWithCollection] = useState(order.financialStatus === 'pending');
+/* ─── INVOICE MODAL ────────────────────────────────────────────────────────── */
+interface InvoiceLineLocal {
+  name: string; sku: string; quantity: number; price: number;
+  sbCode?: string; sbName?: string; sbMatched?: boolean;
+}
+interface SbProduct { code: string; name: string; unit: string; price: number; warehouse: string; }
 
-  const extractNum = (url: string): string => {
-    try {
-      const u = new URL(url);
-      const s = u.searchParams.get('s') || '';
-      const n = u.searchParams.get('n') || '';
-      if (s && n) return `${s}${n}`;
-      if (n) return n;
-    } catch {}
-    const attrs = order.noteAttributes ?? {};
-    return attrs['invoice-number'] || attrs['Factură'] || 'Factură';
+function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generatedInvoice: generatedInvoiceProp }: {
+  order: EnrichedOrder; shop: string; actionState: RowActionState;
+  onClose: () => void;
+  generatedInvoice?: { series: string; number: string; downloadUrl: string; collected: boolean } | null;
+  onGenerate: (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: InvoiceLineLocal[] } }) => void;
+}) {
+  const isPaid = order.financialStatus !== 'pending';
+
+  // Client state
+  const [name,     setName]     = useState(order.customer.name  || '');
+  const [phone,    setPhone]    = useState(order.customer.phone || '');
+  const [email,    setEmail]    = useState(order.customer.email || '');
+  const [addr1,    setAddr1]    = useState(order.address.address1 || '');
+  const [city,     setCity]     = useState(order.address.city    || '');
+  const [zip,      setZip]      = useState(order.address.zip     || '');
+  const [province, setProvince] = useState(order.address.province || '');
+
+  // Line items state
+  const [items, setItems] = useState<InvoiceLineLocal[]>(
+    order.lineItems.map(li => ({ name: li.name, sku: li.sku || '', quantity: li.quantity, price: li.price }))
+  );
+
+  // Options
+  const [withCollection, setWithCollection] = useState(!isPaid); // auto-bifat dacă e ramburs (pending)
+  const [useStock,       setUseStock]       = useState(false);
+
+  // SmartBill product search per row
+  const [sbQuery,    setSbQuery]    = useState<Record<number, string>>({});
+  const [sbResults,  setSbResults]  = useState<Record<number, SbProduct[]>>({});
+  const [sbLoading,  setSbLoading]  = useState<Record<number, boolean>>({});
+  const [sbOpen,     setSbOpen]     = useState<Record<number, boolean>>({});
+
+  // Use external generatedInvoice prop (set by parent after mutation)
+  const generatedInvoice = generatedInvoiceProp ?? null;
+
+  // Existing invoice check
+  const attrs     = order.noteAttributes ?? {};
+  const existUrl  = order.invoice?.url || attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
+  const existNum  = order.invoice ? `${order.invoice.series}${order.invoice.number}` : (attrs['invoice-number'] || attrs['Factură'] || '');
+
+  const updateItem = (i: number, patch: Partial<InvoiceLineLocal>) => {
+    setItems(p => { const n = [...p]; n[i] = { ...n[i], ...patch }; return n; });
   };
 
-  if (order.invoice) {
+  // SmartBill search for a row
+  const searchSb = async (i: number, q: string) => {
+    setSbQuery(p => ({ ...p, [i]: q }));
+    if (!q || q.length < 2) { setSbResults(p => ({ ...p, [i]: [] })); return; }
+    setSbLoading(p => ({ ...p, [i]: true }));
+    try {
+      const res = await fetch(`/api/connector/smartbill-products?q=${encodeURIComponent(q)}`);
+      const json = await res.json();
+      setSbResults(p => ({ ...p, [i]: json.products || [] }));
+      setSbOpen(p => ({ ...p, [i]: true }));
+    } catch { /* ignore */ }
+    finally { setSbLoading(p => ({ ...p, [i]: false })); }
+  };
+
+  const pickSbProduct = (i: number, p: SbProduct) => {
+    updateItem(i, { sku: p.code, sbCode: p.code, sbName: p.name, sbMatched: true, price: p.price > 0 ? p.price : items[i].price });
+    setSbOpen(prev => ({ ...prev, [i]: false }));
+    setSbQuery(prev => ({ ...prev, [i]: '' }));
+    setSbResults(prev => ({ ...prev, [i]: [] }));
+  };
+
+  const handleGenerate = () => {
+    onGenerate({
+      shopifyOrderId: order.id, withCollection, useStock,
+      overrides: {
+        customer: { name, phone, email },
+        address:  { address1: addr1, city, zip, province },
+        lineItems: items,
+      },
+    });
+  };
+
+  const mStyle: React.CSSProperties = {
+    position: 'fixed', inset: 0, zIndex: 10000,
+    background: 'rgba(0,0,0,0.82)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: '16px',
+  };
+  const boxStyle: React.CSSProperties = {
+    background: '#0d1220',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 20,
+    width: '100%', maxWidth: 620,
+    maxHeight: '92dvh',
+    display: 'flex', flexDirection: 'column',
+    overflow: 'hidden',
+  };
+  const headStyle: React.CSSProperties = {
+    padding: '18px 22px 14px',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    flexShrink: 0,
+  };
+  const bodyStyle: React.CSSProperties = {
+    overflowY: 'auto', flex: 1, padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 16,
+  };
+  const footStyle: React.CSSProperties = {
+    padding: '14px 22px', paddingBottom: 'max(14px, env(safe-area-inset-bottom))',
+    borderTop: '1px solid rgba(255,255,255,0.08)',
+    display: 'flex', gap: 10, justifyContent: 'flex-end', flexShrink: 0,
+    background: '#0d1220',
+  };
+  const secStyle: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.03)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: 14, padding: '14px 16px',
+  };
+  const secH: React.CSSProperties = {
+    fontSize: 11, fontWeight: 700, color: 'var(--c-text3)',
+    textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12,
+  };
+  const inp: React.CSSProperties = {
+    width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)',
+    borderRadius: 8, padding: '7px 10px', color: 'var(--c-text)', fontSize: 13, outline: 'none',
+    boxSizing: 'border-box',
+  };
+  const lbl: React.CSSProperties = { fontSize: 11, color: 'var(--c-text3)', marginBottom: 3, display: 'block' };
+  const toggleRow: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '10px 14px', borderRadius: 10, cursor: 'pointer', userSelect: 'none',
+  };
+
+  // ── After generation: show invoice viewer ─────────────────────────────────
+  if (generatedInvoice || (existUrl && existNum)) {
+    const inv = generatedInvoice || { series: '', number: existNum, downloadUrl: existUrl, collected: !!order.invoice?.status };
     return (
-      <div style={S.section}>
-        <div style={S.sectionHead}>🧾 Factură</div>
-        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
-          <div style={S.row2col}>
-            <div><div style={S.fieldLabel}>Serie/Număr</div><div style={{ ...S.fieldValue, fontWeight: 700, color: '#f97316', fontFamily: 'monospace' }}>{order.invoice.series}{order.invoice.number}</div></div>
-            <div><div style={S.fieldLabel}>Status</div><div><Badge label={order.invoice.status} color="green" /></div></div>
+      <div style={mStyle} onClick={onClose}>
+        <div style={boxStyle} onClick={e => e.stopPropagation()}>
+          <div style={headStyle}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#f97316' }}>🧾 Factură {inv.number}</div>
+              <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 2 }}>Comanda {order.name}</div>
+            </div>
+            <button style={{ background: 'none', border: 'none', color: 'var(--c-text3)', fontSize: 20, cursor: 'pointer', lineHeight: 1 }} onClick={onClose}>✕</button>
           </div>
-          <a href={order.invoice.url} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none', width: 'fit-content' }}>📥 Descarcă PDF</a>
+          <div style={{ ...bodyStyle, gap: 14 }}>
+            {/* Status badges */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Badge label="✓ Generată" color="green" />
+              {inv.collected && <Badge label="✓ Încasată" color="orange" />}
+              {generatedInvoice && <Badge label="✓ Salvată în Shopify" color="blue" />}
+            </div>
+
+            {/* Invoice number display — big and clickable like XConnector */}
+            <div style={{ ...secStyle, textAlign: 'center' as const }}>
+              <div style={{ fontSize: 11, color: 'var(--c-text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Număr factură</div>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#f97316', fontFamily: 'monospace', letterSpacing: 2 }}>{inv.number}</div>
+              <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 4 }}>
+                {order.customer.name} · {order.address.city}
+              </div>
+            </div>
+
+            {/* PDF viewer iframe */}
+            <div style={{ ...secStyle, padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)', fontSize: 12, color: 'var(--c-text3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>📄 Previzualizare factură</span>
+                <a href={inv.downloadUrl} target="_blank" rel="noreferrer"
+                  style={{ fontSize: 11, color: '#f97316', textDecoration: 'none', fontWeight: 600 }}>
+                  Deschide în tab nou ↗
+                </a>
+              </div>
+              <iframe
+                src={inv.downloadUrl}
+                style={{ width: '100%', height: 380, border: 'none', background: '#fff' }}
+                title={`Factură ${inv.number}`}
+              />
+            </div>
+
+            {/* Download button */}
+            <a href={inv.downloadUrl} target="_blank" rel="noreferrer"
+              style={{ ...S.btnPrimary, textDecoration: 'none', justifyContent: 'center', padding: '10px 16px', fontSize: 14 }}>
+              📥 Descarcă PDF
+            </a>
+          </div>
+          <div style={footStyle}>
+            <button style={S.btnGhost} onClick={onClose}>Închide</button>
+          </div>
         </div>
       </div>
     );
   }
 
-  const attrs = order.noteAttributes ?? {};
-  const xcInvUrl = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
-  const xcShort  = attrs['xconnector-invoice-short-url'] || '';
-  const finalUrl = xcInvUrl || xcShort;
+  // ── Generate form ──────────────────────────────────────────────────────────
+  return (
+    <div style={mStyle} onClick={onClose}>
+      <div style={boxStyle} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={headStyle}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>🧾 Generează factură</div>
+            <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 2 }}>
+              Comanda {order.name} · {order.totalPrice.toLocaleString('ro-RO', { minimumFractionDigits: 2 })} {order.currency}
+            </div>
+          </div>
+          <button style={{ background: 'none', border: 'none', color: 'var(--c-text3)', fontSize: 20, cursor: 'pointer', lineHeight: 1 }} onClick={onClose}>✕</button>
+        </div>
 
-  if (finalUrl) {
+        {/* Body */}
+        <div style={bodyStyle}>
+
+          {/* CLIENT */}
+          <div style={secStyle}>
+            <div style={secH}>👤 Date client</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Nume complet *</label>
+                <input style={inp} value={name} onChange={e => setName(e.target.value)} placeholder="Ion Popescu" />
+              </div>
+              <div>
+                <label style={lbl}>Telefon</label>
+                <input style={inp} value={phone} onChange={e => setPhone(e.target.value)} placeholder="07xxxxxxxx" />
+              </div>
+              <div>
+                <label style={lbl}>Email</label>
+                <input style={inp} value={email} onChange={e => setEmail(e.target.value)} placeholder="client@email.ro" />
+              </div>
+            </div>
+          </div>
+
+          {/* ADDRESS */}
+          <div style={secStyle}>
+            <div style={secH}>📍 Adresă facturare</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Stradă + număr</label>
+                <input style={inp} value={addr1} onChange={e => setAddr1(e.target.value)} placeholder="Str. Exemplu nr. 1" />
+              </div>
+              <div>
+                <label style={lbl}>Oraș</label>
+                <input style={inp} value={city} onChange={e => setCity(e.target.value)} placeholder="Cluj-Napoca" />
+              </div>
+              <div>
+                <label style={lbl}>Județ</label>
+                <input style={inp} value={province} onChange={e => setProvince(e.target.value)} placeholder="Cluj" />
+              </div>
+              <div>
+                <label style={lbl}>Cod poștal</label>
+                <input style={inp} value={zip} onChange={e => setZip(e.target.value)} placeholder="400000" />
+              </div>
+            </div>
+          </div>
+
+          {/* PRODUCTS */}
+          <div style={secStyle}>
+            <div style={secH}>📦 Produse facturate</div>
+            {items.map((item, i) => (
+              <div key={i} style={{ paddingBottom: i < items.length - 1 ? 14 : 0, marginBottom: i < items.length - 1 ? 14 : 0, borderBottom: i < items.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
+                {/* Row 1: name + qty + price */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 90px', gap: 8, marginBottom: 8 }}>
+                  <div>
+                    <label style={lbl}>Denumire produs</label>
+                    <input style={inp} value={item.name} onChange={e => updateItem(i, { name: e.target.value })} placeholder="Produs" />
+                  </div>
+                  <div>
+                    <label style={lbl}>Cant.</label>
+                    <input type="number" min={1} style={inp} value={item.quantity} onChange={e => updateItem(i, { quantity: parseInt(e.target.value) || 1 })} />
+                  </div>
+                  <div>
+                    <label style={lbl}>Preț unit.</label>
+                    <input type="number" step="0.01" style={inp} value={item.price} onChange={e => updateItem(i, { price: parseFloat(e.target.value) || 0 })} />
+                  </div>
+                </div>
+                {/* Row 2: SKU + SmartBill search */}
+                <div style={{ position: 'relative' }}>
+                  <label style={lbl}>
+                    SKU / Cod SmartBill
+                    {!item.sku && !item.sbMatched && (
+                      <span style={{ marginLeft: 6, color: '#f59e0b', fontSize: 10, fontWeight: 600 }}>
+                        ⚠ fără SKU — caută mai jos
+                      </span>
+                    )}
+                    {item.sbMatched && (
+                      <span style={{ marginLeft: 6, color: '#10b981', fontSize: 10, fontWeight: 600 }}>
+                        ✓ asociat din Gestiune
+                      </span>
+                    )}
+                  </label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input style={{ ...inp, flex: 1, fontFamily: 'monospace', fontSize: 12 }}
+                      value={item.sku} onChange={e => updateItem(i, { sku: e.target.value, sbMatched: false })}
+                      placeholder="SKU sau cod SmartBill"
+                    />
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        style={{ ...inp, paddingRight: sbLoading[i] ? 32 : 10 }}
+                        value={sbQuery[i] || ''}
+                        onChange={e => searchSb(i, e.target.value)}
+                        placeholder="🔍 Caută în Gestiune…"
+                      />
+                      {sbLoading[i] && (
+                        <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}><Spin /></span>
+                      )}
+                      {sbOpen[i] && (sbResults[i] || []).length > 0 && (
+                        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#141928', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, zIndex: 200, maxHeight: 200, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                          {(sbResults[i] || []).map((p, pi) => (
+                            <div key={pi}
+                              onClick={() => pickSbProduct(i, p)}
+                              style={{ padding: '9px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(249,115,22,0.1)')}
+                              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                            >
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                                <div style={{ fontSize: 11, color: 'var(--c-text3)', fontFamily: 'monospace' }}>{p.code}</div>
+                              </div>
+                              <div style={{ textAlign: 'right' as const }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316' }}>{p.price > 0 ? `${p.price} RON` : '—'}</div>
+                                {p.warehouse && <div style={{ fontSize: 10, color: 'var(--c-text3)' }}>{p.warehouse}</div>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* OPTIONS */}
+          <div style={secStyle}>
+            <div style={secH}>⚙ Opțiuni factură</div>
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+              {/* Încasare toggle */}
+              <div
+                style={{ ...toggleRow, background: withCollection ? 'rgba(245,158,11,0.07)' : 'rgba(255,255,255,0.02)', border: `1px solid ${withCollection ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.07)'}` }}
+                onClick={() => setWithCollection(v => !v)}
+              >
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: withCollection ? '#f59e0b' : 'var(--c-text2)' }}>
+                    💰 Adaugă încasare
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--c-text3)', marginTop: 2 }}>
+                    {isPaid ? 'Comanda e plătită online — emite chitanță' : 'Comandă ramburs — auto-activat'}
+                  </div>
+                </div>
+                <Switch on={withCollection} onChange={setWithCollection} />
+              </div>
+
+              {/* Gestiune toggle */}
+              <div
+                style={{ ...toggleRow, background: useStock ? 'rgba(59,130,246,0.07)' : 'rgba(255,255,255,0.02)', border: `1px solid ${useStock ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.07)'}` }}
+                onClick={() => setUseStock(v => !v)}
+              >
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: useStock ? '#60a5fa' : 'var(--c-text2)' }}>
+                    🏬 Utilizează Gestiunea mărfuri
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--c-text3)', marginTop: 2 }}>
+                    Scade din stoc SmartBill la generare
+                  </div>
+                </div>
+                <Switch on={useStock} onChange={setUseStock} />
+              </div>
+            </div>
+          </div>
+
+          {actionState.error && (
+            <div style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#f43f5e' }}>
+              ✕ {actionState.error}
+            </div>
+          )}
+
+        </div>
+
+        {/* Footer */}
+        <div style={footStyle}>
+          <button style={S.btnGhost} onClick={onClose} disabled={actionState.invoiceLoading}>Anulează</button>
+          <button
+            style={{ ...S.btnPrimary, padding: '9px 20px', fontSize: 14, ...(actionState.invoiceLoading || order.cancelled ? { opacity: 0.6 } : {}) }}
+            onClick={handleGenerate}
+            disabled={actionState.invoiceLoading || order.cancelled || !name.trim()}
+          >
+            {actionState.invoiceLoading
+              ? <><Spin /> Se generează…</>
+              : `🧾 Generează${withCollection ? ' + Încasează' : ''}`
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* InvoiceSection — shown inside OrderDrawer tab, opens InvoiceModal */
+function InvoiceSection({ order, shop, actionState, onOpenModal }: {
+  order: EnrichedOrder; shop: string; actionState: RowActionState;
+  onOpenModal: () => void;
+}) {
+  const attrs    = order.noteAttributes ?? {};
+  const existUrl = order.invoice?.url || attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
+  const existNum = order.invoice ? `${order.invoice.series}${order.invoice.number}` : (attrs['invoice-number'] || attrs['Factură'] || '');
+
+  if (existUrl || existNum) {
     return (
       <div style={S.section}>
         <div style={S.sectionHead}>🧾 Factură</div>
-        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
           <div style={S.row2col}>
-            <div><div style={S.fieldLabel}>Număr</div><div style={{ ...S.fieldValue, fontWeight: 700, color: '#f97316', fontFamily: 'monospace' }}>{extractNum(xcInvUrl)}</div></div>
-            <div><div style={S.fieldLabel}>Status</div><div><Badge label="generată" color="green" /></div></div>
+            <div><div style={S.fieldLabel}>Serie/Număr</div>
+              <button onClick={onOpenModal} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                <span style={{ fontSize: 18, fontWeight: 800, color: '#f97316', fontFamily: 'monospace', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}>{existNum}</span>
+              </button>
+            </div>
+            <div><div style={S.fieldLabel}>Status</div><Badge label={order.invoice?.status || 'generată'} color="green" /></div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
-            <a href={finalUrl} target="_blank" rel="noreferrer" style={{ ...S.btnPrimary, textDecoration: 'none' }}>📥 Descarcă PDF</a>
-            {xcShort && xcShort !== xcInvUrl && <a href={xcShort} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>🔗 Link scurt</a>}
+            <button onClick={onOpenModal} style={{ ...S.btnPrimary, textDecoration: 'none' }}>👁 Vizualizează</button>
+            <a href={existUrl} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>📥 Descarcă</a>
           </div>
         </div>
       </div>
@@ -273,21 +644,13 @@ function InvoiceSection({ order, actionState, onInvoice }: {
     <div style={S.section}>
       <div style={S.sectionHead}>🧾 Factură</div>
       <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
-        <div style={{ fontSize: 13, color: 'var(--c-text3)' }}>Nicio factură generată.</div>
-        {/* Collection toggle — same as screenshot */}
-        <div style={S.codToggle} onClick={() => setWithCollection(v => !v)}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: withCollection ? '#f59e0b' : 'var(--c-text2)' }}>💰 Adaugă încasare</div>
-            <div style={{ fontSize: 11, color: 'var(--c-text3)', marginTop: 2 }}>Emite chitanță și marchează factura ca încasată ✓ comandă plătită</div>
-          </div>
-          <Switch on={withCollection} onChange={setWithCollection} />
-        </div>
+        <div style={{ fontSize: 13, color: 'var(--c-text3)' }}>Nicio factură generată pentru această comandă.</div>
         <button
-          style={actionState.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6 } : S.btnPrimary}
-          onClick={() => onInvoice(order.id, withCollection)}
-          disabled={actionState.invoiceLoading || order.cancelled}
+          style={order.cancelled ? { ...S.btnPrimary, opacity: 0.5 } : S.btnPrimary}
+          onClick={onOpenModal}
+          disabled={order.cancelled}
         >
-          {actionState.invoiceLoading ? <><Spin /> Se generează…</> : `🧾 Generează${withCollection ? ' + Încasează' : ''}`}
+          🧾 Generează factură
         </button>
       </div>
     </div>
@@ -658,9 +1021,9 @@ interface AddrValidation {
   scores: { street: number | null; city: number | null; county: number | null; zip: number | null } | null;
 }
 
-function OrderDrawer({ order, onClose, onInvoice, onShipmentWizard, actionState, shop, onAddressFixed, awbResult, onToast, onRefresh }: {
+function OrderDrawer({ order, onClose, onOpenInvoiceModal, onShipmentWizard, actionState, shop, onAddressFixed, awbResult, onToast, onRefresh }: {
   order: EnrichedOrder; onClose: () => void;
-  onInvoice: (id: string, withCollection: boolean) => void;
+  onOpenInvoiceModal: () => void;
   onShipmentWizard: (order: EnrichedOrder) => void;
   actionState: RowActionState; shop: string;
   onAddressFixed: (orderId: string, newZip: string) => void;
@@ -811,7 +1174,7 @@ function OrderDrawer({ order, onClose, onInvoice, onShipmentWizard, actionState,
                 {fixMsg && <div style={{ marginTop: 8, fontSize: 12, color: fixMsg.startsWith('✓') ? '#10b981' : 'var(--c-red)' }}>{fixMsg}</div>}
               </div>
               <CodSection order={order} shop={shop} onToast={onToast} onRefresh={onRefresh} />
-              <InvoiceSection order={order} actionState={actionState} onInvoice={onInvoice} />
+              <InvoiceSection order={order} shop={shop} actionState={actionState} onOpenModal={onOpenInvoiceModal} />
             </>
           )}
 
@@ -939,6 +1302,8 @@ export default function XConnectorPage() {
   const [drawerOrder, setDrawerOrder] = useState<EnrichedOrder | null>(null);
   const [wizardOrder, setWizardOrder] = useState<EnrichedOrder | null>(null);
   const [wizardLoading, setWizardLoading] = useState(false);
+  const [invoiceModalOrder, setInvoiceModalOrder] = useState<EnrichedOrder | null>(null);
+  const [invoiceResult, setInvoiceResult] = useState<{ series: string; number: string; downloadUrl: string; collected: boolean } | null>(null);
 
   const [awbResults, setAwbResultsRaw] = useState<AwbResultMap>(() => {
     try { const s = typeof window !== 'undefined' ? localStorage.getItem('xc_awb_results') : null; return s ? JSON.parse(s) : {}; } catch { return {}; }
@@ -956,18 +1321,41 @@ export default function XConnectorPage() {
   const setAS = (id: string, patch: Partial<RowActionState>) => setActionStates(p => ({ ...p, [id]: { ...getState(id), ...patch } }));
 
   const invoiceMut = useMutation({
-    mutationFn: async ({ shopifyOrderId, withCollection }: { shopifyOrderId: string; withCollection: boolean }) => {
+    mutationFn: async ({ shopifyOrderId, withCollection, useStock, overrides }: {
+      shopifyOrderId: string; withCollection: boolean; useStock?: boolean;
+      overrides?: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: { name: string; sku: string; quantity: number; price: number }[] };
+    }) => {
       setAS(shopifyOrderId, { invoiceLoading: true, error: null });
-      const res = await fetch('/api/connector/invoice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopifyOrderId, shop: activeShop, withCollection }) });
+      // First save overrides to Shopify if provided
+      if (overrides) {
+        await fetch('/api/connector/update-order', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shopifyOrderId, shop: activeShop, customer: overrides.customer, address: overrides.address, lineItems: overrides.lineItems }),
+        });
+      }
+      const res = await fetch('/api/connector/invoice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopifyOrderId, shop: activeShop, withCollection, useStock }),
+      });
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || 'Eroare generare factură');
       return { ...json, shopifyOrderId };
     },
-    onSuccess: (data) => { setAS(data.shopifyOrderId, { invoiceLoading: false }); addToast('ok', `Factură ${data.series}${data.number} generată!`); qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] }); },
+    onSuccess: (data) => {
+      setAS(data.shopifyOrderId, { invoiceLoading: false });
+      addToast('ok', `Factură ${data.series}${data.number} generată!`);
+      setInvoiceResult({ series: data.series, number: data.number, downloadUrl: data.downloadUrl, collected: data.collected });
+      qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
+    },
     onError: (err: Error, { shopifyOrderId }) => { setAS(shopifyOrderId, { invoiceLoading: false, error: err.message }); addToast('err', err.message); },
   });
 
-  const handleInvoice = (shopifyOrderId: string, withCollection: boolean) => invoiceMut.mutate({ shopifyOrderId, withCollection });
+  const handleInvoiceGenerate = (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: { name: string; sku: string; quantity: number; price: number }[] } }) => {
+    invoiceMut.mutate(opts);
+  };
+
+  // Quick generate from table row (no modal)
+  const handleQuickInvoice = (shopifyOrderId: string, withCollection: boolean) => invoiceMut.mutate({ shopifyOrderId, withCollection });
 
   const handleWizardConfirm = async (wizData: AwbWizardData) => {
     if (!wizardOrder) return;
@@ -1197,7 +1585,7 @@ export default function XConnectorPage() {
                     ) : (
                       <button style={as.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6, fontSize: 11 } : { ...S.btnPrimary, fontSize: 11 }}
                         disabled={as.invoiceLoading || order.cancelled}
-                        onClick={e => { e.stopPropagation(); handleInvoice(order.id, order.financialStatus === 'pending'); }}>
+                        onClick={e => { e.stopPropagation(); setInvoiceModalOrder(order); setInvoiceResult(null); }}>
                         {as.invoiceLoading ? <Spin /> : '🧾'} {order.financialStatus === 'pending' ? 'Gen+Inc' : 'Factură'}
                       </button>
                     )}
@@ -1259,11 +1647,24 @@ export default function XConnectorPage() {
       {drawerOrder && !wizardOrder && (
         <OrderDrawer
           order={drawerOrder} onClose={() => setDrawerOrder(null)}
-          onInvoice={handleInvoice} onShipmentWizard={order => { setWizardOrder(order); }}
+          onOpenInvoiceModal={() => { setInvoiceModalOrder(drawerOrder); setInvoiceResult(null); }}
+          onShipmentWizard={order => { setWizardOrder(order); }}
           actionState={getState(drawerOrder.id)} shop={activeShop}
           awbResult={awbResults[drawerOrder.id] || null}
           onAddressFixed={(orderId, newZip) => { addToast('ok', `ZIP ${newZip} actualizat`); qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] }); }}
           onToast={addToast} onRefresh={() => qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] })}
+        />
+      )}
+
+      {/* INVOICE MODAL */}
+      {invoiceModalOrder && (
+        <InvoiceModal
+          order={invoiceModalOrder}
+          shop={activeShop}
+          actionState={getState(invoiceModalOrder.id)}
+          onClose={() => { setInvoiceModalOrder(null); setInvoiceResult(null); }}
+          onGenerate={handleInvoiceGenerate}
+          generatedInvoice={invoiceResult}
         />
       )}
 
