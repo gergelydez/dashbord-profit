@@ -226,7 +226,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   order: EnrichedOrder; shop: string; actionState: RowActionState;
   onClose: () => void;
   generatedInvoice?: { series: string; number: string; downloadUrl: string; smartbillUrl?: string; collected: boolean } | null;
-  onGenerate: (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: InvoiceLineLocal[] } }) => void;
+  onGenerate: (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; paymentType?: string; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: InvoiceLineLocal[] } }) => void;
 }) {
   const isPaid = order.financialStatus !== 'pending';
 
@@ -245,7 +245,8 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   );
 
   // Options
-  const [withCollection, setWithCollection] = useState(isPaid); // auto-bifat pentru comenzile plătite online
+  const [withCollection, setWithCollection] = useState(isPaid);
+  const [paymentType,    setPaymentType]    = useState<string>(isPaid ? 'Card' : 'Ramburs');
   const [useStock,       setUseStock]       = useState(false);
 
   // SmartBill product search per row
@@ -337,7 +338,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
       }
     }
     onGenerate({
-      shopifyOrderId: order.id, withCollection, useStock,
+      shopifyOrderId: order.id, withCollection, useStock, paymentType,
       overrides: {
         customer: { name, phone, email },
         address:  { address1: addr1, city, zip, province },
@@ -687,6 +688,26 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                 </div>
                 <Switch on={withCollection} onChange={setWithCollection} />
               </div>
+
+              {/* Payment type selector — shown when collection is on */}
+              {withCollection && (
+                <div style={{ display: 'flex', gap: 6, paddingTop: 2 }}>
+                  {(['Card', 'Ramburs', 'Chitanta', 'Ordin plata'] as const).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setPaymentType(t)}
+                      style={{
+                        flex: 1, padding: '7px 4px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                        cursor: 'pointer', border: 'none',
+                        background: paymentType === t ? '#f59e0b' : 'rgba(255,255,255,0.06)',
+                        color: paymentType === t ? '#000' : 'var(--c-text3)',
+                      }}
+                    >
+                      {t === 'Card' ? '💳' : t === 'Ramburs' ? '💵' : t === 'Chitanta' ? '🧾' : '🏦'} {t}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Gestiune toggle */}
               <div
@@ -1464,7 +1485,7 @@ export default function XConnectorPage() {
           shop: activeShop,
           withCollection,
           useStock,
-          // Pass lineItems with SKUs directly — don't rely on DB which may not have them
+          paymentType,
           lineItems: overrides?.lineItems,
         }),
       });
