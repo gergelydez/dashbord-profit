@@ -162,11 +162,15 @@ export async function createInvoice(
   // items WITH sku  → useStock=true  (scad din gestiune)
   // items WITHOUT sku → useStock=false (facturate fără gestiune)
   // This matches xConnector native behavior.
-  // When useStock=true: non-shipping items MUST have SKU.
-  // isShipping=true items (transport) are exempt — no SKU needed.
+  // Transport items are ALWAYS exempt from SKU validation
+  const TRANSPORT_KW = ['szállítás', 'futar', 'futár', 'livrare', 'transport',
+    'shipping', 'delivery', 'fuvar', 'freight', 'postage', 'szerviz', 'courier'];
+  const isTransport = (name: string) =>
+    !name || TRANSPORT_KW.some(k => name.toLowerCase().includes(k));
+
   if (useStock) {
     const missing = input.lineItems.filter(i =>
-      i.price > 0 && !i.sku?.trim() && !i.isShipping
+      i.price > 0 && !i.sku?.trim() && !i.isShipping && !isTransport(i.name)
     );
     if (missing.length > 0) {
       throw new Error(
@@ -409,7 +413,7 @@ function buildProduct(
     taxPercentage: cfg.taxPercentage,
     isService:     false,
     saveToDb:      false,
-    // Shipping items never use gestiune (no SKU, no warehouse)
+    // Transport items never use gestiune
     ...(useStockCfg && !item.isShipping && !!item.sku?.trim() && (item.warehouse || cfg.warehouseName)
       ? { warehouseName: item.warehouse || cfg.warehouseName }
       : {}),
