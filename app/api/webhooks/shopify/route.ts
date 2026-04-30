@@ -40,31 +40,24 @@ import { SHOP_CONFIGS } from '@/lib/shops';
 // Citeste autoInvoice din Redis — cheie globala, se aplica la toate shop-urile
 async function isAutoInvoiceEnabled(shopDomain: string): Promise<boolean> {
   try {
-    const { getRedisConnection } = await import('@/lib/redis');
-    const redis = getRedisConnection();
+    // Find shop key from domain
+    const shopCfg = SHOP_CONFIGS.find(s => s.domain === shopDomain);
+    const shopKey  = shopCfg?.key ?? 'ro';
 
-    // Determine shop key from domain (matches settings/route.js logic)
-    // e.g. "9f1956.myshopify.com" → try all known shop keys
-    const shopKeys = ['ro', 'hu', 'global', shopDomain];
+    // Read from PostgreSQL (WebhookEvent used as KV store — same as settings/route.js)
+    const record = await db.webhookEvent.findUnique({
+      where: { shopifyEventId: `settings:${shopKey}` },
+    });
 
-    // Also try matching from SHOP_CONFIGS
-    for (const cfg of SHOP_CONFIGS) {
-      if (cfg.domain === shopDomain && cfg.key) {
-        shopKeys.unshift(cfg.key);
-      }
+    if (!record) {
+      log.info('No autoInvoice setting in DB', { shopDomain, shopKey });
+      return false;
     }
 
-    for (const key of shopKeys) {
-      const raw = await redis.get(`xconnector:settings:${key}`);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        log.info('autoInvoice setting found', { key, autoInvoice: parsed.autoInvoice, shopDomain });
-        if (parsed.autoInvoice !== undefined) return Boolean(parsed.autoInvoice);
-      }
-    }
-
-    log.info('No autoInvoice setting found in Redis, defaulting to false', { shopDomain });
-    return false;
+    const payload = record.payload as Record<string, unknown>;
+    const enabled = Boolean(payload?.autoInvoice);
+    log.info('autoInvoice setting from DB', { shopKey, enabled });
+    return enabled;
   } catch (e) {
     log.error('isAutoInvoiceEnabled error', { error: (e as Error).message });
     return false;
