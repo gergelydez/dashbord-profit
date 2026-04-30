@@ -196,7 +196,7 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
       tracking: shopifyAwb,
       trackingUrl: shopifyTrackingUrl,
       // For Shopify AWBs without DB record, fetch label from GLS API by tracking number
-      labelUrl: `${appUrl}/api/connector/awb-label?tracking=${encodeURIComponent(shopifyAwb)}&courier=${shopifyCourier}`,
+      labelUrl: `/api/connector/awb-label?tracking=${encodeURIComponent(shopifyAwb)}&courier=${shopifyCourier}`,
       status: 'CREATED',
     } : null),
     processingStatus: procStatus,
