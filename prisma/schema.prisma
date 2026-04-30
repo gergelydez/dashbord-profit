@@ -60,6 +60,7 @@ model Shop {
   accessToken String                        // Shopify Admin API access token
   active      Boolean  @default(true)
   scopes      String   @default("")         // comma-separated OAuth scopes
+  settings    Json     @default("{}")       // per-shop settings: { autoInvoice: bool }
   installedAt DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
