@@ -266,7 +266,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     endpoint: 'shopify-webhooks',
-    autoInvoiceTopics: [...AUTO_INVOICE_TOPICS],
+    autoInvoiceTopics: Array.from(AUTO_INVOICE_TOPICS),
     processInlineEnabled: process.env.PROCESS_INLINE === 'true',
   });
 }
