@@ -1466,8 +1466,8 @@ export default function XConnectorPage() {
   const setAS = (id: string, patch: Partial<RowActionState>) => setActionStates(p => ({ ...p, [id]: { ...getState(id), ...patch } }));
 
   const invoiceMut = useMutation({
-    mutationFn: async ({ shopifyOrderId, withCollection, useStock, overrides }: {
-      shopifyOrderId: string; withCollection: boolean; useStock?: boolean;
+    mutationFn: async ({ shopifyOrderId, withCollection, useStock, paymentType, overrides }: {
+      shopifyOrderId: string; withCollection: boolean; useStock?: boolean; paymentType?: string;
       overrides?: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: { name: string; sku: string; quantity: number; price: number }[] };
     }) => {
       setAS(shopifyOrderId, { invoiceLoading: true, error: null });
