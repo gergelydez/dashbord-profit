@@ -204,13 +204,25 @@ async function generateInvoiceAsync(orderId: string, shopDomain: string): Promis
     orderId, shopDomain, withCollection, paymentType,
   });
 
+  // OBLIGATORIU: toate produsele (non-transport) trebuie să aibă SKU
+  // Dacă lipsește SKU → NU generăm factură automat — rămâne pentru generare manuală
+  const lineItemsFromDb = (order.lineItems as Array<{name:string;sku:string;qty:number;price:number;isShipping?:boolean}>);
+  const missingSkuItems = lineItemsFromDb.filter(i => i.price > 0 && !i.isShipping && !i.sku?.trim());
+
+  if (missingSkuItems.length > 0) {
+    throw new Error(
+      `Auto-facturare anulată — produsele "${missingSkuItems.map(i => i.name).join(', ')}" ` +
+      `nu au SKU în Shopify. Adaugă SKU și regenerează manual din dashboard.`
+    );
+  }
+
   const result = await ensureInvoice(
     order,
     shopCfg.accessToken,
     shopDomain,
     withCollection,
-    true, // useStock = true for auto-invoice
-    undefined, // lineItems from DB (already saved with shipping)
+    true, // useStock ÎNTOTDEAUNA pentru auto-facturare
+    undefined,
     paymentType,
   );
 
