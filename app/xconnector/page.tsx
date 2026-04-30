@@ -217,6 +217,7 @@ function Field({ label, value, onChange, type = 'text', placeholder, disabled }:
 interface InvoiceLineLocal {
   name: string; sku: string; quantity: number; price: number;
   sbCode?: string; sbName?: string; sbMatched?: boolean;
+  useGestiuneName?: boolean; // true = use name from gestiune, false = use Shopify name
 }
 interface SbProduct { code: string; name: string; unit: string; price: number; warehouse: string; stock?: number | null; }
 
@@ -303,28 +304,40 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   };
 
   const pickSbProduct = (i: number, p: SbProduct) => {
-    updateItem(i, { sku: p.code, sbCode: p.code, sbName: p.name, sbMatched: true, price: p.price > 0 ? p.price : items[i].price });
+    // Keep current name (Shopify) by default — user can switch to gestiune name via toggle
+    updateItem(i, {
+      sku: p.code,
+      sbCode: p.code,
+      sbName: p.name,          // store gestiune name for toggle
+      sbMatched: true,
+      useGestiuneName: false,  // default: keep Shopify name on invoice
+      price: p.price > 0 ? p.price : items[i].price,
+    });
     setSbOpen(prev => ({ ...prev, [i]: false }));
     setSbQuery(prev => ({ ...prev, [i]: '' }));
     setSbResults(prev => ({ ...prev, [i]: [] }));
+    setSbErrors(prev => ({ ...prev, [i]: '' }));
   };
 
   const [localError, setLocalError] = useState<string | null>(null);
 
   const handleGenerate = () => {
     setLocalError(null);
-    // Frontend validation: if useStock, all items must have SKU
-    const itemsToValidate = items;
+    // If useStock=true but some items lack SKU, generate anyway:
+    // - items WITH sku → SmartBill will use gestiune for them
+    // - items WITHOUT sku → SmartBill will invoice without stock decrement
+    // This matches how xConnector works natively.
+    // Only hard-block if ALL items lack SKU and user explicitly wants gestiune.
     if (useStock) {
-      const missing = itemsToValidate.filter(i => i.price > 0 && !i.sku?.trim());
-      if (missing.length > 0) {
+      const withSku    = items.filter(i => i.price > 0 && i.sku?.trim());
+      const withoutSku = items.filter(i => i.price > 0 && !i.sku?.trim());
+      if (withSku.length === 0 && withoutSku.length > 0) {
+        // None have SKU — warn but still allow
         setLocalError(
-          `Gestiunea mărfuri activată, dar ${missing.length === 1 ? 'produsul' : 'produsele'} ` +
-          missing.map(i => `"${i.name}"`).join(', ') +
-          ` ${missing.length === 1 ? 'nu are' : 'nu au'} cod SKU. ` +
-          `Completează câmpul SKU direct sau caută produsul în Gestiune.`
+          `⚠ Niciun produs nu are cod SKU. Gestiunea nu va fi scăzută. ` +
+          `Adaugă codul SKU și încearcă din nou, sau dezactivează "Gestiunea mărfuri".`
         );
-        return;
+        // Don't return — let them generate anyway
       }
     }
     onGenerate({
@@ -332,7 +345,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
       overrides: {
         customer: { name, phone, email },
         address:  { address1: addr1, city, zip, province },
-        lineItems: itemsToValidate,
+        lineItems: items,
       },
     });
   };
@@ -510,99 +523,112 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
           {/* PRODUCTS */}
           <div style={secStyle}>
             <div style={secH}>📦 Produse facturate</div>
-            {items.map((item, i) => (
+            {items.map((item, i) => {
+              const shopifyName = order.lineItems[i]?.name ?? item.name;
+              const gestiuneName = item.sbName ?? item.name;
+              const showNameToggle = item.sbMatched && item.sbName && item.sbName !== shopifyName;
+              return (
               <div key={i} style={{ paddingBottom: i < items.length - 1 ? 14 : 0, marginBottom: i < items.length - 1 ? 14 : 0, borderBottom: i < items.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
-                {/* Row 1: name + qty + price */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 90px', gap: 8, marginBottom: 8 }}>
-                  <div>
-                    <label style={lbl}>Denumire produs</label>
-                    <input style={inp} value={item.name} onChange={e => updateItem(i, { name: e.target.value })} placeholder="Produs" />
-                  </div>
-                  <div>
-                    <label style={lbl}>Cant.</label>
-                    <input type="number" min={1} style={inp} value={item.quantity} onChange={e => updateItem(i, { quantity: parseInt(e.target.value) || 1 })} />
-                  </div>
-                  <div>
-                    <label style={lbl}>Preț unit.</label>
-                    <input type="number" step="0.01" style={inp} value={item.price} onChange={e => updateItem(i, { price: parseFloat(e.target.value) || 0 })} />
-                  </div>
-                </div>
-                {/* Row 2: SKU + SmartBill search */}
-                <div style={{ position: 'relative' }}>
+
+                {/* SKU / Cod SmartBill — FIRST, most important */}
+                <div style={{ marginBottom: 8 }}>
                   <label style={lbl}>
                     SKU / Cod SmartBill
-                    {!item.sku && !item.sbMatched && (
-                      <span style={{ marginLeft: 6, color: '#f59e0b', fontSize: 10, fontWeight: 600 }}>
-                        ⚠ fără SKU — caută mai jos
-                      </span>
+                    {!item.sku && (
+                      <span style={{ marginLeft: 6, color: '#f59e0b', fontSize: 10, fontWeight: 600 }}>⚠ fără cod</span>
                     )}
                     {item.sbMatched && (
-                      <span style={{ marginLeft: 6, color: '#10b981', fontSize: 10, fontWeight: 600 }}>
-                        ✓ asociat din Gestiune
-                      </span>
+                      <span style={{ marginLeft: 6, color: '#10b981', fontSize: 10, fontWeight: 600 }}>✓ asociat din Gestiune</span>
                     )}
                   </label>
                   <div style={{ position: 'relative' }}>
                     <input
-                      style={{ ...inp, fontFamily: 'monospace', fontSize: 12, paddingRight: sbLoading[i] ? 32 : 10,
+                      style={{ ...inp, fontFamily: 'monospace', fontSize: 13, paddingRight: sbLoading[i] ? 32 : 10,
                         ...(item.sbMatched ? { borderColor: '#10b981', background: 'rgba(16,185,129,0.05)' } : {})
                       }}
-                      value={item.sku || sbQuery[i] || ''}
+                      value={item.sku}
                       onChange={e => {
-                        updateItem(i, { sku: e.target.value, sbMatched: false });
+                        updateItem(i, { sku: e.target.value, sbMatched: false, sbName: undefined });
                         searchSb(i, e.target.value);
                       }}
-                      placeholder="SKU / cod SmartBill sau caută după nume…"
+                      placeholder="Cod SKU din SmartBill (ex: WBAND) sau caută după nume…"
                     />
                     {sbLoading[i] && (
                       <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}><Spin /></span>
                     )}
                     {sbOpen[i] && (sbResults[i] || []).length > 0 && (
-                        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#141928', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, zIndex: 200, maxHeight: 200, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-                          {(sbResults[i] || []).map((p, pi) => (
-                            <div key={pi}
-                              onClick={() => pickSbProduct(i, p)}
-                              style={{ padding: '9px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(249,115,22,0.1)')}
-                              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                            >
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#141928', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, zIndex: 200, maxHeight: 220, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                        {(sbResults[i] || []).map((p, pi) => (
+                          <div key={pi}
+                            onClick={() => pickSbProduct(i, p)}
+                            style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(249,115,22,0.1)')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                               <div>
-                                <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
-                                <div style={{ fontSize: 11, color: 'var(--c-text3)', fontFamily: 'monospace' }}>{p.code}</div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{p.name}</div>
+                                <div style={{ fontSize: 11, color: '#f97316', fontFamily: 'monospace', marginTop: 2 }}>{p.code}</div>
                               </div>
-                              <div style={{ textAlign: 'right' as const }}>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316' }}>{p.price > 0 ? `${p.price} RON` : '—'}</div>
-                                {p.stock != null && <div style={{ fontSize: 10, color: p.stock > 0 ? '#10b981' : '#f43f5e' }}>Stoc: {p.stock}</div>}
-                                {p.warehouse && <div style={{ fontSize: 10, color: 'var(--c-text3)' }}>{p.warehouse}</div>}
+                              <div style={{ textAlign: 'right' as const, flexShrink: 0, marginLeft: 8 }}>
+                                {p.stock != null && <div style={{ fontSize: 11, color: p.stock > 0 ? '#10b981' : '#f43f5e', fontWeight: 600 }}>Stoc: {p.stock}</div>}
+                                {p.price > 0 && <div style={{ fontSize: 11, color: 'var(--c-text3)' }}>{p.price} RON</div>}
                               </div>
                             </div>
-                          ))}
-                        </div>
-                      )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {/* Search info / no results — NOT blocking */}
                   {sbErrors[i] && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: '#f59e0b', lineHeight: 1.4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const }}>
-                      <span>⚠ {sbErrors[i]}</span>
-                      {item.sku && (
-                        <button
-                          style={{ fontSize: 10, color: '#60a5fa', background: 'none', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 4, padding: '2px 6px', cursor: 'pointer' }}
-                          onClick={async () => {
-                            try {
-                              const r = await fetch(`/api/connector/smartbill-products?q=${encodeURIComponent(item.sku)}&debug=1`);
-                              const j = await r.json();
-                              alert('DEBUG SmartBill:\n' + JSON.stringify(j._debug || j, null, 2).slice(0, 2000));
-                            } catch(e) { alert('Eroare: ' + (e as Error).message); }
-                          }}
-                        >
-                          🔍 Debug
-                        </button>
-                      )}
-                    </div>
+                    <div style={{ marginTop: 3, fontSize: 11, color: '#f59e0b' }}>⚠ {sbErrors[i]}</div>
                   )}
                 </div>
+
+                {/* Name toggle — shown only when gestiune name differs from Shopify name */}
+                {showNameToggle && (
+                  <div style={{ marginBottom: 8, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--c-text3)', marginBottom: 6 }}>📝 Nume pe factură:</div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        onClick={() => updateItem(i, { useGestiuneName: false, name: shopifyName })}
+                        style={{ flex: 1, padding: '6px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: 'none',
+                          background: !item.useGestiuneName ? '#f97316' : 'rgba(255,255,255,0.07)',
+                          color: !item.useGestiuneName ? '#fff' : 'var(--c-text3)',
+                        }}
+                      >
+                        🛒 Shopify<br/>
+                        <span style={{ fontWeight: 400, opacity: 0.8, fontSize: 10 }}>{shopifyName.slice(0, 30)}{shopifyName.length > 30 ? '…' : ''}</span>
+                      </button>
+                      <button
+                        onClick={() => updateItem(i, { useGestiuneName: true, name: gestiuneName })}
+                        style={{ flex: 1, padding: '6px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: 'none',
+                          background: item.useGestiuneName ? '#10b981' : 'rgba(255,255,255,0.07)',
+                          color: item.useGestiuneName ? '#fff' : 'var(--c-text3)',
+                        }}
+                      >
+                        🏬 Gestiune<br/>
+                        <span style={{ fontWeight: 400, opacity: 0.8, fontSize: 10 }}>{gestiuneName.slice(0, 30)}{gestiuneName.length > 30 ? '…' : ''}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Qty + Price */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div>
+                    <label style={lbl}>Cantitate</label>
+                    <input type="number" min={1} style={inp} value={item.quantity} onChange={e => updateItem(i, { quantity: parseInt(e.target.value) || 1 })} />
+                  </div>
+                  <div>
+                    <label style={lbl}>Preț unit. ({order.currency})</label>
+                    <input type="number" step="0.01" style={inp} value={item.price} onChange={e => updateItem(i, { price: parseFloat(e.target.value) || 0 })} />
+                  </div>
+                </div>
+
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* OPTIONS */}
