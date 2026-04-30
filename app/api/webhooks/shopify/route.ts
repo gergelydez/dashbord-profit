@@ -169,9 +169,18 @@ export async function POST(request: Request) {
     const hasInvoice = await db.invoice.findFirst({ where: { orderId } });
     if (!hasInvoice) {
       log.info('Triggering auto-invoice', { orderId, topic });
-      generateInvoiceAsync(orderId, shopDomain).catch((err) => {
-        log.warn('Auto-invoice failed', { orderId, error: (err as Error).message });
-      });
+      try {
+        await generateInvoiceAsync(orderId, shopDomain);
+        log.info('Auto-invoice SUCCESS', { orderId });
+      } catch (err) {
+        const errMsg = (err as Error).message;
+        log.error('Auto-invoice FAILED', { orderId, error: errMsg });
+        // Save error so it's visible in debug endpoint
+        await db.webhookEvent.update({
+          where: { id: webhookEvent.id },
+          data: { lastError: `Auto-invoice failed: ${errMsg}` },
+        }).catch(() => {});
+      }
     } else {
       log.info('Order already has invoice — skipping', { orderId });
     }
