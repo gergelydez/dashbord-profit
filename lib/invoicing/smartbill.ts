@@ -27,22 +27,16 @@ export interface SmartBillConfig {
   warehouseName?: string;
 }
 
-export function loadSmartBillConfig(shopKey?: string): SmartBillConfig {
-  // Suport per-shop: SMARTBILL_EMAIL_HU, SMARTBILL_TOKEN_HU etc.
-  // Daca nu exista var per-shop, foloseste var globala
-  const suffix = shopKey && shopKey !== 'ro' ? `_${shopKey.toUpperCase()}` : '';
-  const get = (key: string) =>
-    process.env[`${key}${suffix}`] || process.env[key] || '';
-
+export function loadSmartBillConfig(): SmartBillConfig {
   return {
-    email:          get('SMARTBILL_EMAIL'),
-    token:          get('SMARTBILL_TOKEN'),
-    cif:            get('SMARTBILL_CIF'),
-    series:         get('SMARTBILL_SERIES'),
-    paymentSeries:  get('SMARTBILL_PAYMENT_SERIES') || undefined,
-    taxPercentage:  parseInt(get('SMARTBILL_TAX_PERCENTAGE') || '19', 10),
-    useStock:       get('SMARTBILL_USE_STOCK') === 'true',
-    warehouseName:  get('SMARTBILL_WAREHOUSE') || undefined,
+    email:          process.env.SMARTBILL_EMAIL          || '',
+    token:          process.env.SMARTBILL_TOKEN          || '',
+    cif:            process.env.SMARTBILL_CIF            || '',
+    series:         process.env.SMARTBILL_SERIES         || '',
+    paymentSeries:  process.env.SMARTBILL_PAYMENT_SERIES || undefined,
+    taxPercentage:  parseInt(process.env.SMARTBILL_TAX_PERCENTAGE || '19', 10),
+    useStock:       process.env.SMARTBILL_USE_STOCK === 'true',
+    warehouseName:  process.env.SMARTBILL_WAREHOUSE      || undefined,
   };
 }
 
@@ -56,17 +50,17 @@ export interface InvoiceLineItem {
 }
 
 export interface CreateInvoiceInput {
-  orderName:   string;   // e.g. "#1042"
-  currency:    string;
-  isPaid:      boolean;
-  totalPrice:  number;
+  orderName:    string;   // e.g. "#1042"
+  currency:     string;
+  isPaid:       boolean;
+  totalPrice:   number;
+  useStockOverride?: boolean;  // if true, override env SMARTBILL_USE_STOCK=false
   client: {
     name:    string;
     email?:  string;
     address: string;
     city:    string;
     county:  string;
-    country?: string;  // cod tara ISO: 'RO', 'HU' etc — default 'Romania'
   };
   lineItems:   InvoiceLineItem[];
 }
@@ -118,19 +112,6 @@ export async function getSeries(cfg: SmartBillConfig): Promise<string[]> {
   return list.map((s) => s.name ?? String(s)).filter(Boolean);
 }
 
-// ─── Country code → full name ────────────────────────────────────────────────
-function countryName(code?: string): string {
-  const map: Record<string, string> = {
-    RO: 'Romania', HU: 'Hungary', DE: 'Germany', FR: 'France',
-    IT: 'Italy',   ES: 'Spain',   PL: 'Poland',  CZ: 'Czech Republic',
-    SK: 'Slovakia',AT: 'Austria', GB: 'United Kingdom', US: 'United States',
-    MD: 'Moldova', BG: 'Bulgaria',HR: 'Croatia', RS: 'Serbia',
-    UA: 'Ukraine', TR: 'Turkey',
-  };
-  if (!code) return 'Romania';
-  return map[code.toUpperCase()] || code;
-}
-
 // ─── Invoice creation ─────────────────────────────────────────────────────────
 
 export async function createInvoice(
@@ -155,10 +136,26 @@ export async function createInvoice(
 
   const issueDate = new Date().toISOString().slice(0, 10);
 
+  // Resolve useStock: explicit override takes precedence over env config
+  const useStock = input.useStockOverride !== undefined ? input.useStockOverride : cfg.useStock;
+
+  // Validate: if useStock=true, all line items must have a SKU/code
+  if (useStock) {
+    const missing = input.lineItems.filter(i => i.price > 0 && !i.sku?.trim());
+    if (missing.length > 0) {
+      throw new Error(
+        `Gestiunea mărfuri activată, dar ${missing.length === 1 ? 'produsul' : 'produsele'} ` +
+        missing.map(i => `"${i.name}"`).join(', ') +
+        ` nu ${missing.length === 1 ? 'are' : 'au'} cod SKU. ` +
+        `Adaugă codul din Gestiunea SmartBill în câmpul SKU și încearcă din nou.`
+      );
+    }
+  }
+
   // Build product list
   let products = input.lineItems
     .filter((i) => i.price > 0)
-    .map((i) => buildProduct(i, input.currency, cfg));
+    .map((i) => buildProduct(i, input.currency, { ...cfg, useStock }));
 
   // Fallback: single line item for the whole order
   if (!products.length) {
@@ -176,7 +173,7 @@ export async function createInvoice(
         taxPercentage:     cfg.taxPercentage,
         isService:         false,
         saveToDb:          false,
-        ...(cfg.useStock ? { warehouseName: cfg.warehouseName || 'Marfuri' } : {}),
+        ...(useStock && cfg.warehouseName ? { warehouseName: cfg.warehouseName } : {}),
       },
     ];
   }
@@ -190,7 +187,7 @@ export async function createInvoice(
       isTaxPayer: false,
       city:       input.client.city  || '',
       county:     input.client.county || '',
-      country:    countryName(input.client.country),
+      country:    'Romania',
       email:      input.client.email || '',
       saveToDb:   false,
     },
@@ -200,7 +197,7 @@ export async function createInvoice(
     currency:     input.currency || 'RON',
     language:     'RO',
     precision:    2,
-    useStock:     cfg.useStock,  // true = SmartBill scade din gestiunea 'Marfuri'
+    useStock:     useStock,
     observations: `Comanda Shopify ${input.orderName}`,
     mentions:     '',
     products,
@@ -287,7 +284,6 @@ export async function collectInvoice(
   value: number,
   clientName: string,
   currency = 'RON',
-  country = 'RO',
 ): Promise<CollectResult> {
   const log = logger.child({ module: 'invoicing/smartbill', action: 'collect' });
   const auth = makeAuth(cfg.email, cfg.token);
@@ -302,7 +298,7 @@ export async function collectInvoice(
       address:    '',
       city:       '',
       county:     '',
-      country:    countryName(country),
+      country:    'Romania',
       saveToDb:   false,
     },
     issueDate,
@@ -344,10 +340,9 @@ function buildProduct(
   currency: string,
   cfg: SmartBillConfig,
 ): Record<string, unknown> {
-  const warehouse = cfg.warehouseName || 'Marfuri';
   return {
     name:              item.name.slice(0, 255),
-    code:              item.sku || '',          // SKU: DM56, etc.
+    code:              item.sku || '',
     isDiscount:        false,
     measuringUnitName: 'buc',
     currency:          currency || 'RON',
@@ -358,6 +353,6 @@ function buildProduct(
     taxPercentage:     cfg.taxPercentage,
     isService:         false,
     saveToDb:          false,
-    ...(cfg.useStock ? { warehouseName: warehouse } : {}),
+    ...(cfg.useStock && cfg.warehouseName ? { warehouseName: cfg.warehouseName } : {}),
   };
 }
