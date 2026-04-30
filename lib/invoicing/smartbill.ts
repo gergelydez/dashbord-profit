@@ -162,10 +162,12 @@ export async function createInvoice(
   // items WITH sku  → useStock=true  (scad din gestiune)
   // items WITHOUT sku → useStock=false (facturate fără gestiune)
   // This matches xConnector native behavior.
-  // When useStock=true: ALL paid items MUST have a SKU code.
-  // SmartBill validates every single product — no exceptions.
+  // When useStock=true: non-shipping items MUST have SKU.
+  // isShipping=true items (transport) are exempt — no SKU needed.
   if (useStock) {
-    const missing = input.lineItems.filter(i => i.price > 0 && !i.sku?.trim());
+    const missing = input.lineItems.filter(i =>
+      i.price > 0 && !i.sku?.trim() && !i.isShipping
+    );
     if (missing.length > 0) {
       throw new Error(
         `Produsele următoare nu au cod SmartBill (SKU): ` +
