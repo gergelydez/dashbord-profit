@@ -323,21 +323,16 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
 
   const handleGenerate = () => {
     setLocalError(null);
-    // If useStock=true but some items lack SKU, generate anyway:
-    // - items WITH sku → SmartBill will use gestiune for them
-    // - items WITHOUT sku → SmartBill will invoice without stock decrement
-    // This matches how xConnector works natively.
-    // Only hard-block if ALL items lack SKU and user explicitly wants gestiune.
+    // When useStock=true: ALL products MUST have SKU — no exceptions
     if (useStock) {
-      const withSku    = items.filter(i => i.price > 0 && i.sku?.trim());
-      const withoutSku = items.filter(i => i.price > 0 && !i.sku?.trim());
-      if (withSku.length === 0 && withoutSku.length > 0) {
-        // None have SKU — warn but still allow
+      const missing = items.filter(i => i.price > 0 && !i.sku?.trim());
+      if (missing.length > 0) {
         setLocalError(
-          `⚠ Niciun produs nu are cod SKU. Gestiunea nu va fi scăzută. ` +
-          `Adaugă codul SKU și încearcă din nou, sau dezactivează "Gestiunea mărfuri".`
+          `Adaugă codul SKU pentru: ` +
+          missing.map(i => `"${i.name}"`).join(', ') +
+          `. Caută produsul în câmpul SKU de mai sus și selectează-l din Gestiunea SmartBill.`
         );
-        // Don't return — let them generate anyway
+        return; // BLOCK — do not generate
       }
     }
     onGenerate({
