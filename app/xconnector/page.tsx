@@ -313,14 +313,15 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   const handleGenerate = () => {
     setLocalError(null);
     // Frontend validation: if useStock, all items must have SKU
+    const itemsToValidate = items;
     if (useStock) {
-      const missing = items.filter(i => i.price > 0 && !i.sku?.trim());
+      const missing = itemsToValidate.filter(i => i.price > 0 && !i.sku?.trim());
       if (missing.length > 0) {
         setLocalError(
           `Gestiunea mărfuri activată, dar ${missing.length === 1 ? 'produsul' : 'produsele'} ` +
           missing.map(i => `"${i.name}"`).join(', ') +
           ` ${missing.length === 1 ? 'nu are' : 'nu au'} cod SKU. ` +
-          `Caută produsul în câmpul "Caută în Gestiune" de mai sus și selectează-l.`
+          `Completează câmpul SKU direct sau caută produsul în Gestiune.`
         );
         return;
       }
@@ -330,7 +331,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
       overrides: {
         customer: { name, phone, email },
         address:  { address1: addr1, city, zip, province },
-        lineItems: items,
+        lineItems: itemsToValidate,
       },
     });
   };
@@ -540,22 +541,22 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                       </span>
                     )}
                   </label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <input style={{ ...inp, flex: 1, fontFamily: 'monospace', fontSize: 12 }}
-                      value={item.sku} onChange={e => updateItem(i, { sku: e.target.value, sbMatched: false })}
-                      placeholder="SKU sau cod SmartBill"
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      style={{ ...inp, fontFamily: 'monospace', fontSize: 12, paddingRight: sbLoading[i] ? 32 : 10,
+                        ...(item.sbMatched ? { borderColor: '#10b981', background: 'rgba(16,185,129,0.05)' } : {})
+                      }}
+                      value={item.sku || sbQuery[i] || ''}
+                      onChange={e => {
+                        updateItem(i, { sku: e.target.value, sbMatched: false });
+                        searchSb(i, e.target.value);
+                      }}
+                      placeholder="SKU / cod SmartBill sau caută după nume…"
                     />
-                    <div style={{ position: 'relative', flex: 1 }}>
-                      <input
-                        style={{ ...inp, paddingRight: sbLoading[i] ? 32 : 10 }}
-                        value={sbQuery[i] || ''}
-                        onChange={e => searchSb(i, e.target.value)}
-                        placeholder="🔍 Caută în Gestiune…"
-                      />
-                      {sbLoading[i] && (
-                        <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}><Spin /></span>
-                      )}
-                      {sbOpen[i] && (sbResults[i] || []).length > 0 && (
+                    {sbLoading[i] && (
+                      <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}><Spin /></span>
+                    )}
+                    {sbOpen[i] && (sbResults[i] || []).length > 0 && (
                         <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#141928', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, zIndex: 200, maxHeight: 200, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
                           {(sbResults[i] || []).map((p, pi) => (
                             <div key={pi}
@@ -577,7 +578,6 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                           ))}
                         </div>
                       )}
-                    </div>
                   </div>
                   {/* Search error / no results message */}
                   {sbErrors[i] && (
