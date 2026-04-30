@@ -139,20 +139,23 @@ export async function createInvoice(
   // Resolve useStock: explicit override takes precedence over env config
   const useStock = input.useStockOverride !== undefined ? input.useStockOverride : cfg.useStock;
 
-  // Validate: if useStock=true, all line items must have a SKU/code
+  // Build product list — per-item useStock logic:
+  // items WITH sku  → useStock=true  (scad din gestiune)
+  // items WITHOUT sku → useStock=false (facturate fără gestiune)
+  // This matches xConnector native behavior.
+  // When useStock=true: ALL paid items MUST have a SKU code.
+  // SmartBill validates every single product — no exceptions.
   if (useStock) {
     const missing = input.lineItems.filter(i => i.price > 0 && !i.sku?.trim());
     if (missing.length > 0) {
       throw new Error(
-        `Gestiunea mărfuri activată, dar ${missing.length === 1 ? 'produsul' : 'produsele'} ` +
+        `Produsele următoare nu au cod SmartBill (SKU): ` +
         missing.map(i => `"${i.name}"`).join(', ') +
-        ` nu ${missing.length === 1 ? 'are' : 'au'} cod SKU. ` +
-        `Adaugă codul din Gestiunea SmartBill în câmpul SKU și încearcă din nou.`
+        `. Adaugă codul din Gestiunea SmartBill pentru fiecare produs.`
       );
     }
   }
 
-  // Build product list
   let products = input.lineItems
     .filter((i) => i.price > 0)
     .map((i) => buildProduct(i, input.currency, cfg, useStock));
