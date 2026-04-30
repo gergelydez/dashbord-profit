@@ -68,8 +68,8 @@ export async function ensureInvoice(
   // Fall back to DB order line items if no override provided
   const lineItems = lineItemsOverride && lineItemsOverride.length > 0
     ? lineItemsOverride
-    : (order.lineItems as Array<{ name: string; sku: string; qty: number; price: number }>).map(
-        (i) => ({ name: i.name, sku: i.sku, quantity: i.qty, price: i.price }),
+    : (order.lineItems as Array<{ name: string; sku: string; qty: number; price: number; warehouse?: string }>).map(
+        (i) => ({ name: i.name, sku: i.sku, quantity: i.qty, price: i.price, warehouse: i.warehouse }),
       );
 
   log.info('Creating SmartBill invoice', { items: lineItems.length });
