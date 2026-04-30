@@ -325,10 +325,21 @@ export async function collectInvoice(
   value: number,
   clientName: string,
   currency = 'RON',
+  paymentType = 'Card',  // 'Card', 'Ramburs', 'Chitanta', 'Ordin plata' etc.
 ): Promise<CollectResult> {
   const log = logger.child({ module: 'invoicing/smartbill', action: 'collect' });
   const auth = makeAuth(cfg.email, cfg.token);
   const issueDate = new Date().toISOString().slice(0, 10);
+
+  // Chitanta needs a series — auto-fetch if not set
+  let paymentSeries = cfg.paymentSeries;
+  if (paymentType === 'Chitanta' && !paymentSeries) {
+    paymentSeries = (await getPaymentSeries(cfg))[0] || '';
+    if (paymentSeries) log.info('Auto-discovered payment series', { paymentSeries });
+  }
+
+  // isCash: true for Ramburs/Chitanta, false for Card/Ordin plata etc.
+  const isCash = ['Ramburs', 'Chitanta', 'Bon'].includes(paymentType);
 
   const body = {
     companyVatCode: cfg.cif,
@@ -347,11 +358,11 @@ export async function collectInvoice(
     precision:         2,
     value:             Math.round(value * 100) / 100,
     isDraft:           false,
-    type:              'Chitanta',
-    isCash:            true,
-    useInvoiceDetails: false,
+    type:              paymentType,
+    isCash,
+    useInvoiceDetails: true,
     invoicesList:      [{ seriesName: invoiceSeries, number: String(invoiceNumber) }],
-    ...(cfg.paymentSeries ? { seriesName: cfg.paymentSeries } : {}),
+    ...(paymentSeries ? { seriesName: paymentSeries } : {}),
   };
 
   try {
