@@ -97,14 +97,8 @@ export async function ensureInvoice(
   const pdfBuffer = await downloadInvoicePdf(cfg, result.series, result.number);
 
   // ── Create Invoice row — robust against all duplicate scenarios ──────────────
-  // Scenarios handled:
-  // 1. Normal: no existing invoice → create
-  // 2. SmartBill deleted + re-created with SAME number → upsert updates it
-  // 3. SmartBill deleted + re-created with NEW number → delete old record, create new
-  // 4. Race condition (called twice fast) → upsert handles it
-
-  // First, clean up any stale invoice records for this order that have a DIFFERENT number
-  // (happens when user deletes from SmartBill and SmartBill assigns a new number)
+  // Delete any stale invoices for this order with a DIFFERENT series+number
+  // (happens when user deletes from SmartBill and gets a new number)
   await db.invoice.deleteMany({
     where: {
       orderId: order.id,
@@ -113,18 +107,11 @@ export async function ensureInvoice(
     },
   });
 
-  // Now upsert by series+number (handles same-number re-creation)
+  // Try to create; if duplicate (same series+number), find and update existing
   let invoice;
   try {
-    invoice = await db.invoice.upsert({
-      where: {
-        shopId_series_number: {
-          shopId: order.shopId,
-          series: result.series,
-          number: result.number,
-        },
-      },
-      create: {
+    invoice = await db.invoice.create({
+      data: {
         orderId:    order.id,
         shopId:     order.shopId,
         series:     result.series,
@@ -132,22 +119,19 @@ export async function ensureInvoice(
         invoiceUrl: result.invoiceUrl,
         status:     'CREATED',
       },
-      update: {
-        orderId:    order.id,
-        invoiceUrl: result.invoiceUrl,
-        status:     'CREATED',
-      },
     });
-  } catch (upsertErr) {
-    // Ultimate fallback: if upsert still fails, find and return existing record
-    log.warn('Invoice upsert failed, falling back to findFirst', { error: (upsertErr as Error).message });
-    const fallback = await db.invoice.findFirst({
+  } catch {
+    // Already exists (same series+number) — find and update it
+    const existing2 = await db.invoice.findFirst({
       where: { shopId: order.shopId, series: result.series, number: result.number },
     });
-    if (fallback) {
-      invoice = fallback;
+    if (existing2) {
+      invoice = await db.invoice.update({
+        where: { id: existing2.id },
+        data:  { orderId: order.id, invoiceUrl: result.invoiceUrl, status: 'CREATED' },
+      });
     } else {
-      throw upsertErr;
+      throw new Error(`Nu s-a putut salva factura ${result.series}${result.number} în baza de date.`);
     }
   }
 
@@ -173,10 +157,13 @@ export async function ensureInvoice(
   let collected = false;
   const shouldCollect = withCollection === true || (withCollection === undefined && order.isPaid);
   if (shouldCollect && Number(order.totalPrice) > 0) {
+    // paymentType from modal selector, fallback based on order payment status
+    const resolvedPaymentType = paymentType || (order.isPaid ? 'Card' : 'Ramburs');
     const collectResult = await collectInvoice(
       cfg, result.series, result.number,
       Number(order.totalPrice), order.customerName,
       order.currency,
+      resolvedPaymentType,
     );
     collected = collectResult.ok;
     await db.invoice.update({
