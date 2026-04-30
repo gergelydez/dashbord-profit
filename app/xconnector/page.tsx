@@ -285,7 +285,23 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
     setSbResults(prev => ({ ...prev, [i]: [] }));
   };
 
+  const [localError, setLocalError] = useState<string | null>(null);
+
   const handleGenerate = () => {
+    setLocalError(null);
+    // Frontend validation: if useStock, all items must have SKU
+    if (useStock) {
+      const missing = items.filter(i => i.price > 0 && !i.sku?.trim());
+      if (missing.length > 0) {
+        setLocalError(
+          `Gestiunea mărfuri activată, dar ${missing.length === 1 ? 'produsul' : 'produsele'} ` +
+          missing.map(i => `"${i.name}"`).join(', ') +
+          ` ${missing.length === 1 ? 'nu are' : 'nu au'} cod SKU. ` +
+          `Caută produsul în câmpul "Caută în Gestiune" de mai sus și selectează-l.`
+        );
+        return;
+      }
+    }
     onGenerate({
       shopifyOrderId: order.id, withCollection, useStock,
       overrides: {
@@ -582,9 +598,9 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
             </div>
           </div>
 
-          {actionState.error && (
-            <div style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#f43f5e' }}>
-              ✕ {actionState.error}
+          {(localError || actionState.error) && (
+            <div style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#f43f5e', lineHeight: 1.5 }}>
+              ✕ {localError || actionState.error}
             </div>
           )}
 
