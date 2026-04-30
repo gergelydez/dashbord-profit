@@ -399,17 +399,19 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
 
   // ── After generation: show invoice viewer ─────────────────────────────────
   if (generatedInvoice || (existUrl && existNum)) {
+    // For existing invoices: get series and number separately from DB
+    const existSeries = order.invoice?.series || '';
+    const existNumber = order.invoice?.number || existNum;
     const inv = generatedInvoice || {
-      series: '', number: existNum,
+      series: existSeries, number: existNumber,
       downloadUrl: existUrl, smartbillUrl: existUrl,
       collected: !!order.invoice?.status
     };
-    // PDF proxy URL — served server-side with SmartBill auth
-    // iframe and download both use this (no auth needed from browser)
+    // PDF proxy — series and number separately (not concatenated)
     const pdfProxyUrl = `/api/connector/invoice-pdf?series=${encodeURIComponent(inv.series)}&number=${encodeURIComponent(inv.number)}`;
     const viewUrl  = pdfProxyUrl;
     const dlUrl    = pdfProxyUrl;
-    const sbViewUrl = inv.smartbillUrl || inv.downloadUrl; // fallback to SmartBill cloud
+    const sbViewUrl = inv.smartbillUrl || inv.downloadUrl;
 
     return (
       <div style={mStyle} onClick={onClose}>
