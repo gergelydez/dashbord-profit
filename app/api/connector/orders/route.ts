@@ -111,7 +111,7 @@ async function enrichWithDbState(shopifyIds: string[], domain: string) {
   for (const s of shipments) {
     const sid = s.order.shopifyId;
     // Use direct proxy URL (no token needed) — works in browser and iframe
-    const labelUrl = `${appUrl}/api/connector/awb-label?id=${s.id}`;
+    const labelUrl = `/api/connector/awb-label?id=${s.id}`;
     if (!shipMap[sid]) shipMap[sid] = { id: s.id, courier: s.courier, tracking: s.trackingNumber, trackingUrl: s.trackingUrl, labelUrl, status: s.status };
   }
 
