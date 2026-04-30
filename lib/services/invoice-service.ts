@@ -42,6 +42,7 @@ export async function ensureInvoice(
   shopifyDomain: string,
   withCollection?: boolean,
   useStock?: boolean,
+  lineItemsOverride?: Array<{ name: string; sku: string; quantity: number; price: number }>,
 ): Promise<InvoiceServiceResult> {
   const log = logger.child({ module: 'invoice-service', orderId: order.id, orderName: order.shopifyName });
 
@@ -62,9 +63,14 @@ export async function ensureInvoice(
 
   // ── Build SmartBill input ──────────────────────────────────────────────────
   const cfg = loadSmartBillConfig();
-  const lineItems = (order.lineItems as Array<{ name: string; sku: string; qty: number; price: number }>).map(
-    (i) => ({ name: i.name, sku: i.sku, quantity: i.qty, price: i.price }),
-  );
+
+  // Use lineItemsOverride from modal (contains SKUs entered by user)
+  // Fall back to DB order line items if no override provided
+  const lineItems = lineItemsOverride && lineItemsOverride.length > 0
+    ? lineItemsOverride
+    : (order.lineItems as Array<{ name: string; sku: string; qty: number; price: number }>).map(
+        (i) => ({ name: i.name, sku: i.sku, quantity: i.qty, price: i.price }),
+      );
 
   log.info('Creating SmartBill invoice', { items: lineItems.length });
 
