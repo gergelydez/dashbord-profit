@@ -27,12 +27,14 @@ export async function POST(request: Request) {
     shop: shopKey = getDefaultShopKey(),
     withCollection,
     useStock,
+    paymentType,
     lineItems,
   } = await request.json() as {
     shopifyOrderId: string;
     shop?: string;
     withCollection?: boolean;
     useStock?: boolean;
+    paymentType?: string;
     lineItems?: Array<{ name: string; sku: string; quantity: number; price: number; warehouse?: string }>;
   };
   if (!shopifyOrderId) return NextResponse.json({ error: 'shopifyOrderId required' }, { status: 400 });
@@ -59,7 +61,7 @@ export async function POST(request: Request) {
     }
 
     // Generate invoice (idempotent)
-    const result = await ensureInvoice(order, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, withCollection, useStock, lineItems);
+    const result = await ensureInvoice(order, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, withCollection, useStock, lineItems, paymentType);
 
     // Build download URL — prefer local signed URL, fallback to SmartBill cloud URL
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
