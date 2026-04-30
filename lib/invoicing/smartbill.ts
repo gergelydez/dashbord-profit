@@ -51,11 +51,12 @@ export interface InvoiceLineItem {
 }
 
 export interface CreateInvoiceInput {
-  orderName:    string;   // e.g. "#1042"
-  currency:     string;
-  isPaid:       boolean;
-  totalPrice:   number;
-  useStockOverride?: boolean;  // if true, override env SMARTBILL_USE_STOCK=false
+  orderName:         string;
+  currency:          string;
+  isPaid:            boolean;
+  totalPrice:        number;
+  useStockOverride?: boolean;
+  withCollection?:   boolean;  // embed payment in invoice body
   client: {
     name:    string;
     email?:  string;
@@ -63,7 +64,7 @@ export interface CreateInvoiceInput {
     city:    string;
     county:  string;
   };
-  lineItems:   InvoiceLineItem[];
+  lineItems: InvoiceLineItem[];
 }
 
 export interface InvoiceResult {
@@ -182,6 +183,19 @@ export async function createInvoice(
     ];
   }
 
+  // ── Payment block (încasare la emitere) ───────────────────────────────────
+  // Per SmartBill docs: embed <payment> in invoice body for same-time collection
+  const paymentBlock = input.withCollection && input.totalPrice > 0
+    ? {
+        payment: {
+          value:         Math.round(input.totalPrice * 100) / 100,
+          type:          'Chitanta',
+          isCash:        true,
+          ...(cfg.paymentSeries ? { paymentSeries: cfg.paymentSeries } : {}),
+        },
+      }
+    : {};
+
   const invoiceBody = {
     companyVatCode: cfg.cif,
     client: {
@@ -201,10 +215,11 @@ export async function createInvoice(
     currency:     input.currency || 'RON',
     language:     'RO',
     precision:    2,
-    useStock:     useStock,
+    useStock,
     observations: `Comanda Shopify ${input.orderName}`,
     mentions:     '',
     products,
+    ...paymentBlock,
   };
 
   log.debug('Creating SmartBill invoice', { series, orderName: input.orderName });
@@ -244,6 +259,24 @@ export async function createInvoice(
  * Download the invoice PDF bytes from SmartBill.
  * Returns null if SmartBill does not have the PDF available.
  */
+/**
+ * Get the correct SmartBill viewer URL for an invoice.
+ * Format confirmed from xConnector: /core/factura/vizualizeaza/?cif=...&series=...&number=...
+ */
+export function getSmartBillViewUrl(cfg: SmartBillConfig, series: string, number: string): string {
+  return `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(cfg.cif)}&series=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`;
+}
+
+/**
+ * Get the SmartBill PDF download URL.
+ * Uses the API endpoint that returns the PDF directly.
+ */
+export function getSmartBillPdfApiUrl(cfg: SmartBillConfig, series: string, number: string): string {
+  const auth = makeAuth(cfg.email, cfg.token);
+  // This URL requires Basic auth — use as iframe src via a proxy
+  return `https://ws.smartbill.ro/SBORO/api/invoice/pdf?cif=${encodeURIComponent(cfg.cif)}&seriesname=${encodeURIComponent(series)}&number=${encodeURIComponent(number)}`;
+}
+
 export async function downloadInvoicePdf(
   cfg: SmartBillConfig,
   series: string,
