@@ -403,10 +403,12 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
       downloadUrl: existUrl, smartbillUrl: existUrl,
       collected: !!order.invoice?.status
     };
-    // Use SmartBill URL for viewing (works without CONNECTOR_SECRET/APP_URL)
-    // Use downloadUrl for download (local if available, SmartBill as fallback)
-    const viewUrl  = inv.smartbillUrl || inv.downloadUrl;
-    const dlUrl    = inv.downloadUrl  || inv.smartbillUrl;
+    // PDF proxy URL — served server-side with SmartBill auth
+    // iframe and download both use this (no auth needed from browser)
+    const pdfProxyUrl = `/api/connector/invoice-pdf?series=${encodeURIComponent(inv.series)}&number=${encodeURIComponent(inv.number)}`;
+    const viewUrl  = pdfProxyUrl;
+    const dlUrl    = pdfProxyUrl;
+    const sbViewUrl = inv.smartbillUrl || inv.downloadUrl; // fallback to SmartBill cloud
 
     return (
       <div style={mStyle} onClick={onClose}>
@@ -439,7 +441,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
               <div style={{ ...secStyle, padding: 0, overflow: 'hidden' as const, borderRadius: 12 }}>
                 <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)', fontSize: 12, color: 'var(--c-text3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>📄 Previzualizare</span>
-                  <a href={viewUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#f97316', textDecoration: 'none', fontWeight: 600 }}>
+                  <a href={sbViewUrl || pdfProxyUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#f97316', textDecoration: 'none', fontWeight: 600 }}>
                     Deschide SmartBill ↗
                   </a>
                 </div>
@@ -457,16 +459,14 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
 
             {/* Action buttons */}
             <div style={{ display: 'flex', gap: 10 }}>
-              {dlUrl && (
-                <a href={dlUrl} target="_blank" rel="noreferrer"
-                  style={{ ...S.btnPrimary, textDecoration: 'none', flex: 1, justifyContent: 'center', padding: '10px 16px', fontSize: 14 }}>
-                  📥 Descarcă PDF
-                </a>
-              )}
-              {inv.smartbillUrl && (
-                <a href={inv.smartbillUrl} target="_blank" rel="noreferrer"
+              <a href={dlUrl} download={`Factura-${inv.series}${inv.number}.pdf`}
+                style={{ ...S.btnPrimary, textDecoration: 'none', flex: 1, justifyContent: 'center', padding: '10px 16px', fontSize: 14 }}>
+                📥 Descarcă PDF
+              </a>
+              {sbViewUrl && (
+                <a href={sbViewUrl} target="_blank" rel="noreferrer"
                   style={{ ...S.btnGhost, textDecoration: 'none', flex: 1, justifyContent: 'center', padding: '10px 16px', fontSize: 13 }}>
-                  🔗 Deschide SmartBill
+                  🔗 SmartBill
                 </a>
               )}
             </div>
