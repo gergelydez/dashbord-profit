@@ -290,7 +290,8 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
           setSbResults(p => ({ ...p, [i]: json.products || [] }));
           setSbOpen(p => ({ ...p, [i]: true }));
           if ((json.products || []).length === 0) {
-            setSbErrors(p => ({ ...p, [i]: 'Niciun produs găsit în Gestiune.' }));
+            // Not a blocking error — user can still generate with manual SKU
+            setSbErrors(p => ({ ...p, [i]: 'Niciun rezultat în Gestiune. Dacă SKU-ul e corect, poți genera factura.' }));
           }
         }
       } catch (e) {
@@ -579,10 +580,24 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                         </div>
                       )}
                   </div>
-                  {/* Search error / no results message */}
+                  {/* Search info / no results — NOT blocking */}
                   {sbErrors[i] && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: '#f43f5e', lineHeight: 1.4 }}>
-                      ⚠ {sbErrors[i]}
+                    <div style={{ marginTop: 4, fontSize: 11, color: '#f59e0b', lineHeight: 1.4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const }}>
+                      <span>⚠ {sbErrors[i]}</span>
+                      {item.sku && (
+                        <button
+                          style={{ fontSize: 10, color: '#60a5fa', background: 'none', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 4, padding: '2px 6px', cursor: 'pointer' }}
+                          onClick={async () => {
+                            try {
+                              const r = await fetch(`/api/connector/smartbill-products?q=${encodeURIComponent(item.sku)}&debug=1`);
+                              const j = await r.json();
+                              alert('DEBUG SmartBill:\n' + JSON.stringify(j._debug || j, null, 2).slice(0, 2000));
+                            } catch(e) { alert('Eroare: ' + (e as Error).message); }
+                          }}
+                        >
+                          🔍 Debug
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
