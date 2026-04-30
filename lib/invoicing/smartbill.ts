@@ -408,7 +408,7 @@ function buildProduct(
     isService:     false,
     saveToDb:      false,
     // Shipping items never use gestiune (no SKU, no warehouse)
-    ...(useStockCfg && !item.isShipping && (item.warehouse || cfg.warehouseName)
+    ...(useStockCfg && !item.isShipping && !!item.sku?.trim() && (item.warehouse || cfg.warehouseName)
       ? { warehouseName: item.warehouse || cfg.warehouseName }
       : {}),
   };
