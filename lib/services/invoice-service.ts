@@ -16,6 +16,7 @@ import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import {
   createInvoice,
+  collectInvoice,
   downloadInvoicePdf,
   loadSmartBillConfig,
   getSmartBillViewUrl,
@@ -125,14 +126,27 @@ export async function ensureInvoice(
     log.warn('SmartBill PDF not available, will serve SmartBill URL as fallback');
   }
 
-  // ── Collection: handled inline in createInvoice via payment block ───────────
-  // SmartBill docs: embed payment{} in invoice body = same-time collection
-  const collected = !!(withCollection && Number(order.totalPrice) > 0);
-  if (collected) {
+  // ── Collect via separate POST /payment (works without payment series) ────────
+  let collected = false;
+  const shouldCollect = withCollection === true || (withCollection === undefined && order.isPaid);
+  if (shouldCollect && Number(order.totalPrice) > 0) {
+    const collectResult = await collectInvoice(
+      cfg, result.series, result.number,
+      Number(order.totalPrice), order.customerName,
+      order.currency,
+    );
+    collected = collectResult.ok;
     await db.invoice.update({
       where: { id: invoice.id },
-      data:  { collected: true },
+      data: {
+        collected,
+        ...(collectResult.series ? { collectionSeries: collectResult.series } : {}),
+        ...(collectResult.number ? { collectionNumber: collectResult.number } : {}),
+      },
     });
+    if (!collectResult.ok) {
+      log.warn('Collection failed but invoice was created', { error: collectResult.error });
+    }
   }
 
   // ── Build signed URL for this invoice ─────────────────────────────────────
