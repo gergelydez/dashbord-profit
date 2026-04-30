@@ -72,7 +72,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         shipmentId: existing.id,
-        labelUrl: buildShippingLabelUrl(existing.id),
+        labelUrl: `/api/connector/awb-label?id=${existing.id}`,
         alreadyExisted: true,
       });
     }
@@ -117,7 +117,8 @@ export async function POST(request: Request) {
       data: { shipmentCreated: true, status: 'SHIPMENT_CREATED' },
     });
 
-    const labelUrl = buildShippingLabelUrl(shipment.id);
+    // Use direct proxy URL — no token expiry issues
+    const labelUrl = `/api/connector/awb-label?id=${shipment.id}`;
 
     return NextResponse.json({
       ok: true,
