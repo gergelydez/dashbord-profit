@@ -225,7 +225,7 @@ interface SbProduct { code: string; name: string; unit: string; price: number; w
 function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generatedInvoice: generatedInvoiceProp }: {
   order: EnrichedOrder; shop: string; actionState: RowActionState;
   onClose: () => void;
-  generatedInvoice?: { series: string; number: string; downloadUrl: string; collected: boolean } | null;
+  generatedInvoice?: { series: string; number: string; downloadUrl: string; smartbillUrl?: string; collected: boolean } | null;
   onGenerate: (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: InvoiceLineLocal[] } }) => void;
 }) {
   const isPaid = order.financialStatus !== 'pending';
@@ -245,7 +245,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   );
 
   // Options
-  const [withCollection, setWithCollection] = useState(!isPaid); // auto-bifat dacă e ramburs (pending)
+  const [withCollection, setWithCollection] = useState(isPaid); // auto-bifat pentru comenzile plătite online
   const [useStock,       setUseStock]       = useState(false);
 
   // SmartBill product search per row
@@ -398,55 +398,79 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
 
   // ── After generation: show invoice viewer ─────────────────────────────────
   if (generatedInvoice || (existUrl && existNum)) {
-    const inv = generatedInvoice || { series: '', number: existNum, downloadUrl: existUrl, collected: !!order.invoice?.status };
+    const inv = generatedInvoice || {
+      series: '', number: existNum,
+      downloadUrl: existUrl, smartbillUrl: existUrl,
+      collected: !!order.invoice?.status
+    };
+    // Use SmartBill URL for viewing (works without CONNECTOR_SECRET/APP_URL)
+    // Use downloadUrl for download (local if available, SmartBill as fallback)
+    const viewUrl  = inv.smartbillUrl || inv.downloadUrl;
+    const dlUrl    = inv.downloadUrl  || inv.smartbillUrl;
+
     return (
       <div style={mStyle} onClick={onClose}>
         <div style={boxStyle} onClick={e => e.stopPropagation()}>
           <div style={headStyle}>
             <div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: '#f97316' }}>🧾 Factură {inv.number}</div>
-              <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 2 }}>Comanda {order.name}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#f97316' }}>🧾 Factură {inv.series}{inv.number}</div>
+              <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 2 }}>Comanda {order.name} · {order.customer.name}</div>
             </div>
             <button style={{ background: 'none', border: 'none', color: 'var(--c-text3)', fontSize: 20, cursor: 'pointer', lineHeight: 1 }} onClick={onClose}>✕</button>
           </div>
-          <div style={{ ...bodyStyle, gap: 14 }}>
+          <div style={{ ...bodyStyle, gap: 12 }}>
+
             {/* Status badges */}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
               <Badge label="✓ Generată" color="green" />
               {inv.collected && <Badge label="✓ Încasată" color="orange" />}
-              {generatedInvoice && <Badge label="✓ Salvată în Shopify" color="blue" />}
+              {!inv.collected && generatedInvoice && <Badge label="Fără încasare" color="gray" />}
+              <Badge label="✓ Salvată în Shopify" color="blue" />
             </div>
 
-            {/* Invoice number display — big and clickable like XConnector */}
-            <div style={{ ...secStyle, textAlign: 'center' as const }}>
-              <div style={{ fontSize: 11, color: 'var(--c-text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Număr factură</div>
-              <div style={{ fontSize: 32, fontWeight: 800, color: '#f97316', fontFamily: 'monospace', letterSpacing: 2 }}>{inv.number}</div>
-              <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 4 }}>
-                {order.customer.name} · {order.address.city}
+            {/* Invoice number — big */}
+            <div style={{ ...secStyle, textAlign: 'center' as const, padding: '20px 16px' }}>
+              <div style={{ fontSize: 11, color: 'var(--c-text3)', marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: '0.07em' }}>Număr factură</div>
+              <div style={{ fontSize: 36, fontWeight: 800, color: '#f97316', fontFamily: 'monospace', letterSpacing: 3 }}>{inv.series}{inv.number}</div>
+            </div>
+
+            {/* PDF preview — using SmartBill URL directly (like xConnector) */}
+            {viewUrl ? (
+              <div style={{ ...secStyle, padding: 0, overflow: 'hidden' as const, borderRadius: 12 }}>
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)', fontSize: 12, color: 'var(--c-text3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>📄 Previzualizare</span>
+                  <a href={viewUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#f97316', textDecoration: 'none', fontWeight: 600 }}>
+                    Deschide SmartBill ↗
+                  </a>
+                </div>
+                <iframe
+                  src={viewUrl}
+                  style={{ width: '100%', height: 400, border: 'none', background: '#fff', display: 'block' }}
+                  title={`Factură ${inv.series}${inv.number}`}
+                />
               </div>
-            </div>
+            ) : (
+              <div style={{ ...secStyle, textAlign: 'center' as const, color: 'var(--c-text3)', fontSize: 13 }}>
+                PDF disponibil în SmartBill Cloud
+              </div>
+            )}
 
-            {/* PDF viewer iframe */}
-            <div style={{ ...secStyle, padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)', fontSize: 12, color: 'var(--c-text3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span>📄 Previzualizare factură</span>
-                <a href={inv.downloadUrl} target="_blank" rel="noreferrer"
-                  style={{ fontSize: 11, color: '#f97316', textDecoration: 'none', fontWeight: 600 }}>
-                  Deschide în tab nou ↗
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              {dlUrl && (
+                <a href={dlUrl} target="_blank" rel="noreferrer"
+                  style={{ ...S.btnPrimary, textDecoration: 'none', flex: 1, justifyContent: 'center', padding: '10px 16px', fontSize: 14 }}>
+                  📥 Descarcă PDF
                 </a>
-              </div>
-              <iframe
-                src={inv.downloadUrl}
-                style={{ width: '100%', height: 380, border: 'none', background: '#fff' }}
-                title={`Factură ${inv.number}`}
-              />
+              )}
+              {inv.smartbillUrl && (
+                <a href={inv.smartbillUrl} target="_blank" rel="noreferrer"
+                  style={{ ...S.btnGhost, textDecoration: 'none', flex: 1, justifyContent: 'center', padding: '10px 16px', fontSize: 13 }}>
+                  🔗 Deschide SmartBill
+                </a>
+              )}
             </div>
 
-            {/* Download button */}
-            <a href={inv.downloadUrl} target="_blank" rel="noreferrer"
-              style={{ ...S.btnPrimary, textDecoration: 'none', justifyContent: 'center', padding: '10px 16px', fontSize: 14 }}>
-              📥 Descarcă PDF
-            </a>
           </div>
           <div style={footStyle}>
             <button style={S.btnGhost} onClick={onClose}>Închide</button>
@@ -658,7 +682,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                     💰 Adaugă încasare
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--c-text3)', marginTop: 2 }}>
-                    {isPaid ? 'Comanda e plătită online — emite chitanță' : 'Comandă ramburs — auto-activat'}
+                    {isPaid ? '✓ Auto-activat — comanda e plătită online' : 'Comandă ramburs — activează dacă e cazul'}
                   </div>
                 </div>
                 <Switch on={withCollection} onChange={setWithCollection} />
@@ -1403,7 +1427,7 @@ export default function XConnectorPage() {
   const [wizardOrder, setWizardOrder] = useState<EnrichedOrder | null>(null);
   const [wizardLoading, setWizardLoading] = useState(false);
   const [invoiceModalOrder, setInvoiceModalOrder] = useState<EnrichedOrder | null>(null);
-  const [invoiceResult, setInvoiceResult] = useState<{ series: string; number: string; downloadUrl: string; collected: boolean } | null>(null);
+  const [invoiceResult, setInvoiceResult] = useState<{ series: string; number: string; downloadUrl: string; smartbillUrl?: string; collected: boolean } | null>(null);
 
   const [awbResults, setAwbResultsRaw] = useState<AwbResultMap>(() => {
     try { const s = typeof window !== 'undefined' ? localStorage.getItem('xc_awb_results') : null; return s ? JSON.parse(s) : {}; } catch { return {}; }
@@ -1451,7 +1475,7 @@ export default function XConnectorPage() {
     onSuccess: (data) => {
       setAS(data.shopifyOrderId, { invoiceLoading: false });
       addToast('ok', `Factură ${data.series}${data.number} generată!`);
-      setInvoiceResult({ series: data.series, number: data.number, downloadUrl: data.downloadUrl, collected: data.collected });
+      setInvoiceResult({ series: data.series, number: data.number, downloadUrl: data.downloadUrl, smartbillUrl: data.smartbillUrl, collected: data.collected });
       qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
     },
     onError: (err: Error, { shopifyOrderId }) => { setAS(shopifyOrderId, { invoiceLoading: false, error: err.message }); addToast('err', err.message); },
