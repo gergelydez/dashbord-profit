@@ -217,7 +217,8 @@ function Field({ label, value, onChange, type = 'text', placeholder, disabled }:
 interface InvoiceLineLocal {
   name: string; sku: string; quantity: number; price: number;
   sbCode?: string; sbName?: string; sbMatched?: boolean;
-  useGestiuneName?: boolean; // true = use name from gestiune, false = use Shopify name
+  useGestiuneName?: boolean;
+  warehouse?: string; // gestiunea din SmartBill (ex: "Marfuri")
 }
 interface SbProduct { code: string; name: string; unit: string; price: number; warehouse: string; stock?: number | null; }
 
@@ -304,14 +305,14 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   };
 
   const pickSbProduct = (i: number, p: SbProduct) => {
-    // Keep current name (Shopify) by default — user can switch to gestiune name via toggle
     updateItem(i, {
       sku: p.code,
       sbCode: p.code,
-      sbName: p.name,          // store gestiune name for toggle
+      sbName: p.name,
       sbMatched: true,
-      useGestiuneName: false,  // default: keep Shopify name on invoice
+      useGestiuneName: false,
       price: p.price > 0 ? p.price : items[i].price,
+      warehouse: p.warehouse || undefined, // save gestiunea for SmartBill
     });
     setSbOpen(prev => ({ ...prev, [i]: false }));
     setSbQuery(prev => ({ ...prev, [i]: '' }));
@@ -577,6 +578,23 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                   </div>
                   {sbErrors[i] && (
                     <div style={{ marginTop: 3, fontSize: 11, color: '#f59e0b' }}>⚠ {sbErrors[i]}</div>
+                  )}
+                  {/* Warehouse field — shown when SKU set but no warehouse (manual entry) */}
+                  {item.sku && !item.warehouse && useStock && (
+                    <div style={{ marginTop: 6 }}>
+                      <label style={{ ...lbl, color: '#f59e0b' }}>⚠ Gestiunea SmartBill (obligatoriu)</label>
+                      <input
+                        style={{ ...inp, borderColor: 'rgba(245,158,11,0.5)' }}
+                        value={item.warehouse || ''}
+                        onChange={e => updateItem(i, { warehouse: e.target.value })}
+                        placeholder="ex: Marfuri"
+                      />
+                    </div>
+                  )}
+                  {item.warehouse && (
+                    <div style={{ marginTop: 3, fontSize: 11, color: '#10b981' }}>
+                      🏬 Gestiune: {item.warehouse}
+                    </div>
                   )}
                 </div>
 
