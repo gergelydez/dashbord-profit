@@ -1,25 +1,28 @@
 /**
  * app/api/connector/smartbill-products/route.ts
- * GET /api/connector/smartbill-products?q=<name_or_code>
+ * GET /api/connector/smartbill-products?q=<name_or_code>&shop=<key>
  *
- * Searches SmartBill Gestiunea Mărfuri for products matching the query.
- * Used in the invoice modal to auto-associate products that lack SKU.
+ * Searches SmartBill Gestiunea Mărfuri for products.
  *
- * SmartBill API endpoint: GET /product?cif=...&productName=...
+ * SmartBill does NOT have a product search endpoint in their public API.
+ * The correct endpoint is GET /stocks which returns all stock items
+ * with their codes and names. We filter client-side by the query.
+ *
+ * Endpoint: GET /stocks?cif={cif}&warehouseName={name}
+ * Response: { list: [{ productName, productCode, productMeasuringUnit, quantity, price }] }
  */
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 import { loadSmartBillConfig } from '@/lib/invoicing/smartbill';
 
-interface SmartBillProduct {
-  code:              string;
-  name:              string;
-  measuringUnitName: string;
-  currency:          string;
-  price:             number;
-  warehouseName?:    string;
-  stock?:            number;
+interface SmartBillStockItem {
+  productName:           string;
+  productCode:           string;
+  productMeasuringUnit?: string;
+  warehouseName?:        string;
+  quantity?:             number;
+  price?:                number;
 }
 
 function makeAuth(email: string, token: string): string {
@@ -28,51 +31,73 @@ function makeAuth(email: string, token: string): string {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const q = searchParams.get('q')?.trim() || '';
+  const q = (searchParams.get('q') || '').trim().toLowerCase();
 
-  if (!q || q.length < 2) {
+  if (!q || q.length < 1) {
     return NextResponse.json({ products: [] });
   }
 
   const cfg = loadSmartBillConfig();
   if (!cfg.email || !cfg.token || !cfg.cif) {
-    return NextResponse.json({ error: 'SmartBill neconfigurat' }, { status: 500 });
+    return NextResponse.json({ error: 'SmartBill neconfigurat (SMARTBILL_EMAIL / SMARTBILL_TOKEN / SMARTBILL_CIF)' }, { status: 500 });
   }
 
   const auth = makeAuth(cfg.email, cfg.token);
 
+  // Build query params — warehouseName is optional
+  const params = new URLSearchParams({ cif: cfg.cif });
+  if (cfg.warehouseName) params.set('warehouseName', cfg.warehouseName);
+
   try {
-    // SmartBill: GET /product?cif=...&productName=...
     const res = await fetch(
-      `https://ws.smartbill.ro/SBORO/api/product?cif=${encodeURIComponent(cfg.cif)}&productName=${encodeURIComponent(q)}`,
+      `https://ws.smartbill.ro/SBORO/api/stocks?${params}`,
       {
         headers: {
           Authorization: `Basic ${auth}`,
-          Accept: 'application/json',
+          Accept:        'application/json',
+          'Content-Type': 'application/json',
         },
         cache: 'no-store',
       },
     );
 
+    const rawText = await res.text();
+    
     if (!res.ok) {
-      const text = await res.text();
-      return NextResponse.json({ error: `SmartBill ${res.status}: ${text.slice(0, 200)}` }, { status: res.status });
+      return NextResponse.json(
+        { error: `SmartBill ${res.status}: ${rawText.slice(0, 300)}` },
+        { status: res.status },
+      );
     }
 
-    const data = await res.json();
-    // SmartBill returns { list: [...] } or { products: [...] }
-    const raw: SmartBillProduct[] = data.list ?? data.products ?? [];
+    let data: { list?: SmartBillStockItem[] };
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      return NextResponse.json({ error: `Răspuns invalid SmartBill: ${rawText.slice(0, 200)}` }, { status: 500 });
+    }
 
-    const products = raw.map((p) => ({
-      code:  p.code  || '',
-      name:  p.name  || '',
-      unit:  p.measuringUnitName || 'buc',
-      price: Number(p.price) || 0,
-      warehouse: p.warehouseName || '',
-      stock: p.stock ?? null,
+    const all: SmartBillStockItem[] = data.list ?? [];
+
+    // Filter by query — match name OR code, case-insensitive
+    const matched = all.filter(p => {
+      const name = (p.productName || '').toLowerCase();
+      const code = (p.productCode || '').toLowerCase();
+      return name.includes(q) || code.includes(q);
+    });
+
+    // Return top 10 matches
+    const products = matched.slice(0, 10).map(p => ({
+      code:      p.productCode      || '',
+      name:      p.productName      || '',
+      unit:      p.productMeasuringUnit || 'buc',
+      price:     Number(p.price)    || 0,
+      stock:     p.quantity         ?? null,
+      warehouse: p.warehouseName    || '',
     }));
 
-    return NextResponse.json({ products });
+    return NextResponse.json({ products, total: all.length });
+
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
