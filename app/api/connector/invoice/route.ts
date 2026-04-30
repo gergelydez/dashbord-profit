@@ -61,14 +61,21 @@ export async function POST(request: Request) {
     // Generate invoice (idempotent)
     const result = await ensureInvoice(order, SHOPIFY_TOKEN, SHOPIFY_DOMAIN, withCollection, useStock, lineItems);
 
+    // Build download URL — prefer local signed URL, fallback to SmartBill cloud URL
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+    const localUrl = appUrl ? buildInvoiceUrl(result.invoice.id) : null;
+    const smartbillUrl = result.invoice.invoiceUrl || null;
+    const downloadUrl = localUrl || smartbillUrl || '';
+
     return NextResponse.json({
-      ok:         true,
-      invoiceId:  result.invoice.id,
-      series:     result.invoice.series,
-      number:     result.invoice.number,
-      status:     result.invoice.status,
-      downloadUrl: buildInvoiceUrl(result.invoice.id),
-      collected:  result.collected,
+      ok:           true,
+      invoiceId:    result.invoice.id,
+      series:       result.invoice.series,
+      number:       result.invoice.number,
+      status:       result.invoice.status,
+      downloadUrl,
+      smartbillUrl, // direct SmartBill URL for viewing/download fallback
+      collected:    result.collected,
     });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
