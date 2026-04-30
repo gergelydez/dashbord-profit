@@ -16,9 +16,9 @@ import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import {
   createInvoice,
-  collectInvoice,
   downloadInvoicePdf,
   loadSmartBillConfig,
+  getSmartBillViewUrl,
 } from '@/lib/invoicing/smartbill';
 import { storePdf, isDbKey } from '@/lib/storage/s3';
 import { buildInvoiceUrl } from '@/lib/security/tokens';
@@ -81,6 +81,7 @@ export async function ensureInvoice(
     isPaid:           order.isPaid,
     totalPrice:       Number(order.totalPrice),
     useStockOverride: useStock,
+    withCollection:   withCollection, // embed payment in invoice body
     client: {
       name:    order.customerName,
       email:   order.customerEmail || undefined,
@@ -124,28 +125,27 @@ export async function ensureInvoice(
     log.warn('SmartBill PDF not available, will serve SmartBill URL as fallback');
   }
 
-  // ── Collect (issue receipt / chitanță) if order is paid OR explicitly requested ──
-  let collected = false;
-  const shouldCollect = withCollection === true || (withCollection === undefined && order.isPaid);
-  if (shouldCollect && Number(order.totalPrice) > 0) {
-    const collectResult = await collectInvoice(
-      cfg, result.series, result.number,
-      Number(order.totalPrice), order.customerName,
-      order.currency,
-    );
-    collected = collectResult.ok;
+  // ── Collection: handled inline in createInvoice via payment block ───────────
+  // SmartBill docs: embed payment{} in invoice body = same-time collection
+  const collected = !!(withCollection && Number(order.totalPrice) > 0);
+  if (collected) {
     await db.invoice.update({
       where: { id: invoice.id },
-      data: {
-        collected,
-        ...(collectResult.series ? { collectionSeries: collectResult.series } : {}),
-        ...(collectResult.number ? { collectionNumber: collectResult.number } : {}),
-      },
+      data:  { collected: true },
     });
   }
 
   // ── Build signed URL for this invoice ─────────────────────────────────────
+  // Use SmartBill cloud viewer URL (works without auth in browser)
+  // Format: https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=...&series=...&number=...
+  const smartbillViewUrl = getSmartBillViewUrl(cfg, result.series, result.number);
   const invoiceUrl = buildInvoiceUrl(invoice.id);
+
+  // Save smartbill viewer URL in invoice record
+  await db.invoice.update({
+    where: { id: invoice.id },
+    data:  { invoiceUrl: smartbillViewUrl },
+  });
 
   // ── Write back to Shopify ──────────────────────────────────────────────────
   let shopifyUpdated = false;
