@@ -1392,6 +1392,87 @@ function SyncButton({ shop, onDone }: { shop: string; onDone: (msg: string) => v
 const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺' };
 type AwbResultMap = Record<string, { awb: string; courier: string; labelBase64?: string | null; trackUrl?: string; myglsUrl?: string; labelUrl?: string | null; }>;
 
+
+// ─── AWB Viewer Modal ──────────────────────────────────────────────────────────
+function AwbModal({ order, awb, courier, shipmentId, trackingUrl, onClose }: {
+  order: EnrichedOrder;
+  awb: string;
+  courier: string;
+  shipmentId?: string | null;
+  trackingUrl?: string | null;
+  onClose: () => void;
+}) {
+  const mStyle: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', backdropFilter: 'blur(4px)' };
+  const boxStyle: React.CSSProperties = { background: 'var(--c-bg2)', borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 480, maxHeight: '92vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' };
+  const headStyle: React.CSSProperties = { padding: '16px 20px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' };
+  const bodyStyle: React.CSSProperties = { padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12, flex: 1 };
+  const footStyle: React.CSSProperties = { padding: '12px 20px 24px', borderTop: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'flex-end' };
+
+  const labelProxyUrl = shipmentId ? `/api/connector/awb-label?id=${shipmentId}` : null;
+  const courierLabel = courier.toUpperCase();
+  const trackGlsUrl = `https://gls-group.eu/RO/ro/urmarire-colet?match=${awb}`;
+  const trackUrl = trackingUrl || trackGlsUrl;
+
+  return (
+    <div style={mStyle} onClick={onClose}>
+      <div style={boxStyle} onClick={e => e.stopPropagation()}>
+        <div style={headStyle}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#10b981' }}>🚚 AWB {courierLabel}</div>
+            <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 2 }}>Comanda {order.name} · {order.customer.name}</div>
+          </div>
+          <button style={{ background: 'none', border: 'none', color: 'var(--c-text3)', fontSize: 20, cursor: 'pointer' }} onClick={onClose}>✕</button>
+        </div>
+        <div style={bodyStyle}>
+          {/* AWB number — big */}
+          <div style={{ background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 12, padding: '20px 16px', textAlign: 'center' as const }}>
+            <div style={{ fontSize: 11, color: 'var(--c-text3)', marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: '0.07em' }}>Număr AWB · {courierLabel}</div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: '#10b981', fontFamily: 'monospace', letterSpacing: 2 }}>{awb}</div>
+          </div>
+
+          {/* Label preview */}
+          {labelProxyUrl ? (
+            <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div style={{ padding: '10px 14px', background: 'rgba(255,255,255,0.03)', fontSize: 12, color: 'var(--c-text3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>📄 Etichetă AWB</span>
+                <a href={labelProxyUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#10b981', textDecoration: 'none', fontWeight: 600 }}>
+                  Deschide ↗
+                </a>
+              </div>
+              <iframe
+                src={labelProxyUrl}
+                style={{ width: '100%', height: 380, border: 'none', background: '#fff', display: 'block' }}
+                title={`AWB ${awb}`}
+              />
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center' as const, color: 'var(--c-text3)', fontSize: 13, padding: 20 }}>
+              Eticheta nu este disponibilă pentru previzualizare
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: 10 }}>
+            {labelProxyUrl && (
+              <a href={labelProxyUrl} download={`AWB_${courierLabel}_${awb}.pdf`}
+                style={{ ...S.btnPrimary, textDecoration: 'none', flex: 1, justifyContent: 'center', padding: '10px 16px', fontSize: 14, background: '#10b981' } as React.CSSProperties}>
+                📥 Descarcă Etichetă
+              </a>
+            )}
+            <a href={trackUrl} target="_blank" rel="noreferrer"
+              style={{ ...S.btnGhost, textDecoration: 'none', flex: 1, justifyContent: 'center', padding: '10px 16px', fontSize: 13 } as React.CSSProperties}>
+              🔍 Tracking
+            </a>
+          </div>
+        </div>
+        <div style={footStyle}>
+          <button style={S.btnGhost} onClick={onClose}>Închide</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function XConnectorPage() {
   const qc = useQueryClient();
   const { toasts, add: addToast } = useToast();
@@ -1451,6 +1532,7 @@ export default function XConnectorPage() {
   const [wizardLoading, setWizardLoading] = useState(false);
   const [invoiceModalOrder, setInvoiceModalOrder] = useState<EnrichedOrder | null>(null);
   const [invoiceResult, setInvoiceResult] = useState<{ series: string; number: string; downloadUrl: string; smartbillUrl?: string; collected: boolean } | null>(null);
+  const [awbModalData, setAwbModalData] = useState<{ order: EnrichedOrder; awb: string; courier: string; shipmentId?: string | null; trackingUrl?: string | null } | null>(null);
 
   const [awbResults, setAwbResultsRaw] = useState<AwbResultMap>(() => {
     try { const s = typeof window !== 'undefined' ? localStorage.getItem('xc_awb_results') : null; return s ? JSON.parse(s) : {}; } catch { return {}; }
@@ -1766,25 +1848,16 @@ export default function XConnectorPage() {
                   </td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
                     {existingAwb ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#10b981', fontWeight: 700 }}>{existingAwb}</div>
-                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
-                          {labelUrl ? (
-                            <a href={labelUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnPrimary, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>🖨 PDF</a>
-                          ) : awbRes?.labelBase64 ? (
-                            <button style={{ ...S.btnPrimary, fontSize: 10, padding: '3px 7px' }} onClick={e => {
-                              e.stopPropagation();
-                              const bin = atob(awbRes.labelBase64!); const arr = new Uint8Array(bin.length);
-                              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-                              const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
-                              const a = document.createElement('a'); a.href = url; a.download = `AWB_GLS_${existingAwb}.pdf`; a.click(); URL.revokeObjectURL(url);
-                            }}>🖨 PDF</button>
-                          ) : null}
-                          {(awbRes?.myglsUrl || order.shipment?.trackingUrl) && (
-                            <a href={awbRes?.myglsUrl || order.shipment?.trackingUrl || undefined} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>🔍 Track</a>
-                          )}
-                        </div>
-                      </div>
+                      <a
+                        href={`/shipping-label?id=${order.shipment?.id || ''}&trackingNumber=${existingAwb}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        style={{ ...S.btnGhost, fontSize: 11, cursor: 'pointer', color: '#10b981', fontWeight: 700, fontFamily: 'monospace', textDecoration: 'none' }}
+                        title="Click pentru etichetă AWB"
+                      >
+                        🚚 {existingAwb}
+                      </a>
                     ) : (
                       <button style={as.shipmentLoading ? { ...S.btnGhost, opacity: 0.6, fontSize: 11 } : { ...S.btnGhost, fontSize: 11 }}
                         disabled={as.shipmentLoading || order.cancelled}
@@ -1831,6 +1904,16 @@ export default function XConnectorPage() {
       )}
 
       {/* INVOICE MODAL */}
+      {awbModalData && (
+        <AwbModal
+          order={awbModalData.order}
+          awb={awbModalData.awb}
+          courier={awbModalData.courier}
+          shipmentId={awbModalData.shipmentId}
+          trackingUrl={awbModalData.trackingUrl}
+          onClose={() => setAwbModalData(null)}
+        />
+      )}
       {invoiceModalOrder && (
         <InvoiceModal
           order={invoiceModalOrder}
