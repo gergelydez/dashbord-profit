@@ -106,10 +106,13 @@ async function enrichWithDbState(shopifyIds: string[], domain: string) {
     if (!invMap[sid]) invMap[sid] = { id: inv.id, series: inv.series, number: inv.number, status: inv.status, url: buildInvoiceUrl(inv.id) };
   }
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
   const shipMap: Record<string, { id: string; courier: string; tracking: string; trackingUrl: string | null; labelUrl: string; status: string }> = {};
   for (const s of shipments) {
     const sid = s.order.shopifyId;
-    if (!shipMap[sid]) shipMap[sid] = { id: s.id, courier: s.courier, tracking: s.trackingNumber, trackingUrl: s.trackingUrl, labelUrl: buildShippingLabelUrl(s.id), status: s.status };
+    // Use direct proxy URL (no token needed) — works in browser and iframe
+    const labelUrl = `${appUrl}/api/connector/awb-label?id=${s.id}`;
+    if (!shipMap[sid]) shipMap[sid] = { id: s.id, courier: s.courier, tracking: s.trackingNumber, trackingUrl: s.trackingUrl, labelUrl, status: s.status };
   }
 
   return { invoices: invMap, shipments: shipMap, orders: orderMap };
