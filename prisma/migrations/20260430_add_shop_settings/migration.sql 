@@ -1,0 +1,2 @@
+-- Add settings JSON column to Shop table
+ALTER TABLE "Shop" ADD COLUMN IF NOT EXISTS "settings" JSONB NOT NULL DEFAULT '{}';
