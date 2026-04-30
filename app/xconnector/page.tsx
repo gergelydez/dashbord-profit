@@ -1848,16 +1848,31 @@ export default function XConnectorPage() {
                   </td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
                     {existingAwb ? (
-                      <a
-                        href={`/shipping-label?id=${order.shipment?.id || ''}&trackingNumber=${existingAwb}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={e => e.stopPropagation()}
-                        style={{ ...S.btnGhost, fontSize: 11, cursor: 'pointer', color: '#10b981', fontWeight: 700, fontFamily: 'monospace', textDecoration: 'none' }}
-                        title="Click pentru etichetă AWB"
-                      >
-                        🚚 {existingAwb}
-                      </a>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#10b981', fontWeight: 700 }}>{existingAwb}</div>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          {(order.shipment?.labelUrl || awbRes?.labelUrl) && (
+                            <a
+                              href={order.shipment?.labelUrl || awbRes?.labelUrl || ''}
+                              target="_blank" rel="noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              style={{ ...S.btnPrimary, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}
+                            >🖨 PDF</a>
+                          )}
+                          {awbRes?.labelBase64 && !order.shipment?.labelUrl && (
+                            <button style={{ ...S.btnPrimary, fontSize: 10, padding: '3px 7px' }} onClick={e => {
+                              e.stopPropagation();
+                              const bin = atob(awbRes.labelBase64!); const arr = new Uint8Array(bin.length);
+                              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+                              const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+                              const a = document.createElement('a'); a.href = url; a.download = `AWB_${existingAwb}.pdf`; a.click(); URL.revokeObjectURL(url);
+                            }}>🖨 PDF</button>
+                          )}
+                          {(awbRes?.myglsUrl || order.shipment?.trackingUrl) && (
+                            <a href={awbRes?.myglsUrl || order.shipment?.trackingUrl || ''} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>🔍</a>
+                          )}
+                        </div>
+                      </div>
                     ) : (
                       <button style={as.shipmentLoading ? { ...S.btnGhost, opacity: 0.6, fontSize: 11 } : { ...S.btnGhost, fontSize: 11 }}
                         disabled={as.shipmentLoading || order.cancelled}
