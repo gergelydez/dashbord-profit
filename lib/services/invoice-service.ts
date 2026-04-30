@@ -43,7 +43,8 @@ export async function ensureInvoice(
   shopifyDomain: string,
   withCollection?: boolean,
   useStock?: boolean,
-  lineItemsOverride?: Array<{ name: string; sku: string; quantity: number; price: number }>,
+  lineItemsOverride?: Array<{ name: string; sku: string; quantity: number; price: number; warehouse?: string }>,
+  paymentType?: string,
 ): Promise<InvoiceServiceResult> {
   const log = logger.child({ module: 'invoice-service', orderId: order.id, orderName: order.shopifyName });
 
