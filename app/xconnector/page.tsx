@@ -218,7 +218,7 @@ interface InvoiceLineLocal {
   name: string; sku: string; quantity: number; price: number;
   sbCode?: string; sbName?: string; sbMatched?: boolean;
 }
-interface SbProduct { code: string; name: string; unit: string; price: number; warehouse: string; }
+interface SbProduct { code: string; name: string; unit: string; price: number; warehouse: string; stock?: number | null; }
 
 function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generatedInvoice: generatedInvoiceProp }: {
   order: EnrichedOrder; shop: string; actionState: RowActionState;
