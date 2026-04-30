@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     shop?: string;
     withCollection?: boolean;
     useStock?: boolean;
-    lineItems?: Array<{ name: string; sku: string; quantity: number; price: number }>;
+    lineItems?: Array<{ name: string; sku: string; quantity: number; price: number; warehouse?: string }>;
   };
   if (!shopifyOrderId) return NextResponse.json({ error: 'shopifyOrderId required' }, { status: 400 });
 
