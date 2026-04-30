@@ -223,23 +223,38 @@ async function generateInvoiceAsync(orderId: string, shopDomain: string): Promis
 
   log.info('Auto-invoice: same as manual button', { orderId, withCollection, paymentType });
 
-  // Build lineItems — transport items have empty SKU so SmartBill treats them as services
-  const SHIP_KW = ['szállítás', 'livrare', 'transport', 'shipping', 'delivery', 'fuvar', 'freight', 'postage'];
+  // Build lineItems — exclude transport, add transport price to first product
+  const SHIP_KW = ['szállítás', 'futar', 'futár', 'livrare', 'transport', 'shipping',
+    'delivery', 'fuvar', 'freight', 'postage', 'courier', 'szerviz'];
   const rawItems = order.lineItems as Array<{name:string;sku:string;qty:number;price:number}>;
-  const lineItems = rawItems.map(i => {
-    const isTransport = SHIP_KW.some(k => i.name.toLowerCase().includes(k));
-    return {
-      name:     i.name,
-      sku:      isTransport ? '' : (i.sku || ''),  // clear SKU for transport
-      quantity: i.qty,
-      price:    i.price,
-      warehouse: isTransport ? undefined : (process.env.SMARTBILL_WAREHOUSE || undefined),
-    };
-  });
 
-  // useStock only if ALL non-transport items have SKU
-  const nonTransport = lineItems.filter(i => !!i.sku);
-  const useStock = nonTransport.length > 0;
+  const productItems = rawItems.filter(i => !SHIP_KW.some(k => i.name.toLowerCase().includes(k)));
+  const transportItems = rawItems.filter(i => SHIP_KW.some(k => i.name.toLowerCase().includes(k)));
+  const transportTotal = transportItems.reduce((sum, i) => sum + (i.price * i.qty), 0);
+
+  // Distribute transport cost to first product (add to unit price)
+  const lineItems = productItems.map((i, idx) => ({
+    name:      i.name,
+    sku:       i.sku || '',
+    quantity:  i.qty,
+    price:     idx === 0 && transportTotal > 0
+                 ? Math.round((i.price + transportTotal / i.qty) * 100) / 100
+                 : i.price,
+    warehouse: process.env.SMARTBILL_WAREHOUSE || undefined,
+  }));
+
+  // Fallback: if no products (only transport), use total price as one line
+  if (lineItems.length === 0) {
+    lineItems.push({
+      name:     order.shopifyName,
+      sku:      '',
+      quantity: 1,
+      price:    Number(order.totalPrice),
+      warehouse: undefined,
+    });
+  }
+
+  const useStock = lineItems.some(i => !!i.sku?.trim());
 
   const result = await ensureInvoice(
     order,
