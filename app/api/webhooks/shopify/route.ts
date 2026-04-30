@@ -160,20 +160,20 @@ export async function POST(request: Request) {
     data:  { processed: true, processedAt: new Date() },
   }).catch(() => {});
 
-  // ── 10. Auto-invoice for new orders and paid orders ─────────────────────────
-  if (AUTO_INVOICE_TOPICS.has(topic)) {
-    const autoEnabled = await isAutoInvoiceEnabled(shopDomain);
-    log.info('Auto-invoice check', { shopDomain, autoEnabled, orderId });
-    if (autoEnabled) {
-      const hasInvoice = await db.invoice.findFirst({ where: { orderId } });
-      if (!hasInvoice) {
-        log.info('Triggering auto-invoice for new order', { orderId });
-        generateInvoiceAsync(orderId, shopDomain).catch((err) => {
-          log.warn('Auto-invoice failed', { orderId, error: (err as Error).message });
-        });
-      } else {
-        log.info('Order already has invoice — skipping', { orderId });
-      }
+  // ── 10. Auto-invoice ─────────────────────────────────────────────────────────
+  // Trigger on: orders/create, orders/paid, orders/updated (catches all cases)
+  const autoEnabled = await isAutoInvoiceEnabled(shopDomain);
+  log.info('Auto-invoice check', { shopDomain, autoEnabled, topic, orderId });
+
+  if (autoEnabled) {
+    const hasInvoice = await db.invoice.findFirst({ where: { orderId } });
+    if (!hasInvoice) {
+      log.info('Triggering auto-invoice', { orderId, topic });
+      generateInvoiceAsync(orderId, shopDomain).catch((err) => {
+        log.warn('Auto-invoice failed', { orderId, error: (err as Error).message });
+      });
+    } else {
+      log.info('Order already has invoice — skipping', { orderId });
     }
   }
 
