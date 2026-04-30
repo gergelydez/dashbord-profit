@@ -155,7 +155,7 @@ export async function createInvoice(
   // Build product list
   let products = input.lineItems
     .filter((i) => i.price > 0)
-    .map((i) => buildProduct(i, input.currency, { ...cfg, useStock }));
+    .map((i) => buildProduct(i, input.currency, cfg, useStock));
 
   // Fallback: single line item for the whole order
   if (!products.length) {
@@ -164,7 +164,7 @@ export async function createInvoice(
         name:              `Comanda Shopify ${input.orderName}`,
         code:              '',
         isDiscount:        false,
-        measuringUnitName: 'buc',
+        measureUnit:   'buc',
         currency:          input.currency || 'RON',
         quantity:          1,
         price:             input.totalPrice,
@@ -339,20 +339,21 @@ function buildProduct(
   item: InvoiceLineItem,
   currency: string,
   cfg: SmartBillConfig,
+  useStockCfg = false,
 ): Record<string, unknown> {
   return {
-    name:              item.name.slice(0, 255),
-    code:              item.sku || '',
-    isDiscount:        false,
-    measuringUnitName: 'buc',
-    currency:          currency || 'RON',
-    quantity:          Math.max(1, item.quantity),
-    price:             item.price,
-    isTaxIncluded:     true,
-    taxName:           'Normala',
-    taxPercentage:     cfg.taxPercentage,
-    isService:         false,
-    saveToDb:          false,
-    ...(cfg.useStock && cfg.warehouseName ? { warehouseName: cfg.warehouseName } : {}),
+    name:          item.name.slice(0, 255),
+    code:          item.sku || '',
+    isDiscount:    false,
+    measureUnit:   'buc',
+    currency:      currency || 'RON',
+    quantity:      Math.max(1, item.quantity),
+    price:         item.price,
+    isTaxIncluded: true,
+    taxName:       'Normala',
+    taxPercentage: cfg.taxPercentage,
+    isService:     false,
+    saveToDb:      false,
+    ...(useStockCfg && cfg.warehouseName ? { warehouseName: cfg.warehouseName } : {}),
   };
 }
