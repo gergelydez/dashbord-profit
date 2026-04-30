@@ -145,7 +145,8 @@ export async function ensureInvoice(
       },
     });
     if (!collectResult.ok) {
-      log.warn('Collection failed but invoice was created', { error: collectResult.error });
+      // Throw so user sees the error — invoice was created but collection failed
+      throw new Error(`Factura ${result.series}${result.number} a fost creată, dar încasarea a eșuat: ${collectResult.error || 'eroare necunoscută'}. Poți face încasarea manual din SmartBill.`);
     }
   }
 
