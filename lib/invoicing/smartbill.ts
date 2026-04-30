@@ -227,7 +227,9 @@ export async function createInvoice(
     currency:     input.currency || 'RON',
     language:     'RO',
     precision:    2,
-    useStock,
+    // useStock=true only if we have at least one product with SKU and gestiune
+    // Transport items don't count — they never need gestiune
+    useStock: useStock && input.lineItems.some(i => i.price > 0 && !!i.sku?.trim() && !i.isShipping),
     observations: `Comanda Shopify ${input.orderName}`,
     mentions:     '',
     products,
@@ -400,6 +402,27 @@ function buildProduct(
   cfg: SmartBillConfig,
   useStockCfg = false,
 ): Record<string, unknown> {
+  const isTransport = item.isShipping || !item.sku?.trim();
+
+  if (isTransport) {
+    // Transport/shipping: no code, no warehouse, isService=true
+    // SmartBill accepts services without SKU even when useStock=true
+    return {
+      name:              item.name.slice(0, 255),
+      code:              '',
+      isDiscount:        false,
+      measuringUnitName: 'buc',
+      currency:          currency || 'RON',
+      quantity:          Math.max(1, item.quantity),
+      price:             item.price,
+      isTaxIncluded:     true,
+      taxName:           'Normala',
+      taxPercentage:     cfg.taxPercentage,
+      isService:         true,  // services don't need SKU or warehouse
+      saveToDb:          false,
+    };
+  }
+
   return {
     name:          item.name.slice(0, 255),
     code:          item.sku || '',
@@ -413,8 +436,7 @@ function buildProduct(
     taxPercentage: cfg.taxPercentage,
     isService:     false,
     saveToDb:      false,
-    // Transport items never use gestiune
-    ...(useStockCfg && !item.isShipping && !!item.sku?.trim() && (item.warehouse || cfg.warehouseName)
+    ...(useStockCfg && (item.warehouse || cfg.warehouseName)
       ? { warehouseName: item.warehouse || cfg.warehouseName }
       : {}),
   };
