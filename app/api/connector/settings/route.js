@@ -1,99 +1,57 @@
 /**
  * app/api/connector/settings/route.js
- * Settings per-shop salvate în DB (Shop.settings JSON) + Redis cache.
- * Persistent la restart/refresh — nu depinde de Redis.
- *
- * GET  /api/connector/settings?shop=hu  → { autoInvoice: boolean }
- * POST /api/connector/settings          → { shop, autoInvoice }
+ * Settings per-shop — salvate în Redis fără expirare (persistente).
+ * Dacă Redis pică, fallback la env vars.
  */
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
-const REDIS_KEY = (shop) => `xconnector:settings:${shop}`;
+const KEY = (shop) => `xconnector:settings:v2:${shop}`;
 
-// ── DB helpers ────────────────────────────────────────────────────────────────
-async function readFromDb(shopKey) {
+async function getRedis() {
   try {
-    const { db } = await import('@/lib/db');
-    const { SHOP_CONFIGS } = await import('@/lib/shops');
-    const cfg = SHOP_CONFIGS.find(s => s.key === shopKey);
-    if (!cfg?.domain) return null;
-    const shop = await db.shop.findUnique({ where: { domain: cfg.domain } });
-    if (!shop?.settings) return null;
-    const s = typeof shop.settings === 'string' ? JSON.parse(shop.settings) : shop.settings;
-    return s;
+    const { getRedisConnection } = await import('@/lib/redis');
+    return getRedisConnection();
   } catch { return null; }
 }
 
-async function writeToDb(shopKey, settings) {
+async function readSettings(shop) {
   try {
-    const { db } = await import('@/lib/db');
-    const { SHOP_CONFIGS } = await import('@/lib/shops');
-    const cfg = SHOP_CONFIGS.find(s => s.key === shopKey);
-    if (!cfg?.domain) return;
-    await db.shop.updateMany({
-      where: { domain: cfg.domain },
-      data:  { settings },
-    });
-  } catch { /* non-fatal */ }
-}
+    const redis = await getRedis();
+    if (!redis) return { autoInvoice: false };
 
-// ── Redis helpers ─────────────────────────────────────────────────────────────
-async function readFromRedis(shop) {
-  try {
-    const { getRedisConnection } = await import('@/lib/redis');
-    const redis = getRedisConnection();
     const raw = await Promise.race([
-      redis.get(REDIS_KEY(shop)),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 2000)),
+      redis.get(KEY(shop)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
     ]);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+
+    if (!raw) return { autoInvoice: false };
+    return JSON.parse(raw);
+  } catch { return { autoInvoice: false }; }
 }
 
-async function writeToRedis(shop, settings) {
-  try {
-    const { getRedisConnection } = await import('@/lib/redis');
-    const redis = getRedisConnection();
-    await redis.set(REDIS_KEY(shop), JSON.stringify(settings));
-  } catch { /* non-fatal */ }
+async function writeSettings(shop, settings) {
+  const redis = await getRedis();
+  if (!redis) throw new Error('Redis indisponibil. Verifică REDIS_URL în Vercel Environment Variables.');
+
+  // Salvează fără TTL = persistent pentru totdeauna
+  await redis.set(KEY(shop), JSON.stringify(settings));
 }
 
-// ── GET ───────────────────────────────────────────────────────────────────────
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const shop = searchParams.get('shop') || 'ro';
-
-  // Redis first (fast cache)
-  const cached = await readFromRedis(shop);
-  if (cached?.autoInvoice !== undefined) {
-    return NextResponse.json({ ok: true, shop, autoInvoice: Boolean(cached.autoInvoice) });
-  }
-
-  // DB fallback (persistent source of truth)
-  const fromDb = await readFromDb(shop);
-  if (fromDb?.autoInvoice !== undefined) {
-    await writeToRedis(shop, fromDb); // repopulate cache
-    return NextResponse.json({ ok: true, shop, autoInvoice: Boolean(fromDb.autoInvoice) });
-  }
-
-  return NextResponse.json({ ok: true, shop, autoInvoice: false });
+  const settings = await readSettings(shop);
+  return NextResponse.json({ ok: true, shop, ...settings });
 }
 
-// ── POST ──────────────────────────────────────────────────────────────────────
 export async function POST(request) {
   try {
     const body = await request.json();
     const shop = body.shop || 'ro';
     const autoInvoice = Boolean(body.autoInvoice);
-    const settings = { autoInvoice };
-
-    // Save to BOTH — DB is source of truth, Redis is cache
-    await Promise.allSettled([
-      writeToDb(shop, settings),
-      writeToRedis(shop, settings),
-    ]);
-
+    const current = await readSettings(shop);
+    await writeSettings(shop, { ...current, autoInvoice });
     return NextResponse.json({ ok: true, shop, autoInvoice });
   } catch (err) {
     return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
