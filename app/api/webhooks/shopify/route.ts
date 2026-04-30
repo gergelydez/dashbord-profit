@@ -42,15 +42,32 @@ async function isAutoInvoiceEnabled(shopDomain: string): Promise<boolean> {
   try {
     const { getRedisConnection } = await import('@/lib/redis');
     const redis = getRedisConnection();
-    const raw = await redis.get('xconnector:settings:global');
-    console.log(`[webhook] isAutoInvoiceEnabled shop=${shopDomain} raw=${raw}`);
-    if (!raw) return process.env.PROCESS_INLINE === 'true';
-    const parsed = JSON.parse(raw);
-    console.log(`[webhook] autoInvoice=${parsed.autoInvoice}`);
-    return Boolean(parsed.autoInvoice);
+
+    // Determine shop key from domain (matches settings/route.js logic)
+    // e.g. "9f1956.myshopify.com" → try all known shop keys
+    const shopKeys = ['ro', 'hu', 'global', shopDomain];
+
+    // Also try matching from SHOP_CONFIGS
+    for (const cfg of SHOP_CONFIGS) {
+      if (cfg.domain === shopDomain && cfg.key) {
+        shopKeys.unshift(cfg.key);
+      }
+    }
+
+    for (const key of shopKeys) {
+      const raw = await redis.get(`xconnector:settings:${key}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        log.info('autoInvoice setting found', { key, autoInvoice: parsed.autoInvoice, shopDomain });
+        if (parsed.autoInvoice !== undefined) return Boolean(parsed.autoInvoice);
+      }
+    }
+
+    log.info('No autoInvoice setting found in Redis, defaulting to false', { shopDomain });
+    return false;
   } catch (e) {
-    console.error('[webhook] isAutoInvoiceEnabled error:', e);
-    return process.env.PROCESS_INLINE === 'true';
+    log.error('isAutoInvoiceEnabled error', { error: (e as Error).message });
+    return false;
   }
 }
 
@@ -65,8 +82,8 @@ const HANDLED_TOPICS = new Set([
   'orders/cancelled',
 ]);
 
-// The ONLY topic that triggers automatic invoice generation
-const AUTO_INVOICE_TOPIC = 'orders/create';
+// Topics that trigger automatic invoice generation
+const AUTO_INVOICE_TOPICS = new Set(['orders/create', 'orders/paid']);
 
 export async function POST(request: Request) {
   // ── 1. Read raw body for HMAC verification ──────────────────────────────
@@ -150,8 +167,8 @@ export async function POST(request: Request) {
     data:  { processed: true, processedAt: new Date() },
   }).catch(() => {});
 
-  // ── 10. Auto-invoice ONLY for brand new orders ────────────────────────────
-  if (topic === AUTO_INVOICE_TOPIC) {
+  // ── 10. Auto-invoice for new orders and paid orders ─────────────────────────
+  if (AUTO_INVOICE_TOPICS.has(topic)) {
     const autoEnabled = await isAutoInvoiceEnabled(shopDomain);
     log.info('Auto-invoice check', { shopDomain, autoEnabled, orderId });
     if (autoEnabled) {
@@ -183,11 +200,31 @@ async function generateInvoiceAsync(orderId: string, shopDomain: string): Promis
   const shopCfg = SHOP_CONFIGS.find(s => s.domain === shopDomain);
   if (!shopCfg) throw new Error(`Shop config not found for domain ${shopDomain}`);
 
-  log.info('generateInvoiceAsync: calling ensureInvoice', { orderId, shopDomain });
-  const result = await ensureInvoice(order, shopCfg.accessToken, shopDomain);
+  // Auto-invoice rules:
+  // - withCollection: true ONLY for orders paid online (card)
+  // - useStock: true (always use gestiune for auto-invoice)
+  // - paymentType: 'Card' for online, undefined for others (no collection)
+  const withCollection = order.isPaid;
+  const paymentType    = order.isPaid ? 'Card' : undefined;
+
+  log.info('generateInvoiceAsync: calling ensureInvoice', {
+    orderId, shopDomain, withCollection, paymentType,
+  });
+
+  const result = await ensureInvoice(
+    order,
+    shopCfg.accessToken,
+    shopDomain,
+    withCollection,
+    true, // useStock = true for auto-invoice
+    undefined, // lineItems from DB (already saved with shipping)
+    paymentType,
+  );
+
   log.info('generateInvoiceAsync: invoice created', {
     orderId,
     invoiceNumber: `${result.invoice.series}${result.invoice.number}`,
+    collected: result.collected,
   });
 }
 
@@ -229,7 +266,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     endpoint: 'shopify-webhooks',
-    autoInvoiceTopic: AUTO_INVOICE_TOPIC,
+    autoInvoiceTopics: [...AUTO_INVOICE_TOPICS],
     processInlineEnabled: process.env.PROCESS_INLINE === 'true',
   });
 }
