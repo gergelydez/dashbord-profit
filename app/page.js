@@ -247,6 +247,9 @@ export default function Dashboard() {
   const [showTranzitPanel, setShowTranzitPanel] = useState(false);
   const [showLivrateModal, setShowLivrateModal] = useState(false);
   const [showReturModal, setShowReturModal]   = useState(false);
+  const [tranzitFilter, setTranzitFilter] = useState('toate'); // 'toate'|'inregistrat'|'ridicat'|'centru'|'livrare'
+  const [tranzitCourier, setTranzitCourier] = useState('toate'); // 'toate'|'gls'|'sameday'
+  const [showExportModal, setShowExportModal] = useState(false);
 
   // ── ADDRESS CORRECTION (ca XConnector) ────────────────────────────────
   const [addrModal, setAddrModal] = useState(null);
@@ -1355,7 +1358,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               ))}
             </div>
 
-            {/* Panel tranzit live — fetch GLS API în timp real */}
+            {/* Panel tranzit live — cu filtrare pe status și curier + export */}
             {showTranzitPanel && tranzitOrders.length > 0 && (() => {
               const GLS_CODES = {
                 1:'Preluat de curier', 2:'Plecat din depozit', 3:'Ajuns în depozit',
@@ -1392,54 +1395,192 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               };
               const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
 
+              // Clasificare status în categorii de filtrare
+              const classifyTranzitStatus = (o, live) => {
+                const code = live?.statusCode ? parseInt(live.statusCode) : null;
+                const isGls = o.courier !== 'sameday';
+                if (!live || !code) return 'inregistrat';
+                if (isGls) {
+                  if ([4,29,32,56,85].includes(code)) return 'livrare';
+                  if ([26,27,41,46,47,53,13,3,10,22,84].includes(code)) return 'centru';
+                  if ([1,2,51,52,80,83,86,97,99].includes(code)) return 'inregistrat';
+                  if ([1,86,2].includes(code)) return 'ridicat';
+                  return 'inregistrat';
+                } else {
+                  // Sameday
+                  if ([10,33,34,35].includes(code)) return 'livrare';
+                  if ([3,7,26,27,28,84].includes(code)) return 'centru';
+                  if ([2,4,23].includes(code)) return 'ridicat';
+                  if ([1,80].includes(code)) return 'inregistrat';
+                  return 'inregistrat';
+                }
+              };
+
+              // Contoare pentru filtre
+              const countByFilter = (f) => tranzitOrders.filter(o => {
+                const live = liveTrackingData[o.id];
+                if (tranzitCourier !== 'toate' && o.courier !== tranzitCourier) return false;
+                if (f === 'toate') return true;
+                return classifyTranzitStatus(o, live) === f;
+              }).length;
+
+              // Lista filtrată
+              const filteredTranzit = tranzitOrders.filter(o => {
+                const live = liveTrackingData[o.id];
+                if (tranzitCourier !== 'toate' && o.courier !== tranzitCourier) return false;
+                if (tranzitFilter === 'toate') return true;
+                return classifyTranzitStatus(o, live) === tranzitFilter;
+              });
+
+              const filterBtns = [
+                { key:'toate', label:'Toate', color:'#3b82f6' },
+                { key:'inregistrat', label:'📋 Înregistrat', color:'#f59e0b' },
+                { key:'ridicat', label:'📦 Ridicat', color:'#8b5cf6' },
+                { key:'centru', label:'🏭 Centru/Depozit', color:'#06b6d4' },
+                { key:'livrare', label:'🚴 În livrare', color:'#10b981' },
+              ];
+
+              // Export CSV
+              const handleExport = () => {
+                const rows = filteredTranzit.map(o => {
+                  const live = liveTrackingData[o.id];
+                  const code = live?.statusCode ? parseInt(live.statusCode) : null;
+                  const COURIER_CODES = o.courier === 'sameday' ? SD_CODES : GLS_CODES;
+                  const statusDesc = code ? (COURIER_CODES[code] || live?.desc || `Cod ${code}`) : (live?.desc || '—');
+                  const cat = classifyTranzitStatus(o, live);
+                  const catLabel = {inregistrat:'Înregistrat',ridicat:'Ridicat curier',centru:'Centru/Depozit',livrare:'În livrare'}[cat]||'—';
+                  return [
+                    o.name,
+                    o.trackingNo || '',
+                    o.client,
+                    o.phone || '',
+                    o.oras || '',
+                    o.address || '',
+                    o.courier === 'sameday' ? 'Sameday' : 'GLS',
+                    statusDesc,
+                    catLabel,
+                    o.total ? o.total.toFixed(2) + ' RON' : '',
+                    o.createdAt ? o.createdAt.slice(0,10) : '',
+                    live?.lastUpdate || '',
+                  ];
+                });
+                const header = ['Comandă','AWB','Nume Client','Telefon','Oraș','Adresă','Curier','Status','Categorie','Valoare','Data','Ultima actualizare'];
+                const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+                const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `tranzit_${tranzitFilter}_${new Date().toISOString().slice(0,10)}.csv`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+              };
+
               return (
                 <div style={{background:'rgba(59,130,246,.06)',border:'1px solid rgba(59,130,246,.25)',borderRadius:12,padding:'12px 14px',marginBottom:10}}>
+                  {/* Header */}
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
                     <div style={{fontSize:11,color:'#3b82f6',fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>
-                      🚚 Colete în tranzit — {tranzitOrders.length}
+                      🚚 Colete în tranzit — {filteredTranzit.length}/{tranzitOrders.length}
                     </div>
-                    <button onClick={()=>fetchLiveTracking(tranzitOrders)}
-                      style={{background:'rgba(59,130,246,.15)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:8,padding:'4px 12px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
-                      🔄 Refresh
-                    </button>
+                    <div style={{display:'flex',gap:6}}>
+                      <button onClick={handleExport}
+                        style={{background:'rgba(16,185,129,.15)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:8,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                        📥 Export
+                      </button>
+                      <button onClick={()=>fetchLiveTracking(tranzitOrders)}
+                        style={{background:'rgba(59,130,246,.15)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:8,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                        🔄
+                      </button>
+                    </div>
                   </div>
-                  {tranzitOrders.map(o => {
+
+                  {/* Filtre curier */}
+                  <div style={{display:'flex',gap:6,marginBottom:8,flexWrap:'wrap'}}>
+                    {[{k:'toate',l:'Toți curieri'},{k:'gls',l:'GLS'},{k:'sameday',l:'Sameday'}].map(c=>(
+                      <button key={c.k} onClick={()=>setTranzitCourier(c.k)}
+                        style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,cursor:'pointer',border:'1px solid',
+                          background: tranzitCourier===c.k ? (c.k==='gls'?'rgba(249,115,22,.2)':c.k==='sameday'?'rgba(139,92,246,.2)':'rgba(59,130,246,.2)') : 'rgba(255,255,255,.04)',
+                          borderColor: tranzitCourier===c.k ? (c.k==='gls'?'#f97316':c.k==='sameday'?'#8b5cf6':'#3b82f6') : 'rgba(255,255,255,.1)',
+                          color: tranzitCourier===c.k ? (c.k==='gls'?'#f97316':c.k==='sameday'?'#a78bfa':'#93c5fd') : '#64748b',
+                        }}>
+                        {c.k==='gls'?'🟠':c.k==='sameday'?'🟣':'🚚'} {c.l}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Filtre status */}
+                  <div style={{display:'flex',gap:5,marginBottom:10,overflowX:'auto',paddingBottom:2}}>
+                    {filterBtns.map(f=>{
+                      const cnt = countByFilter(f.key);
+                      const active = tranzitFilter===f.key;
+                      return (
+                        <button key={f.key} onClick={()=>setTranzitFilter(f.key)}
+                          style={{fontSize:10,fontWeight:700,padding:'4px 9px',borderRadius:20,cursor:'pointer',border:'1px solid',
+                            whiteSpace:'nowrap',flexShrink:0,
+                            background: active ? f.color+'33' : 'rgba(255,255,255,.04)',
+                            borderColor: active ? f.color : 'rgba(255,255,255,.1)',
+                            color: active ? f.color : '#64748b',
+                          }}>
+                          {f.label} <span style={{opacity:.7,fontWeight:400}}>({cnt})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Lista colete */}
+                  {filteredTranzit.length === 0 ? (
+                    <div style={{textAlign:'center',color:'#475569',fontSize:12,padding:'16px 0'}}>
+                      Niciun colet în această categorie
+                    </div>
+                  ) : filteredTranzit.map(o => {
                     const live = liveTrackingData[o.id];
                     const code = live?.statusCode ? parseInt(live.statusCode) : null;
                     const COURIER_CODES = o.courier === 'sameday' ? SD_CODES : GLS_CODES;
                     const codeDesc = code ? (COURIER_CODES[code] || live?.desc || live?.statusDescription || `Cod ${code}`) : (live?.desc || live?.statusDescription || null);
                     const color = statusColor(live?.glsStatus);
+                    const cat = classifyTranzitStatus(o, live);
+                    const catColors = {inregistrat:'#f59e0b',ridicat:'#8b5cf6',centru:'#06b6d4',livrare:'#10b981'};
+                    const catIcons = {inregistrat:'📋',ridicat:'📦',centru:'🏭',livrare:'🚴'};
+                    const courierColor = o.courier==='sameday' ? '#8b5cf6' : '#f97316';
                     return (
-                      <div key={o.id} style={{padding:'9px 0',borderBottom:'1px solid rgba(255,255,255,.05)'}}>
-                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                          <span style={{color:'#f97316',fontWeight:700,fontSize:12,minWidth:65}}>{o.name}</span>
+                      <div key={o.id} style={{padding:'10px 0',borderBottom:'1px solid rgba(255,255,255,.05)'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                          <span style={{color:'#f97316',fontWeight:700,fontSize:12,minWidth:60}}>{o.name}</span>
                           <span style={{color:'#94a3b8',fontSize:11,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.client}</span>
-                          <span style={{color:'#475569',fontSize:10}}>{o.createdAt?.slice(0,10)}</span>
+                          <span style={{fontSize:9,fontWeight:700,color:courierColor,background:courierColor+'18',padding:'1px 6px',borderRadius:10,flexShrink:0}}>
+                            {o.courier==='sameday'?'SD':'GLS'}
+                          </span>
                         </div>
-                        <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                          <span style={{fontFamily:'monospace',fontSize:10,color:'#64748b',background:'rgba(255,255,255,.04)',padding:'2px 6px',borderRadius:4}}>
+                        <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:3}}>
+                          <span style={{fontFamily:'monospace',fontSize:10,color:'#64748b',background:'rgba(255,255,255,.04)',padding:'2px 7px',borderRadius:4,letterSpacing:.5}}>
                             {o.trackingNo||'fără AWB'}
                           </span>
-                          {!o.trackingNo ? (
-                            <span style={{fontSize:10,color:'#f59e0b'}}>⚠ Fără AWB</span>
-                          ) : live?.loading ? (
+                          {live?.loading ? (
                             <span style={{fontSize:10,color:'#3b82f6'}}>⟳ Se verifică...</span>
                           ) : live ? (
                             <>
-                              {code && <span style={{fontSize:10,fontWeight:800,background:'rgba(59,130,246,.15)',color:'#93c5fd',padding:'2px 6px',borderRadius:4,fontFamily:'monospace'}}>#{code}</span>}
-                              <span style={{fontSize:11,fontWeight:600,color}}>{codeDesc||live.desc||'—'}</span>
+                              {code && <span style={{fontSize:10,fontWeight:800,background:'rgba(59,130,246,.15)',color:'#93c5fd',padding:'2px 5px',borderRadius:4,fontFamily:'monospace'}}>#{code}</span>}
+                              <span style={{fontSize:11,fontWeight:600,color}}>{codeDesc||'—'}</span>
                               {live.location && <span style={{fontSize:10,color:'#64748b'}}>📍{live.location}</span>}
                               {live.lastUpdate && <span style={{fontSize:10,color:'#475569'}}>{live.lastUpdate}</span>}
                             </>
+                          ) : !o.trackingNo ? (
+                            <span style={{fontSize:10,color:'#f59e0b'}}>⚠ Fără AWB</span>
                           ) : (
-                            <span style={{fontSize:10,color:'#334155'}}>— se încarcă...</span>
+                            <span style={{fontSize:10,color:'#334155'}}>— apasă Refresh</span>
                           )}
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <span style={{fontSize:9,color:catColors[cat]||'#64748b',background:(catColors[cat]||'#64748b')+'18',padding:'1px 7px',borderRadius:10,fontWeight:700}}>
+                            {catIcons[cat]} {({inregistrat:'Înregistrat',ridicat:'Ridicat curier',centru:'Centru/Depozit',livrare:'În livrare'})[cat]||'—'}
+                          </span>
+                          {o.oras && <span style={{fontSize:10,color:'#475569'}}>📍 {o.oras}</span>}
+                          <span style={{fontSize:10,color:'#334155',marginLeft:'auto'}}>{o.createdAt?.slice(0,10)}</span>
                         </div>
                       </div>
                     );
                   })}
+
                   <div style={{fontSize:9,color:'#334155',marginTop:8,textAlign:'center'}}>
-                    GLS: 4=Livrare azi · 5=Livrat · 32=Ieșit livrare · 23/40=Retur &nbsp;|&nbsp; Sameday: 33/34=În livrare · 5/9=Livrat · 84=Depozit central · 21/22=Retur
+                    GLS: 4/32=Livrare · 26/27=Centru · 51/52=Înregistrat &nbsp;|&nbsp; SD: 33/34=Livrare · 84=Depozit central · 1=Înregistrat
                   </div>
                 </div>
               );
