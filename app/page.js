@@ -1396,24 +1396,37 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
 
               // Clasificare status în categorii de filtrare
+              // Prioritate: 1) cod live numeric (cel mai precis) 2) status din Excel/Shopify
               const classifyTranzitStatus = (o, live) => {
-                const code = live?.statusCode ? parseInt(live.statusCode) : null;
                 const isGls = o.courier !== 'sameday';
-                if (!live || !code) return 'inregistrat';
-                if (isGls) {
-                  if ([4,29,32,56,85].includes(code)) return 'livrare';
-                  if ([26,27,41,46,47,53,13,3,10,22,84].includes(code)) return 'centru';
-                  if ([1,2,51,52,80,83,86,97,99].includes(code)) return 'inregistrat';
-                  if ([1,86,2].includes(code)) return 'ridicat';
-                  return 'inregistrat';
-                } else {
-                  // Sameday
-                  if ([10,33,34,35].includes(code)) return 'livrare';
-                  if ([3,7,26,27,28,84].includes(code)) return 'centru';
-                  if ([2,4,23].includes(code)) return 'ridicat';
-                  if ([1,80].includes(code)) return 'inregistrat';
-                  return 'inregistrat';
+                const code = live?.statusCode ? parseInt(live.statusCode) : null;
+
+                // Dacă avem cod live numeric — cel mai precis
+                if (code) {
+                  if (isGls) {
+                    if ([4,29,32,56,58,92,93].includes(code)) return 'livrare';
+                    if ([3,10,13,22,26,27,41,46,47,53,84,97,99].includes(code)) return 'centru';
+                    if ([1,2,85,86].includes(code)) return 'ridicat';
+                    // 51=Date înregistrate, 52=Ramburs înregistrat, 80=Pickup înregistrat
+                    if ([51,52,80,83].includes(code)) return 'inregistrat';
+                    // orice alt cod — fallthrough la status cunoscut
+                  } else {
+                    if ([10,33,34,35].includes(code)) return 'livrare';
+                    if ([3,7,26,27,28,84].includes(code)) return 'centru';
+                    if ([2,4,23].includes(code)) return 'ridicat';
+                    if ([1].includes(code)) return 'inregistrat';
+                  }
                 }
+
+                // Fallback: status rezolvat din Excel/Shopify/xConnector
+                const finalStatus = getFinalStatus(o);
+                // outfor = la curier (ridicat + în drum spre livrare)
+                if (finalStatus === 'outfor') return 'ridicat';
+                // incurs = în tranzit general — sub-clasificăm după ts intern
+                // pending = AWB generat, nepredat încă
+                if (o.ts === 'pending') return 'inregistrat';
+                // incurs fără cod live = cel mai probabil la centru/hub
+                return 'centru';
               };
 
               // Contoare pentru filtre
