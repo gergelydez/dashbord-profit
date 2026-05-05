@@ -1577,22 +1577,22 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   // AWB block — stil etichetă
                   let awbHtml = '';
                   if(o.awb) {
-                    awbHtml = '<div onclick="openAwb('+idx+')" style="background:#fff;border:2.5px solid #1e293b;border-radius:14px;margin:10px 0 8px;cursor:pointer;overflow:hidden;box-shadow:0 3px 10px rgba(0,0,0,.14);">'
-                      + '<div style="background:#1e293b;padding:7px 14px;display:flex;justify-content:space-between;align-items:center;">'
-                      + '<span style="font-size:9px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;">AWB</span>'
-                      + '<span style="font-size:9px;color:#60a5fa;font-weight:700;background:rgba(96,165,250,.15);padding:2px 8px;border-radius:8px;">👆 tracking</span>'
-                      + '</div>'
-                      + '<div style="padding:10px 14px 12px;background:#fff;">'
-                      + '<div style="display:flex;gap:2px;height:44px;margin-bottom:6px;align-items:stretch;">'
-                      + makeBars(o.awb)
-                      + '</div>'
-                      + '<div style="font-family:Courier New,monospace;font-size:21px;font-weight:900;color:#0f172a;letter-spacing:2.5px;word-break:break-all;line-height:1.2;">'+o.awb+'</div>'
-                      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px;">'
-                      + '<span style="font-size:10px;color:#64748b;font-family:monospace;">'+(isGls?'GLS Romania':'Sameday')+'</span>'
-                      + (o.total>0 ? '<span style="font-size:11px;font-weight:800;color:#fff;background:#1e293b;padding:3px 10px;border-radius:6px;">Ramburs: '+o.total.toFixed(2)+' RON</span>' : '')
-                      + '</div>'
-                      + '</div>'
-                      + '</div>';
+                    var barsHtml = makeBars(o.awb);
+                    var barcodeCol = '<div style="flex-shrink:0;width:48px;display:flex;align-items:center;justify-content:center;background:#fff;border-right:2px solid #e2e8f0;padding:6px 2px;overflow:hidden;">'
+                      + '<div style="display:flex;gap:1.5px;height:120px;align-items:stretch;transform:rotate(-90deg) translateX(-36px);width:130px;">'
+                      + barsHtml
+                      + '</div></div>';
+                    var rightCol = '<div style="flex:1;padding:10px 12px;display:flex;flex-direction:column;gap:3px;">'
+                      + '<div style="font-size:22px;font-weight:900;color:#0f172a;letter-spacing:-.5px;line-height:1;">' + o.orderNum + '</div>'
+                      + '<div style="font-size:12px;font-weight:700;color:#1e293b;line-height:1.3;font-style:italic;">' + (o.prods||'') + '</div>'
+                      + '<div style="height:1px;background:#e2e8f0;margin:3px 0;"></div>'
+                      + '<div style="font-family:Courier New,monospace;font-size:16px;font-weight:900;color:#0f172a;letter-spacing:2px;word-break:break-all;line-height:1.2;">' + o.awb + '</div>'
+                      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px;">'
+                      + '<span style="font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">' + (isGls?'GLS Romania':'Sameday') + '</span>'
+                      + (o.total>0 ? '<span style="font-size:11px;font-weight:900;color:#0f172a;background:#fef3c7;border:1.5px solid #f59e0b;padding:2px 8px;border-radius:6px;">Ramburs ' + o.total.toFixed(2) + ' RON</span>' : '')
+                      + '</div></div>';
+                    awbHtml = '<div onclick="openAwb('+idx+')" style="background:#fff;border:2.5px solid #1e293b;border-radius:14px;margin:10px 0 8px;cursor:pointer;overflow:hidden;box-shadow:0 3px 12px rgba(0,0,0,.15);display:flex;min-height:100px;">'
+                      + barcodeCol + rightCol + '</div>';
                   } else {
                     awbHtml = '<div style="background:#f8fafc;border:2px dashed #e2e8f0;border-radius:14px;padding:12px 14px;margin:10px 0 8px;">'
                       + '<span style="font-size:13px;color:#94a3b8;font-style:italic;">Fără AWB generat</span>'
