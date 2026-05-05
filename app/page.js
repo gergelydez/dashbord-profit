@@ -191,6 +191,8 @@ function procOrder(o) {
       qty: i.quantity || 1,
       price: parseFloat(i.price) || 0,
       variantId: String(i.variant_id || ''),
+      productHandle: i.product_handle || i.handle || '',
+      productId: String(i.product_id || ''),
     })),
     // Validare adresă locală (detectare rapidă fără API)
     addrIssues: (() => {
@@ -1476,10 +1478,15 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   const statusDesc = code ? (COURIER_CODES[code] || live?.desc || `Cod ${code}`) : (live?.desc || '');
                   const cat = classifyTranzitStatus(o, live);
                   const orderNum = o.name ? (o.name.startsWith('#') ? o.name : '#'+o.name) : '#—';
-                  // Link produs Shopify admin
-                  const shopifyProductUrl = o.items?.[0]?.variantId
-                    ? `https://${shopDomain}/admin/products?query=${encodeURIComponent(o.items[0].name||o.prods||'')}`
-                    : null;
+                // Link produs glamx.ro — folosim handle din Shopify sau generăm din nume
+                  const firstItem = o.items?.[0];
+                  const handle = firstItem?.productHandle
+                    || (firstItem?.name || o.prods || '')
+                        .toLowerCase()
+                        .normalize('NFD').replace(/[\u0300-\u036f]/g,'')  // diacritice
+                        .replace(/[^a-z0-9]+/g,'-')
+                        .replace(/^-+|-+$/g,'');
+                  const shopifyProductUrl = handle ? `https://glamx.ro/products/${handle}` : null;
                   // Link tracking AWB
                   const trackingUrl = o.trackingNo
                     ? (o.courier === 'sameday'
@@ -1568,15 +1575,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cli-row{font-size:12px;color:#475569;margin-bottom:3px;line-height:1.4;}
 
 /* AWB — tap pentru label */
-.awb-block{background:#1e293b;border-radius:13px;padding:12px 14px;margin:10px 0 8px;cursor:pointer;position:relative;}
-.awb-block:active{opacity:.85;}
-.awb-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
-.awb-lbl{font-size:9px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:2px;}
-.awb-tap{font-size:9px;color:#3b82f6;font-weight:700;background:rgba(59,130,246,.12);padding:2px 7px;border-radius:8px;}
+.awb-block{background:#fff;border:2.5px solid #1e293b;border-radius:14px;margin:10px 0 8px;cursor:pointer;overflow:hidden;box-shadow:0 3px 10px rgba(0,0,0,.14);}
+.awb-block:active{opacity:.85;transform:scale(.99);}
+.awb-header{background:#1e293b;padding:7px 14px;display:flex;justify-content:space-between;align-items:center;}
+.awb-lbl{font-size:9px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;}
+.awb-tap{font-size:9px;color:#60a5fa;font-weight:700;background:rgba(96,165,250,.15);padding:2px 8px;border-radius:8px;}
 .awb-tap.no{color:#475569;background:transparent;}
-.ramburs{font-size:11px;font-weight:800;color:#fb923c;background:rgba(249,115,22,.12);padding:3px 9px;border-radius:8px;border:1px solid rgba(249,115,22,.25);}
-.awb-num{font-family:'Courier New',Courier,monospace;font-size:21px;font-weight:900;color:#f97316;letter-spacing:2.5px;word-break:break-all;line-height:1.2;}
-.awb-noawb{font-size:13px;color:#475569;font-style:italic;}
+.awb-body{padding:10px 14px 12px;background:#fff;}
+.awb-barcode-row{display:flex;gap:2px;height:44px;margin-bottom:6px;align-items:stretch;}
+.awb-bar{flex-shrink:0;border-radius:1px;}
+.awb-num{font-family:'Courier New',Courier,monospace;font-size:21px;font-weight:900;color:#0f172a;letter-spacing:2.5px;word-break:break-all;line-height:1.2;}
+.awb-sub{display:flex;justify-content:space-between;align-items:center;margin-top:5px;}
+.ramburs{font-size:11px;font-weight:800;color:#fff;background:#1e293b;padding:3px 10px;border-radius:6px;letter-spacing:.3px;}
+.awb-noawb{font-size:13px;color:#94a3b8;font-style:italic;padding:12px 14px;}
 .status-pill{display:inline-flex;align-items:center;gap:5px;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;margin-bottom:8px;}
 
 /* BIFĂ */
@@ -1667,12 +1678,19 @@ ${ordersData.map((o,idx)=>{
     ${o.phone?`<div class="cli-row">📞 ${o.phone}</div>`:''}
 
     <div class="awb-block" onclick="openAwb(${idx})">
-      <div class="awb-top">
+      <div class="awb-header">
         <span class="awb-lbl">AWB</span>
-        ${o.awb?`<span class="awb-tap">👆 tap pentru label</span>`:`<span class="awb-tap no">fără AWB</span>`}
-        ${o.total>0?`<span class="ramburs">💰 ${o.total.toFixed(2)} RON</span>`:''}
+        ${o.awb?`<span class="awb-tap">👆 tap pentru tracking</span>`:`<span class="awb-tap no">fără AWB</span>`}
       </div>
-      ${o.awb?`<div class="awb-num">${o.awb}</div>`:`<div class="awb-noawb">Fără AWB generat</div>`}
+      ${o.awb?`
+      <div class="awb-body">
+        <div class="awb-barcode-row" id="bars-${idx}"></div>
+        <div class="awb-num">${o.awb}</div>
+        <div class="awb-sub">
+          <span style="font-size:10px;color:#64748b;font-family:monospace;">${isGls?'GLS Romania':'Sameday'}</span>
+          ${o.total>0?`<span class="ramburs">Ramburs: ${o.total.toFixed(2)} RON</span>`:''}
+        </div>
+      </div>`:`<div class="awb-noawb">Fără AWB generat</div>`}
     </div>
 
     ${o.statusDesc?`<div class="status-pill" style="background:${s}15;color:${cc};border:1px solid ${s}44;">⚡ ${o.statusDesc}${o.lastUpdate?' · '+o.lastUpdate:''}</div>`:''}
@@ -1756,16 +1774,43 @@ function openProd(idx){
   items.innerHTML = (o.items||[]).map(i=>\`<div class="modal-item"><strong>×\${i.qty}</strong> \${i.name}\${i.sku?' · <em>\'+i.sku+\'</em>':''}</div>\`).join('') || '<div class="modal-item">'+o.prods+'</div>';
   const actions = document.getElementById('modal-actions');
   actions.innerHTML = o.shopifyProductUrl
-    ? \`<a class="modal-btn primary" href="\${o.shopifyProductUrl}" target="_blank">🔗 Caută în Shopify</a>
-       <a class="modal-btn secondary" href="\${o.shopAdminUrl}" target="_blank">📋 Comandă</a>\`
+    ? \`<a class="modal-btn primary" href="\${o.shopifyProductUrl}" target="_blank">🛍️ Vezi pe GLAMX.ro</a>
+       <a class="modal-btn secondary" href="\${o.shopAdminUrl}" target="_blank">📋 Comandă Admin</a>\`
     : \`<a class="modal-btn secondary" href="\${o.shopAdminUrl}" target="_blank">📋 Deschide comanda</a>\`;
   document.getElementById('prod-modal').classList.add('open');
+}
+
+// Desenează bare cod vizual GLS
+function drawBars(containerId, awb){
+  const el = document.getElementById(containerId);
+  if(!el) return;
+  const digits = awb.replace(/\s/g,'');
+  // Generăm un pattern de bare bazat pe cifrele AWB (vizual, nu scanabil)
+  const pattern = [];
+  for(let i=0;i<digits.length;i++){
+    const d = parseInt(digits[i])||0;
+    // wide bar
+    pattern.push({w: d%3===0?3:2, c:'#0f172a'});
+    // narrow space
+    pattern.push({w:1, c:'transparent'});
+    // narrow bar
+    pattern.push({w:1, c:'#0f172a'});
+    // space
+    pattern.push({w: d%2===0?2:1, c:'transparent'});
+  }
+  // Start/stop bars
+  const full = [{w:3,c:'#0f172a'},{w:1,c:'transparent'},{w:1,c:'#0f172a'},{w:2,c:'transparent'},...pattern,{w:3,c:'#0f172a'},{w:1,c:'transparent'},{w:1,c:'#0f172a'}];
+  el.innerHTML = full.map(b=>`<div class="awb-bar" style="width:${b.w}px;background:${b.c};border-radius:1px;"></div>`).join('');
 }
 
 function openAwb(idx){
   const o = ORDERS[idx];
   if(!o.awb) return;
-  if(o.trackingUrl) window.open(o.trackingUrl,'_blank');
+  // GLS: link direct la pagina de tracking GLS Romania
+  const url = o.courier==='sameday'
+    ? 'https://sameday.ro/awb/'+o.awb
+    : 'https://gls-group.eu/RO/ro/urmarire-colete?match='+o.awb;
+  window.open(url,'_blank');
 }
 
 function closeModal(){ document.getElementById('prod-modal').classList.remove('open'); }
@@ -1786,6 +1831,10 @@ window.onload = function(){
       tim.textContent=t.toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'});
       tim.style.display='';
     }
+  });
+  // Desenează bare cod pentru fiecare AWB
+  ORDERS.forEach((o,idx)=>{
+    if(o.awb) drawBars('bars-'+idx, o.awb);
   });
   updateProgress();
 };
