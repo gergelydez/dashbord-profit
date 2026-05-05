@@ -153,6 +153,13 @@ function procOrder(o) {
   const invNumAttr   = notes.find(a => { const n=(a.name||'').toLowerCase(); return n==='invoice-number'||n==='invoice_number'||n==='invoicenumber'; });
   const invSerAttr   = notes.find(a => { const n=(a.name||'').toLowerCase(); return n==='invoice-series'||n==='invoice_series'||n==='invoiceseries'; });
 
+  // Label AWB — xConnector stochează URL-ul în note_attributes
+  const labelAttr = notes.find(a => {
+    const n = (a.name||'').toLowerCase();
+    return n.includes('label-url') || n.includes('label_url') || n.includes('awb-url') || n.includes('awb_url') || n.includes('shipping-label');
+  });
+  const xcLabelUrl = labelAttr?.value || '';
+
   const invoiceUrl    = invUrlAttr?.value || '';
   const invoiceShort  = invShortAttr?.value || '';
   const invNumMatch   = invoiceUrl.match(/[?&]n=(\d+)/);
@@ -183,6 +190,7 @@ function procOrder(o) {
     zip: addr.zip || '',
     phone: o.phone || addr.phone || '',
     clientEmail: o.email || '',
+    labelUrl: xcLabelUrl || (trackingNo ? `/api/connector/awb-label?tracking=${trackingNo}` : ''),
     utmSource: o.utmSource || '', utmMedium: o.utmMedium || '',
     utmCampaign: o.utmCampaign || '', referrerUrl: o.referrerUrl || '',
     items: (o.line_items || []).map(i => ({
@@ -1506,6 +1514,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     lastUpdate: live?.lastUpdate||'',
                     shopifyProductUrl,
                     trackingUrl,
+                    labelUrl: o.labelUrl || '',
                     shopAdminUrl: 'https://'+shopDomain+'/admin/orders/'+o.id,
                   };
                 });
