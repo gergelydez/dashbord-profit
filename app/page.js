@@ -1457,7 +1457,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 { key:'livrare', label:'🚴 În livrare', color:'#10b981' },
               ];
 
-              // Export — pagină web interactivă: bifă gata, click produs → Shopify, click AWB → label GLS
+              // Export — pagină web interactivă: bifă, produs glamx.ro, AWB tracking
               const handleExport = () => {
                 const CAT_COLORS  = {inregistrat:'#d97706',ridicat:'#7c3aed',centru:'#1d4ed8',livrare:'#059669'};
                 const CAT_LABELS  = {inregistrat:'Înregistrat',ridicat:'Ridicat curier',centru:'Centru / Depozit',livrare:'În livrare'};
@@ -1468,41 +1468,37 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 const dateStr = now.toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit',year:'numeric'});
                 const timeStr = now.toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'});
                 const shopDomain = domain || 'glamxonline.myshopify.com';
-                const fmtDate = d => { if(!d) return ''; try { const p=d.split('T')[0].split('-'); return `${p[2]}.${p[1]}.${p[0]}`; } catch { return d.slice(0,10); } };
+                const fmtDate = (d) => { if(!d) return ''; try { const p=d.split('T')[0].split('-'); return p[2]+'.'+p[1]+'.'+p[0]; } catch(e) { return d.slice(0,10); } };
+                const courierLabel = tranzitCourier==='toate'?'Toți curieri':tranzitCourier==='gls'?'GLS':'Sameday';
 
-                // Serializăm datele coletelor ca JSON în pagina HTML
-                const ordersData = filteredTranzit.map(o => {
+                const ordersData = filteredTranzit.map((o) => {
                   const live = liveTrackingData[o.id];
                   const code = live?.statusCode ? parseInt(live.statusCode) : null;
                   const COURIER_CODES = o.courier === 'sameday' ? SD_CODES : GLS_CODES;
-                  const statusDesc = code ? (COURIER_CODES[code] || live?.desc || `Cod ${code}`) : (live?.desc || '');
+                  const statusDesc = code ? (COURIER_CODES[code] || live?.desc || ('Cod '+code)) : (live?.desc || '');
                   const cat = classifyTranzitStatus(o, live);
                   const orderNum = o.name ? (o.name.startsWith('#') ? o.name : '#'+o.name) : '#—';
-                // Link produs glamx.ro — folosim handle din Shopify sau generăm din nume
-                  const firstItem = o.items?.[0];
-                  const handle = firstItem?.productHandle
-                    || (firstItem?.name || o.prods || '')
+                  const firstItem = o.items && o.items[0];
+                  const handle = (firstItem && firstItem.productHandle)
+                    || (firstItem && firstItem.name || o.prods || '')
                         .toLowerCase()
-                        .normalize('NFD').replace(/[\u0300-\u036f]/g,'')  // diacritice
+                        .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
                         .replace(/[^a-z0-9]+/g,'-')
                         .replace(/^-+|-+$/g,'');
-                  const shopifyProductUrl = handle ? `https://glamx.ro/products/${handle}` : null;
-                  // Link tracking AWB
+                  const shopifyProductUrl = handle ? ('https://glamx.ro/products/'+handle) : null;
                   const trackingUrl = o.trackingNo
                     ? (o.courier === 'sameday'
-                        ? `https://sameday.ro/awb/${o.trackingNo}`
-                        : `https://gls-group.eu/track/${o.trackingNo}`)
+                        ? ('https://sameday.ro/awb/'+o.trackingNo)
+                        : ('https://gls-group.eu/RO/ro/urmarire-colete?match='+o.trackingNo))
                     : null;
                   return {
-                    id: o.id,
-                    orderNum,
+                    id: o.id, orderNum,
                     client: o.client||'—',
                     prods: o.prods||'',
                     items: o.items||[],
                     awb: o.trackingNo||'',
                     phone: o.phone||'',
                     addr: [o.address, o.oras].filter(Boolean).join(', '),
-                    oras: o.oras||'',
                     total: o.total||0,
                     createdAt: fmtDate(o.createdAt),
                     courier: o.courier||'gls',
@@ -1510,336 +1506,237 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     lastUpdate: live?.lastUpdate||'',
                     shopifyProductUrl,
                     trackingUrl,
-                    shopAdminUrl: `https://${shopDomain}/admin/orders/${o.id}`,
+                    shopAdminUrl: 'https://'+shopDomain+'/admin/orders/'+o.id,
                   };
                 });
 
-                const html = `<!DOCTYPE html><html lang="ro"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>📦 Packaging GLAMX · ${dateStr}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0;}
-:root{--amber:#f59e0b;--violet:#8b5cf6;--blue:#3b82f6;--green:#10b981;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#e2e8f0;min-height:100vh;padding:14px;max-width:480px;margin:0 auto;}
+                // Generăm bara cod vizuală pentru un AWB
+                const makeBars = (awb) => {
+                  const digits = awb.replace(/\s/g,'');
+                  let bars = '';
+                  // start
+                  bars += '<div style="width:3px;background:#0f172a;border-radius:1px;"></div>';
+                  bars += '<div style="width:2px;background:transparent;"></div>';
+                  bars += '<div style="width:1px;background:#0f172a;border-radius:1px;"></div>';
+                  bars += '<div style="width:2px;background:transparent;"></div>';
+                  for(let i=0;i<digits.length;i++){
+                    const d = parseInt(digits[i])||0;
+                    bars += '<div style="width:'+(d%3===0?4:2)+'px;background:#0f172a;border-radius:1px;"></div>';
+                    bars += '<div style="width:1px;background:transparent;"></div>';
+                    bars += '<div style="width:'+(d%2===0?2:1)+'px;background:#0f172a;border-radius:1px;"></div>';
+                    bars += '<div style="width:'+(d>5?2:1)+'px;background:transparent;"></div>';
+                  }
+                  // end
+                  bars += '<div style="width:1px;background:#0f172a;border-radius:1px;"></div>';
+                  bars += '<div style="width:2px;background:transparent;"></div>';
+                  bars += '<div style="width:3px;background:#0f172a;border-radius:1px;"></div>';
+                  return bars;
+                };
 
-/* HEADER */
-.hdr{background:#0f172a;border-radius:20px;padding:18px 20px 16px;margin-bottom:14px;}
-.hdr-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;}
-.logo{font-size:26px;font-weight:900;letter-spacing:-1px;color:white;}
-.logo em{color:#f97316;font-style:normal;}
-.logo-sub{font-size:11px;color:#475569;margin-top:2px;}
-.tot-badge{background:#f97316;color:white;font-size:20px;font-weight:900;width:50px;height:50px;border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px #f9731640;}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
-.chip{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#cbd5e1;border-radius:20px;padding:4px 11px;font-size:11px;font-weight:600;}
-.chip.hi{background:rgba(249,115,22,.2);border-color:rgba(249,115,22,.4);color:#fdba74;}
-/* Progress */
-.prog-wrap{background:rgba(255,255,255,.08);border-radius:20px;height:8px;overflow:hidden;}
-.prog-fill{height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:20px;transition:width .4s ease;}
-.prog-text{display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-top:5px;}
-.prog-text strong{color:#10b981;}
+                // Build summary HTML
+                let summaryHtml = '';
+                ['inregistrat','ridicat','centru','livrare'].forEach((cat) => {
+                  const n = ordersData.filter((o) => o.cat===cat).length;
+                  if(!n) return;
+                  summaryHtml += '<div style="background:'+CAT_BG[cat]+';border:2px solid '+CAT_STRIPE[cat]+'55;border-radius:14px;padding:12px 10px;text-align:center;">'
+                    + '<div style="font-size:18px;margin-bottom:3px;">'+CAT_ICONS[cat]+'</div>'
+                    + '<div style="font-size:28px;font-weight:900;color:'+CAT_COLORS[cat]+';line-height:1;">'+n+'</div>'
+                    + '<div style="font-size:9px;color:#64748b;margin-top:3px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;">'+CAT_LABELS[cat]+'</div>'
+                    + '</div>';
+                });
 
-/* SUMMARY */
-.summary{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px;}
-.sum-card{border-radius:14px;padding:12px 10px;text-align:center;border:2px solid;}
-.sum-icon{font-size:18px;margin-bottom:3px;}
-.sum-n{font-size:28px;font-weight:900;line-height:1;}
-.sum-lbl{font-size:9px;color:#64748b;margin-top:3px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;}
+                // Build cards HTML
+                let cardsHtml = '';
+                ordersData.forEach((o, idx) => {
+                  const s = CAT_STRIPE[o.cat]||'#64748b';
+                  const bg = CAT_BG[o.cat]||'#f8fafc';
+                  const cc = CAT_COLORS[o.cat]||'#334155';
+                  const isGls = o.courier !== 'sameday';
+                  const courierColor = isGls ? '#c2410c' : '#7c3aed';
+                  const courierLabel2 = isGls ? 'GLS' : 'SAMEDAY';
 
-/* CARD */
-.card{border-radius:18px;margin-bottom:12px;display:flex;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08);transition:opacity .3s,transform .2s;}
-.card.done{opacity:.5;transform:scale(.98);}
-.stripe{width:7px;flex-shrink:0;}
-.inner{flex:1;padding:15px 15px 13px;}
+                  // Product block
+                  let prodHtml = '';
+                  if(o.prods) {
+                    let itemsHtml = '';
+                    if(o.items && o.items.length > 1) {
+                      o.items.forEach((item) => {
+                        itemsHtml += '<div style="font-size:11px;color:#64748b;display:flex;gap:6px;margin-top:3px;">'
+                          + '<span style="color:#f97316;font-weight:800;">×'+item.qty+'</span>'
+                          + item.name
+                          + '</div>';
+                      });
+                    }
+                    prodHtml = '<div onclick="openProd('+idx+')" style="background:#0f172a;border-radius:12px;padding:11px 13px;margin-bottom:10px;cursor:pointer;">'
+                      + '<div style="font-size:9px;font-weight:800;color:#334155;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;">PRODUS <span style="background:rgba(59,130,246,.2);color:#93c5fd;border-radius:4px;padding:1px 5px;font-size:8px;">tap detalii</span></div>'
+                      + '<div style="font-size:15px;font-weight:700;color:#f1f5f9;line-height:1.35;">'+o.prods+'</div>'
+                      + itemsHtml
+                      + '</div>';
+                  }
 
-/* TOP */
-.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
-.onum{font-size:22px;font-weight:900;letter-spacing:-.5px;cursor:pointer;text-decoration:none;}
-.onum:active{opacity:.7;}
-.odate{font-size:10px;color:#94a3b8;margin-top:2px;}
-.badges{display:flex;flex-direction:column;align-items:flex-end;gap:4px;}
-.b-courier{font-size:10px;font-weight:800;padding:3px 10px;border-radius:20px;border:1.5px solid;background:white;letter-spacing:.5px;}
-.b-cat{font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;border:1px solid;}
+                  // AWB block — stil etichetă
+                  let awbHtml = '';
+                  if(o.awb) {
+                    awbHtml = '<div onclick="openAwb('+idx+')" style="background:#fff;border:2.5px solid #1e293b;border-radius:14px;margin:10px 0 8px;cursor:pointer;overflow:hidden;box-shadow:0 3px 10px rgba(0,0,0,.14);">'
+                      + '<div style="background:#1e293b;padding:7px 14px;display:flex;justify-content:space-between;align-items:center;">'
+                      + '<span style="font-size:9px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;">AWB</span>'
+                      + '<span style="font-size:9px;color:#60a5fa;font-weight:700;background:rgba(96,165,250,.15);padding:2px 8px;border-radius:8px;">👆 tracking</span>'
+                      + '</div>'
+                      + '<div style="padding:10px 14px 12px;background:#fff;">'
+                      + '<div style="display:flex;gap:2px;height:44px;margin-bottom:6px;align-items:stretch;">'
+                      + makeBars(o.awb)
+                      + '</div>'
+                      + '<div style="font-family:Courier New,monospace;font-size:21px;font-weight:900;color:#0f172a;letter-spacing:2.5px;word-break:break-all;line-height:1.2;">'+o.awb+'</div>'
+                      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px;">'
+                      + '<span style="font-size:10px;color:#64748b;font-family:monospace;">'+(isGls?'GLS Romania':'Sameday')+'</span>'
+                      + (o.total>0 ? '<span style="font-size:11px;font-weight:800;color:#fff;background:#1e293b;padding:3px 10px;border-radius:6px;">Ramburs: '+o.total.toFixed(2)+' RON</span>' : '')
+                      + '</div>'
+                      + '</div>'
+                      + '</div>';
+                  } else {
+                    awbHtml = '<div style="background:#f8fafc;border:2px dashed #e2e8f0;border-radius:14px;padding:12px 14px;margin:10px 0 8px;">'
+                      + '<span style="font-size:13px;color:#94a3b8;font-style:italic;">Fără AWB generat</span>'
+                      + '</div>';
+                  }
 
-/* PRODUS — tap pentru imagine/detalii */
-.prod-block{background:#0f172a;border-radius:12px;padding:11px 13px;margin-bottom:10px;cursor:pointer;position:relative;active:opacity:.8;}
-.prod-block:active{opacity:.85;}
-.prod-hint{font-size:9px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;display:flex;align-items:center;gap:5px;}
-.prod-hint span{background:rgba(59,130,246,.2);color:#93c5fd;border-radius:4px;padding:1px 5px;font-size:8px;}
-.prod-name{font-size:15px;font-weight:700;color:#f1f5f9;line-height:1.35;}
-.prod-items{margin-top:6px;display:flex;flex-direction:column;gap:3px;}
-.prod-item{font-size:11px;color:#64748b;display:flex;gap:6px;align-items:baseline;}
-.prod-qty{color:#f97316;font-weight:800;font-size:10px;}
+                  // Status pill
+                  let statusHtml = '';
+                  if(o.statusDesc) {
+                    statusHtml = '<div style="display:inline-flex;align-items:center;gap:5px;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;margin-bottom:8px;background:'+s+'15;color:'+cc+';border:1px solid '+s+'44;">⚡ '+o.statusDesc+(o.lastUpdate?' · '+o.lastUpdate:'')+'</div>';
+                  }
 
-/* CLIENT */
-.cli-name{font-size:16px;font-weight:700;color:#1e293b;margin-bottom:5px;}
-.cli-row{font-size:12px;color:#475569;margin-bottom:3px;line-height:1.4;}
+                  cardsHtml += '<div id="card-'+idx+'" style="border-radius:18px;margin-bottom:12px;display:flex;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08);transition:opacity .3s,transform .2s;">'
+                    + '<div style="width:7px;flex-shrink:0;background:'+s+';"></div>'
+                    + '<div style="flex:1;padding:15px 15px 13px;background:'+bg+';">'
+                    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
+                    + '<div><a href="'+o.shopAdminUrl+'" target="_blank" style="font-size:22px;font-weight:900;letter-spacing:-.5px;color:'+cc+';text-decoration:none;">'+o.orderNum+'</a>'
+                    + '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'+o.createdAt+'</div></div>'
+                    + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">'
+                    + '<span style="font-size:10px;font-weight:800;padding:3px 10px;border-radius:20px;border:1.5px solid '+courierColor+'44;background:white;letter-spacing:.5px;color:'+courierColor+';">'+courierLabel2+'</span>'
+                    + '<span style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;border:1px solid '+s+'55;background:'+s+'22;color:'+cc+';">'+CAT_ICONS[o.cat]+' '+CAT_LABELS[o.cat]+'</span>'
+                    + '</div></div>'
+                    + prodHtml
+                    + '<div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:5px;">'+o.client+'</div>'
+                    + (o.addr ? '<div style="font-size:12px;color:#475569;margin-bottom:3px;">📍 '+o.addr+'</div>' : '')
+                    + (o.phone ? '<div style="font-size:12px;color:#475569;margin-bottom:3px;">📞 '+o.phone+'</div>' : '')
+                    + awbHtml
+                    + statusHtml
+                    + '<div id="chk-'+idx+'" onclick="toggleCheck('+idx+')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;cursor:pointer;user-select:none;border:2px dashed #cbd5e1;background:rgba(0,0,0,.02);margin-top:4px;-webkit-tap-highlight-color:transparent;">'
+                    + '<div id="box-'+idx+'" style="width:26px;height:26px;border-radius:8px;border:2px solid #cbd5e1;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;background:white;"></div>'
+                    + '<span id="lbl-'+idx+'" style="font-size:13px;font-weight:700;color:#94a3b8;flex:1;">Marchează ca pregătit</span>'
+                    + '<span id="time-'+idx+'" style="display:none;font-size:10px;font-weight:700;color:#10b981;background:rgba(16,185,129,.1);padding:2px 8px;border-radius:20px;"></span>'
+                    + '</div>'
+                    + '</div></div>';
+                });
 
-/* AWB — tap pentru label */
-.awb-block{background:#fff;border:2.5px solid #1e293b;border-radius:14px;margin:10px 0 8px;cursor:pointer;overflow:hidden;box-shadow:0 3px 10px rgba(0,0,0,.14);}
-.awb-block:active{opacity:.85;transform:scale(.99);}
-.awb-header{background:#1e293b;padding:7px 14px;display:flex;justify-content:space-between;align-items:center;}
-.awb-lbl{font-size:9px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;}
-.awb-tap{font-size:9px;color:#60a5fa;font-weight:700;background:rgba(96,165,250,.15);padding:2px 8px;border-radius:8px;}
-.awb-tap.no{color:#475569;background:transparent;}
-.awb-body{padding:10px 14px 12px;background:#fff;}
-.awb-barcode-row{display:flex;gap:2px;height:44px;margin-bottom:6px;align-items:stretch;}
-.awb-bar{flex-shrink:0;border-radius:1px;}
-.awb-num{font-family:'Courier New',Courier,monospace;font-size:21px;font-weight:900;color:#0f172a;letter-spacing:2.5px;word-break:break-all;line-height:1.2;}
-.awb-sub{display:flex;justify-content:space-between;align-items:center;margin-top:5px;}
-.ramburs{font-size:11px;font-weight:800;color:#fff;background:#1e293b;padding:3px 10px;border-radius:6px;letter-spacing:.3px;}
-.awb-noawb{font-size:13px;color:#94a3b8;font-style:italic;padding:12px 14px;}
-.status-pill{display:inline-flex;align-items:center;gap:5px;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;margin-bottom:8px;}
+                // Modal HTML
+                const modalHtml = '<div id="prod-modal" onclick="if(event.target===this)closeModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px);">'
+                  + '<div style="background:white;border-radius:24px 24px 0 0;padding:20px;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;">'
+                  + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">'
+                  + '<span id="modal-title" style="font-size:16px;font-weight:800;color:#0f172a;"></span>'
+                  + '<button onclick="closeModal()" style="width:32px;height:32px;border-radius:50%;background:#f1f5f9;border:none;font-size:16px;cursor:pointer;">✕</button>'
+                  + '</div>'
+                  + '<div id="modal-prod-name" style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:8px;line-height:1.3;"></div>'
+                  + '<div id="modal-items" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;"></div>'
+                  + '<div id="modal-actions" style="display:flex;gap:8px;"></div>'
+                  + '</div></div>';
 
-/* BIFĂ */
-.check-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;cursor:pointer;user-select:none;transition:all .2s;border:2px dashed #cbd5e1;background:rgba(0,0,0,.02);margin-top:4px;-webkit-tap-highlight-color:transparent;}
-.check-row.done-row{background:rgba(16,185,129,.06);border:2px solid rgba(16,185,129,.35);}
-.check-row:active{transform:scale(.97);}
-.check-box{width:26px;height:26px;border-radius:8px;border:2px solid #cbd5e1;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;transition:all .2s;background:white;}
-.check-row.done-row .check-box{background:#10b981;border-color:#10b981;color:white;}
-.check-label{font-size:13px;font-weight:700;color:#94a3b8;flex:1;}
-.check-row.done-row .check-label{color:#059669;}
-.check-time{font-size:10px;font-weight:700;color:#10b981;background:rgba(16,185,129,.1);padding:2px 8px;border-radius:20px;}
+                const packedCount = filteredTranzit.filter((o) => packedOrders[o.id]).length;
+                const progPct = ordersData.length > 0 ? Math.round(packedCount/ordersData.length*100) : 0;
 
-/* MODAL imagine produs */
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px);}
-.modal-overlay.open{display:flex;}
-.modal{background:white;border-radius:24px 24px 0 0;padding:20px;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;}
-.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
-.modal-title{font-size:16px;font-weight:800;color:#0f172a;}
-.modal-close{width:32px;height:32px;border-radius:50%;background:#f1f5f9;border:none;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
-.modal-img{width:100%;border-radius:14px;margin-bottom:14px;background:#f8fafc;min-height:200px;object-fit:contain;}
-.modal-img-placeholder{width:100%;height:200px;border-radius:14px;margin-bottom:14px;background:#f8fafc;display:flex;align-items:center;justify-content:center;font-size:40px;}
-.modal-prod-name{font-size:17px;font-weight:800;color:#0f172a;margin-bottom:8px;line-height:1.3;}
-.modal-items{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;}
-.modal-item{background:#f8fafc;border-radius:10px;padding:10px 12px;font-size:13px;color:#334155;}
-.modal-item strong{color:#f97316;}
-.modal-actions{display:flex;gap:8px;}
-.modal-btn{flex:1;padding:12px;border-radius:12px;border:none;font-size:13px;font-weight:700;cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px;}
-.modal-btn.primary{background:#0f172a;color:white;}
-.modal-btn.secondary{background:#f1f5f9;color:#475569;}
-
-.footer{text-align:center;font-size:10px;color:#94a3b8;margin-top:20px;padding:14px;border-top:1px solid #e2e8f0;}
-@media print{body{background:white;}.hdr{background:#0f172a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}.card{box-shadow:none;}.modal-overlay{display:none!important;}}
-</style>
-</head><body>
-<div class="hdr">
-  <div class="hdr-top">
-    <div><div class="logo">GLAM<em>X</em></div><div class="logo-sub">Lista Packaging · ${dateStr} ${timeStr}</div></div>
-    <div class="tot-badge" id="tot-badge">${ordersData.length}</div>
-  </div>
-  <div class="chips">
-    <span class="chip hi">📦 ${ordersData.length} colete</span>
-    <span class="chip">🚚 ${tranzitCourier==='toate'?'Toți curieri':tranzitCourier==='gls'?'GLS':'Sameday'}</span>
-  </div>
-  <div class="prog-wrap"><div class="prog-fill" id="prog" style="width:0%;"></div></div>
-  <div class="prog-text"><strong id="prog-done">0 pregătite</strong><span id="prog-left">${ordersData.length} rămase</span></div>
-</div>
-
-<div class="summary">
-  ${['inregistrat','ridicat','centru','livrare'].map(cat=>{
-    const n=ordersData.filter(o=>o.cat===cat).length;
-    if(!n) return '';
-    const s=CAT_STRIPE[cat],bg=CAT_BG[cat],cc=CAT_COLORS[cat];
-    return `<div class="sum-card" style="background:${bg};border-color:${s}55;"><div class="sum-icon">${CAT_ICONS[cat]}</div><div class="sum-n" style="color:${cc};">${n}</div><div class="sum-lbl">${CAT_LABELS[cat]}</div></div>`;
-  }).join('')}
-</div>
-
-${ordersData.map((o,idx)=>{
-  const s=CAT_STRIPE[o.cat]||'#64748b';
-  const bg=CAT_BG[o.cat]||'#f8fafc';
-  const cc=CAT_COLORS[o.cat]||'#334155';
-  const isGls=o.courier!=='sameday';
-  const courierColor=isGls?'#c2410c':'#7c3aed';
-  const courierLabel=isGls?'GLS':'SAMEDAY';
-  const hasItems=o.items&&o.items.length>0;
-  return `
-<div class="card" id="card-${idx}" data-idx="${idx}">
-  <div class="stripe" style="background:${s};"></div>
-  <div class="inner" style="background:${bg};">
-    <div class="top">
-      <div>
-        <a class="onum" style="color:${cc};" href="${o.shopAdminUrl}" target="_blank">${o.orderNum}</a>
-        <div class="odate">${o.createdAt}</div>
-      </div>
-      <div class="badges">
-        <span class="b-courier" style="color:${courierColor};border-color:${courierColor}44;">${courierLabel}</span>
-        <span class="b-cat" style="background:${s}22;color:${cc};border-color:${s}55;">${CAT_ICONS[o.cat]} ${CAT_LABELS[o.cat]||'—'}</span>
-      </div>
-    </div>
-
-    ${o.prods?`<div class="prod-block" onclick="openProd(${idx})">
-      <div class="prod-hint">PRODUS <span>tap pentru detalii</span></div>
-      <div class="prod-name">${o.prods}</div>
-      ${hasItems&&o.items.length>1?`<div class="prod-items">${o.items.map(i=>`<div class="prod-item"><span class="prod-qty">×${i.qty}</span>${i.name}</div>`).join('')}</div>`:''}
-    </div>`:''}
-
-    <div class="cli-name">${o.client}</div>
-    ${o.addr?`<div class="cli-row">📍 ${o.addr}</div>`:''}
-    ${o.phone?`<div class="cli-row">📞 ${o.phone}</div>`:''}
-
-    <div class="awb-block" onclick="openAwb(${idx})">
-      <div class="awb-header">
-        <span class="awb-lbl">AWB</span>
-        ${o.awb?`<span class="awb-tap">👆 tap pentru tracking</span>`:`<span class="awb-tap no">fără AWB</span>`}
-      </div>
-      ${o.awb?`
-      <div class="awb-body">
-        <div class="awb-barcode-row" id="bars-${idx}"></div>
-        <div class="awb-num">${o.awb}</div>
-        <div class="awb-sub">
-          <span style="font-size:10px;color:#64748b;font-family:monospace;">${isGls?'GLS Romania':'Sameday'}</span>
-          ${o.total>0?`<span class="ramburs">Ramburs: ${o.total.toFixed(2)} RON</span>`:''}
-        </div>
-      </div>`:`<div class="awb-noawb">Fără AWB generat</div>`}
-    </div>
-
-    ${o.statusDesc?`<div class="status-pill" style="background:${s}15;color:${cc};border:1px solid ${s}44;">⚡ ${o.statusDesc}${o.lastUpdate?' · '+o.lastUpdate:''}</div>`:''}
-
-    <div class="check-row" id="chk-${idx}" onclick="toggleCheck(${idx})">
-      <div class="check-box" id="box-${idx}">☐</div>
-      <span class="check-label" id="lbl-${idx}">Marchează ca pregătit</span>
-      <span class="check-time" id="time-${idx}" style="display:none;"></span>
-    </div>
-  </div>
-</div>`;
-}).join('')}
-
-<!-- MODAL produs -->
-<div class="modal-overlay" id="prod-modal" onclick="if(event.target===this)closeModal()">
-  <div class="modal">
-    <div class="modal-header">
-      <span class="modal-title" id="modal-title">Produs</span>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div id="modal-img-wrap"></div>
-    <div class="modal-prod-name" id="modal-prod-name"></div>
-    <div class="modal-items" id="modal-items"></div>
-    <div class="modal-actions" id="modal-actions"></div>
-  </div>
-</div>
-
-<div class="footer">GLAMX Dashboard · ${dateStr} ${timeStr}<br><span style="font-size:9px;">Bifele se salvează automat · Funcționează offline</span></div>
-
-<script>
-const ORDERS = ${JSON.stringify(ordersData)};
-const SAVED_KEY = 'glamx_pack_${now.toISOString().slice(0,10)}';
-let packed = {};
-try { packed = JSON.parse(localStorage.getItem(SAVED_KEY)||'{}'); } catch{}
-
-function save(){ try{localStorage.setItem(SAVED_KEY,JSON.stringify(packed));}catch{} }
-
-function updateProgress(){
-  const done = Object.keys(packed).length;
-  const total = ORDERS.length;
-  const pct = total>0 ? Math.round(done/total*100) : 0;
-  document.getElementById('prog').style.width = pct+'%';
-  document.getElementById('prog-done').textContent = done+' pregătite ✅';
-  document.getElementById('prog-left').textContent = (total-done)+' rămase';
-}
-
-function toggleCheck(idx){
-  const id = ORDERS[idx].id;
-  const card = document.getElementById('card-'+idx);
-  const row  = document.getElementById('chk-'+idx);
-  const box  = document.getElementById('box-'+idx);
-  const lbl  = document.getElementById('lbl-'+idx);
-  const tim  = document.getElementById('time-'+idx);
-  if(packed[id]){
-    delete packed[id];
-    card.classList.remove('done');
-    row.classList.remove('done-row');
-    box.textContent='☐'; box.style.background=''; box.style.color='';
-    lbl.textContent='Marchează ca pregătit';
-    tim.style.display='none';
-  } else {
-    packed[id] = Date.now();
-    card.classList.add('done');
-    row.classList.add('done-row');
-    box.textContent='✓'; box.style.background='#10b981'; box.style.color='white';
-    lbl.textContent='PREGĂTIT ✅';
-    const t = new Date(packed[id]);
-    tim.textContent = t.toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'});
-    tim.style.display='';
-  }
-  save(); updateProgress();
-}
-
-function openProd(idx){
-  const o = ORDERS[idx];
-  document.getElementById('modal-title').textContent = o.orderNum+' · Produs';
-  document.getElementById('modal-prod-name').textContent = o.prods||'—';
-  const imgWrap = document.getElementById('modal-img-wrap');
-  imgWrap.innerHTML = '<div class="modal-img-placeholder">📦</div>';
-  const items = document.getElementById('modal-items');
-  items.innerHTML = (o.items||[]).map(i=>\`<div class="modal-item"><strong>×\${i.qty}</strong> \${i.name}\${i.sku?' · <em>\'+i.sku+\'</em>':''}</div>\`).join('') || '<div class="modal-item">'+o.prods+'</div>';
-  const actions = document.getElementById('modal-actions');
-  actions.innerHTML = o.shopifyProductUrl
-    ? \`<a class="modal-btn primary" href="\${o.shopifyProductUrl}" target="_blank">🛍️ Vezi pe GLAMX.ro</a>
-       <a class="modal-btn secondary" href="\${o.shopAdminUrl}" target="_blank">📋 Comandă Admin</a>\`
-    : \`<a class="modal-btn secondary" href="\${o.shopAdminUrl}" target="_blank">📋 Deschide comanda</a>\`;
-  document.getElementById('prod-modal').classList.add('open');
-}
-
-// Desenează bare cod vizual GLS
-function drawBars(containerId, awb){
-  const el = document.getElementById(containerId);
-  if(!el) return;
-  const digits = awb.replace(/\s/g,'');
-  // Generăm un pattern de bare bazat pe cifrele AWB (vizual, nu scanabil)
-  const pattern = [];
-  for(let i=0;i<digits.length;i++){
-    const d = parseInt(digits[i])||0;
-    // wide bar
-    pattern.push({w: d%3===0?3:2, c:'#0f172a'});
-    // narrow space
-    pattern.push({w:1, c:'transparent'});
-    // narrow bar
-    pattern.push({w:1, c:'#0f172a'});
-    // space
-    pattern.push({w: d%2===0?2:1, c:'transparent'});
-  }
-  // Start/stop bars
-  const full = [{w:3,c:'#0f172a'},{w:1,c:'transparent'},{w:1,c:'#0f172a'},{w:2,c:'transparent'},...pattern,{w:3,c:'#0f172a'},{w:1,c:'transparent'},{w:1,c:'#0f172a'}];
-  el.innerHTML = full.map(b=>`<div class="awb-bar" style="width:${b.w}px;background:${b.c};border-radius:1px;"></div>`).join('');
-}
-
-function openAwb(idx){
-  const o = ORDERS[idx];
-  if(!o.awb) return;
-  // GLS: link direct la pagina de tracking GLS Romania
-  const url = o.courier==='sameday'
-    ? 'https://sameday.ro/awb/'+o.awb
-    : 'https://gls-group.eu/RO/ro/urmarire-colete?match='+o.awb;
-  window.open(url,'_blank');
-}
-
-function closeModal(){ document.getElementById('prod-modal').classList.remove('open'); }
-
-// Restabilim starea bifată la încărcare
-window.onload = function(){
-  ORDERS.forEach((o,idx)=>{
-    if(packed[o.id]){
-      const card = document.getElementById('card-'+idx);
-      const row  = document.getElementById('chk-'+idx);
-      const box  = document.getElementById('box-'+idx);
-      const lbl  = document.getElementById('lbl-'+idx);
-      const tim  = document.getElementById('time-'+idx);
-      card.classList.add('done'); row.classList.add('done-row');
-      box.textContent='✓'; box.style.background='#10b981'; box.style.color='white';
-      lbl.textContent='PREGĂTIT ✅';
-      const t = new Date(packed[o.id]);
-      tim.textContent=t.toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'});
-      tim.style.display='';
-    }
-  });
-  // Desenează bare cod pentru fiecare AWB
-  ORDERS.forEach((o,idx)=>{
-    if(o.awb) drawBars('bars-'+idx, o.awb);
-  });
-  updateProgress();
-};
-<\/script>
-</body></html>`;
+                const html = '<!DOCTYPE html><html lang="ro"><head>'
+                  + '<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                  + '<title>Packaging GLAMX ' + dateStr + '</title>'
+                  + '<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#e2e8f0;padding:14px;max-width:480px;margin:0 auto;}</style>'
+                  + '</head><body>'
+                  + '<div style="background:#0f172a;border-radius:20px;padding:18px 20px 16px;margin-bottom:14px;">'
+                  + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">'
+                  + '<div><div style="font-size:26px;font-weight:900;letter-spacing:-1px;color:white;">GLAM<em style="color:#f97316;font-style:normal;">X</em></div>'
+                  + '<div style="font-size:11px;color:#475569;margin-top:2px;">Lista Packaging · '+dateStr+' '+timeStr+'</div></div>'
+                  + '<div style="background:#f97316;color:white;font-size:20px;font-weight:900;width:50px;height:50px;border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(249,115,22,.4);">'+ordersData.length+'</div>'
+                  + '</div>'
+                  + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">'
+                  + '<span style="background:rgba(249,115,22,.2);border:1px solid rgba(249,115,22,.4);color:#fdba74;border-radius:20px;padding:4px 11px;font-size:11px;font-weight:600;">📦 '+ordersData.length+' colete</span>'
+                  + '<span style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#cbd5e1;border-radius:20px;padding:4px 11px;font-size:11px;font-weight:600;">🚚 '+courierLabel+'</span>'
+                  + '</div>'
+                  + '<div style="background:rgba(255,255,255,.08);border-radius:20px;height:8px;overflow:hidden;">'
+                  + '<div id="prog" style="height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:20px;transition:width .4s;width:'+progPct+'%;"></div>'
+                  + '</div>'
+                  + '<div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-top:5px;">'
+                  + '<strong id="prog-done" style="color:#10b981;">'+packedCount+' pregătite</strong>'
+                  + '<span id="prog-left">'+(ordersData.length-packedCount)+' rămase</span>'
+                  + '</div></div>'
+                  + '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px;">'+summaryHtml+'</div>'
+                  + cardsHtml
+                  + modalHtml
+                  + '<div style="text-align:center;font-size:10px;color:#94a3b8;margin-top:20px;padding:14px;border-top:1px solid #e2e8f0;">GLAMX Dashboard · '+dateStr+' '+timeStr+'</div>'
+                  + '<script>'
+                  + 'const ORDERS='+JSON.stringify(ordersData)+';'
+                  + 'const SAVED_KEY="glamx_pack_'+now.toISOString().slice(0,10)+'";'
+                  + 'let packed={};try{packed=JSON.parse(localStorage.getItem(SAVED_KEY)||"{}");}catch(e){}'
+                  + 'function save(){try{localStorage.setItem(SAVED_KEY,JSON.stringify(packed));}catch(e){}}'
+                  + 'function updateProgress(){'
+                  + '  var done=Object.keys(packed).length,total=ORDERS.length,pct=total>0?Math.round(done/total*100):0;'
+                  + '  document.getElementById("prog").style.width=pct+"%";'
+                  + '  document.getElementById("prog-done").textContent=done+" pregătite ✅";'
+                  + '  document.getElementById("prog-left").textContent=(total-done)+" rămase";'
+                  + '}'
+                  + 'function toggleCheck(idx){'
+                  + '  var o=ORDERS[idx],id=o.id,card=document.getElementById("card-"+idx);'
+                  + '  var row=document.getElementById("chk-"+idx),box=document.getElementById("box-"+idx);'
+                  + '  var lbl=document.getElementById("lbl-"+idx),tim=document.getElementById("time-"+idx);'
+                  + '  if(packed[id]){'
+                  + '    delete packed[id];card.style.opacity="1";card.style.transform="";'
+                  + '    row.style.border="2px dashed #cbd5e1";row.style.background="rgba(0,0,0,.02)";'
+                  + '    box.innerHTML="";box.style.background="white";box.style.border="2px solid #cbd5e1";box.style.color="";'
+                  + '    lbl.textContent="Marchează ca pregătit";lbl.style.color="#94a3b8";'
+                  + '    tim.style.display="none";'
+                  + '  }else{'
+                  + '    packed[id]=Date.now();card.style.opacity=".55";card.style.transform="scale(.98)";'
+                  + '    row.style.border="2px solid rgba(16,185,129,.35)";row.style.background="rgba(16,185,129,.06)";'
+                  + '    box.innerHTML="✓";box.style.background="#10b981";box.style.border="2px solid #10b981";box.style.color="white";'
+                  + '    lbl.textContent="PREGĂTIT ✅";lbl.style.color="#059669";'
+                  + '    var t=new Date(packed[id]);tim.textContent=t.toLocaleTimeString("ro-RO",{hour:"2-digit",minute:"2-digit"});tim.style.display="";'
+                  + '  }'
+                  + '  save();updateProgress();'
+                  + '}'
+                  + 'function openProd(idx){'
+                  + '  var o=ORDERS[idx];'
+                  + '  document.getElementById("modal-title").textContent=o.orderNum+" · Produs";'
+                  + '  document.getElementById("modal-prod-name").textContent=o.prods||"—";'
+                  + '  var itemsHtml="";'
+                  + '  (o.items||[]).forEach(function(i){itemsHtml+=\'<div style="background:#f8fafc;border-radius:10px;padding:10px 12px;font-size:13px;color:#334155;"><strong style="color:#f97316;">×\'+i.qty+\'</strong> \'+i.name+(i.sku?\' · <em>\'+i.sku+\'</em>\':\'\')+\'</div>\';});'
+                  + '  document.getElementById("modal-items").innerHTML=itemsHtml||\'<div style="background:#f8fafc;border-radius:10px;padding:10px 12px;font-size:13px;color:#334155;">\'+o.prods+\'</div>\';'
+                  + '  var actHtml=o.shopifyProductUrl'
+                  + '    ? \'<a href="\'+o.shopifyProductUrl+\'" target="_blank" style="flex:1;padding:12px;border-radius:12px;background:#0f172a;color:white;font-size:13px;font-weight:700;text-align:center;text-decoration:none;">🛍️ Vezi pe GLAMX.ro</a>\''
+                  + '      +\'<a href="\'+o.shopAdminUrl+\'" target="_blank" style="flex:1;padding:12px;border-radius:12px;background:#f1f5f9;color:#475569;font-size:13px;font-weight:700;text-align:center;text-decoration:none;">📋 Admin</a>\''
+                  + '    : \'<a href="\'+o.shopAdminUrl+\'" target="_blank" style="flex:1;padding:12px;border-radius:12px;background:#f1f5f9;color:#475569;font-size:13px;font-weight:700;text-align:center;text-decoration:none;">📋 Comandă Admin</a>\';'
+                  + '  document.getElementById("modal-actions").innerHTML=actHtml;'
+                  + '  document.getElementById("modal-actions").style.display="flex";'
+                  + '  document.getElementById("modal-actions").style.gap="8px";'
+                  + '  document.getElementById("prod-modal").style.display="flex";'
+                  + '}'
+                  + 'function openAwb(idx){'
+                  + '  var o=ORDERS[idx];if(!o.awb)return;'
+                  + '  var url=o.courier==="sameday"?"https://sameday.ro/awb/"+o.awb:"https://gls-group.eu/RO/ro/urmarire-colete?match="+o.awb;'
+                  + '  window.open(url,"_blank");'
+                  + '}'
+                  + 'function closeModal(){document.getElementById("prod-modal").style.display="none";}'
+                  + 'window.onload=function(){'
+                  + '  ORDERS.forEach(function(o,idx){'
+                  + '    if(packed[o.id]){'
+                  + '      var card=document.getElementById("card-"+idx),row=document.getElementById("chk-"+idx);'
+                  + '      var box=document.getElementById("box-"+idx),lbl=document.getElementById("lbl-"+idx),tim=document.getElementById("time-"+idx);'
+                  + '      card.style.opacity=".55";card.style.transform="scale(.98)";'
+                  + '      row.style.border="2px solid rgba(16,185,129,.35)";row.style.background="rgba(16,185,129,.06)";'
+                  + '      box.innerHTML="✓";box.style.background="#10b981";box.style.border="2px solid #10b981";box.style.color="white";'
+                  + '      lbl.textContent="PREGĂTIT ✅";lbl.style.color="#059669";'
+                  + '      var t=new Date(packed[o.id]);tim.textContent=t.toLocaleTimeString("ro-RO",{hour:"2-digit",minute:"2-digit"});tim.style.display="";'
+                  + '    }'
+                  + '  });'
+                  + '  updateProgress();'
+                  + '};'
+                  + '<\/script></body></html>';
 
                 const w = window.open('','_blank','width=430,height=860');
                 if(w){ w.document.write(html); w.document.close(); }
