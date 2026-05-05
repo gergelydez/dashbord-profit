@@ -1453,37 +1453,136 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 { key:'livrare', label:'🚴 În livrare', color:'#10b981' },
               ];
 
-              // Export CSV
+              // Export PDF modern — optimizat pentru telefon
               const handleExport = () => {
-                const rows = filteredTranzit.map(o => {
+                const CAT_COLORS = {inregistrat:'#f59e0b',ridicat:'#8b5cf6',centru:'#0ea5e9',livrare:'#10b981'};
+                const CAT_LABELS = {inregistrat:'Înregistrat',ridicat:'Ridicat curier',centru:'Centru / Depozit',livrare:'În livrare'};
+                const CAT_ICONS  = {inregistrat:'📋',ridicat:'📦',centru:'🏭',livrare:'🚴'};
+                const CAT_BG     = {inregistrat:'#fffbeb',ridicat:'#f5f3ff',centru:'#f0f9ff',livrare:'#f0fdf4'};
+                const CAT_BORDER = {inregistrat:'#fcd34d',ridicat:'#c4b5fd',centru:'#7dd3fc',livrare:'#6ee7b7'};
+                const COURIER_BG = {gls:'#fff7ed',sameday:'#faf5ff'};
+                const COURIER_COLOR = {gls:'#ea580c',sameday:'#7c3aed'};
+                const now = new Date();
+                const dateStr = now.toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit',year:'numeric'});
+                const timeStr = now.toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'});
+                const filterLabel = tranzitFilter==='toate'?'Toate coletele':(CAT_ICONS[tranzitFilter]||'')+' '+(CAT_LABELS[tranzitFilter]||tranzitFilter);
+                const courierLabel = tranzitCourier==='toate'?'Toți curieri':tranzitCourier==='gls'?'GLS':'Sameday';
+
+                const cards = filteredTranzit.map(o => {
                   const live = liveTrackingData[o.id];
                   const code = live?.statusCode ? parseInt(live.statusCode) : null;
                   const COURIER_CODES = o.courier === 'sameday' ? SD_CODES : GLS_CODES;
-                  const statusDesc = code ? (COURIER_CODES[code] || live?.desc || `Cod ${code}`) : (live?.desc || '—');
+                  const statusDesc = code ? (COURIER_CODES[code] || live?.desc || `Cod ${code}`) : (live?.desc || null);
                   const cat = classifyTranzitStatus(o, live);
-                  const catLabel = {inregistrat:'Înregistrat',ridicat:'Ridicat curier',centru:'Centru/Depozit',livrare:'În livrare'}[cat]||'—';
-                  return [
-                    o.name,
-                    o.trackingNo || '',
-                    o.client,
-                    o.phone || '',
-                    o.oras || '',
-                    o.address || '',
-                    o.courier === 'sameday' ? 'Sameday' : 'GLS',
-                    statusDesc,
-                    catLabel,
-                    o.total ? o.total.toFixed(2) + ' RON' : '',
-                    o.createdAt ? o.createdAt.slice(0,10) : '',
-                    live?.lastUpdate || '',
-                  ];
-                });
-                const header = ['Comandă','AWB','Nume Client','Telefon','Oraș','Adresă','Curier','Status','Categorie','Valoare','Data','Ultima actualizare'];
-                const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-                const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = `tranzit_${tranzitFilter}_${new Date().toISOString().slice(0,10)}.csv`;
-                document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                  const cc = CAT_COLORS[cat]||'#64748b';
+                  const cbg = CAT_BG[cat]||'#f8fafc';
+                  const cborder = CAT_BORDER[cat]||'#e2e8f0';
+                  const crc = COURIER_COLOR[o.courier]||'#334155';
+                  const crbg = COURIER_BG[o.courier]||'#f8fafc';
+                  const courierName = o.courier==='sameday'?'Sameday':'GLS';
+                  const fmtDate = d => { if(!d) return ''; try { const p=d.split('T')[0].split('-'); return `${p[2]}.${p[1]}.${p[0]}`; } catch { return d.slice(0,10); } };
+                  const awb = o.trackingNo || '—';
+                  const phone = o.phone || '';
+                  const addr = [o.address, o.oras, o.county].filter(Boolean).join(', ');
+                  const val = o.total ? o.total.toFixed(2)+' RON' : '';
+
+                  return `
+                    <div class="card" style="border-left:5px solid ${cc};background:${cbg};border:1px solid ${cborder};border-left:6px solid ${cc};">
+                      <div class="card-top">
+                        <div class="order-num">${o.name}</div>
+                        <div class="badges">
+                          <span class="badge" style="background:${crbg};color:${crc};border:1px solid ${crc}33;">${courierName}</span>
+                          <span class="badge cat-badge" style="background:${cc}22;color:${cc};border:1px solid ${cc}55;">${CAT_ICONS[cat]||''} ${CAT_LABELS[cat]||'—'}</span>
+                        </div>
+                      </div>
+                      <div class="client-name">${o.client||'—'}</div>
+                      <div class="awb-row">
+                        <span class="awb-label">AWB</span>
+                        <span class="awb-val">${awb}</span>
+                      </div>
+                      <div class="details-grid">
+                        ${phone ? `<div class="detail-item"><span class="detail-icon">📞</span><span>${phone}</span></div>` : ''}
+                        ${addr  ? `<div class="detail-item"><span class="detail-icon">📍</span><span>${addr}</span></div>`  : ''}
+                        ${val   ? `<div class="detail-item"><span class="detail-icon">💰</span><span class="val-text">${val}</span></div>` : ''}
+                        ${fmtDate(o.createdAt) ? `<div class="detail-item"><span class="detail-icon">📅</span><span>${fmtDate(o.createdAt)}</span></div>` : ''}
+                      </div>
+                      ${statusDesc ? `<div class="status-row" style="background:${cc}11;border:1px solid ${cc}33;color:${cc};">⚡ ${statusDesc}${live?.lastUpdate?' · '+live.lastUpdate:''}</div>` : ''}
+                      ${o.prods ? `<div class="prods-row">📦 ${o.prods.length>80?o.prods.slice(0,80)+'…':o.prods}</div>` : ''}
+                    </div>`;
+                }).join('');
+
+                // Sumar pe categorii
+                const summary = ['inregistrat','ridicat','centru','livrare'].map(cat => {
+                  const n = filteredTranzit.filter(o => classifyTranzitStatus(o, liveTrackingData[o.id]) === cat).length;
+                  if (!n) return '';
+                  const cc = CAT_COLORS[cat];
+                  return `<div class="sum-item" style="border:1px solid ${cc}44;background:${CAT_BG[cat]};">
+                    <div class="sum-icon">${CAT_ICONS[cat]}</div>
+                    <div class="sum-count" style="color:${cc};">${n}</div>
+                    <div class="sum-label">${CAT_LABELS[cat]}</div>
+                  </div>`;
+                }).join('');
+
+                const html = `<!DOCTYPE html><html lang="ro"><head><meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width,initial-scale=1">
+                  <title>Raport Tranzit ${dateStr}</title>
+                  <style>
+                    *{box-sizing:border-box;margin:0;padding:0;}
+                    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f5f9;color:#1e293b;padding:16px;}
+                    .header{background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);color:white;border-radius:16px;padding:20px;margin-bottom:16px;}
+                    .header-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+                    .logo{font-size:22px;font-weight:900;letter-spacing:-0.5px;}
+                    .logo span{color:#f97316;}
+                    .meta{font-size:11px;color:#94a3b8;margin-top:2px;}
+                    .tag{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:white;border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;}
+                    .filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+                    .filter-chip{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#e2e8f0;border-radius:20px;padding:4px 12px;font-size:11px;}
+                    .summary{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
+                    .sum-item{border-radius:12px;padding:12px;text-align:center;}
+                    .sum-icon{font-size:20px;margin-bottom:4px;}
+                    .sum-count{font-size:28px;font-weight:900;line-height:1;}
+                    .sum-label{font-size:10px;color:#64748b;margin-top:3px;font-weight:600;}
+                    .section-title{font-size:12px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;padding-left:4px;}
+                    .card{border-radius:14px;padding:14px;margin-bottom:10px;page-break-inside:avoid;}
+                    .card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+                    .order-num{font-size:18px;font-weight:900;color:#0f172a;}
+                    .badges{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;}
+                    .badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;}
+                    .client-name{font-size:15px;font-weight:700;color:#1e293b;margin-bottom:10px;}
+                    .awb-row{display:flex;align-items:center;gap:8px;background:#0f172a;border-radius:10px;padding:10px 14px;margin-bottom:10px;}
+                    .awb-label{font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:1px;flex-shrink:0;}
+                    .awb-val{font-family:'Courier New',monospace;font-size:17px;font-weight:900;color:#f97316;letter-spacing:1px;word-break:break-all;}
+                    .details-grid{display:flex;flex-direction:column;gap:5px;margin-bottom:8px;}
+                    .detail-item{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:#334155;}
+                    .detail-icon{font-size:13px;flex-shrink:0;margin-top:0px;}
+                    .val-text{font-weight:800;color:#0f172a;}
+                    .status-row{border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;margin-bottom:6px;}
+                    .prods-row{font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;padding-top:6px;margin-top:2px;}
+                    .footer{text-align:center;font-size:10px;color:#94a3b8;margin-top:20px;padding:12px;}
+                    @media print{body{padding:8px;background:white;}.card{page-break-inside:avoid;}}
+                    @media(min-width:600px){.summary{grid-template-columns:repeat(4,1fr);}}
+                  </style>
+                </head><body>
+                  <div class="header">
+                    <div class="header-top">
+                      <div><div class="logo">GLAM<span>X</span></div><div class="meta">Raport Colete în Tranzit</div></div>
+                      <div class="tag">${filteredTranzit.length} colete</div>
+                    </div>
+                    <div class="filter-row">
+                      <span class="filter-chip">📅 ${dateStr} · ${timeStr}</span>
+                      <span class="filter-chip">🔍 ${filterLabel}</span>
+                      <span class="filter-chip">🚚 ${courierLabel}</span>
+                    </div>
+                  </div>
+                  ${summary ? `<div class="summary">${summary}</div>` : ''}
+                  <div class="section-title">Lista colete (${filteredTranzit.length})</div>
+                  ${cards || '<div style="text-align:center;color:#94a3b8;padding:24px;">Niciun colet în selecție</div>'}
+                  <div class="footer">Generat din GLAMX Dashboard · ${dateStr} ${timeStr}</div>
+                  <script>window.onload=()=>window.print();<\/script>
+                </body></html>`;
+
+                const w = window.open('','_blank','width=420,height=800');
+                if (w) { w.document.write(html); w.document.close(); }
               };
 
               return (
@@ -1495,8 +1594,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     </div>
                     <div style={{display:'flex',gap:6}}>
                       <button onClick={handleExport}
-                        style={{background:'rgba(16,185,129,.15)',border:'1px solid rgba(16,185,129,.4)',color:'#10b981',borderRadius:8,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
-                        📥 Export
+                        style={{background:'rgba(249,115,22,.15)',border:'1px solid rgba(249,115,22,.4)',color:'#f97316',borderRadius:8,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                        📄 PDF
                       </button>
                       <button onClick={()=>fetchLiveTracking(tranzitOrders)}
                         style={{background:'rgba(59,130,246,.15)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:8,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
