@@ -1,9 +1,9 @@
 /**
  * GET /api/connector/awb-label?id=<shipmentId>
- * SAU
- * GET /api/connector/awb-label?tracking=<trackingNumber>&courier=gls
+ * GET /api/connector/awb-label?tracking=<trackingNumber>
  *
- * Proxy pentru eticheta AWB — servește PDF-ul din DB/S3 sau direct din GLS API.
+ * Servește PDF-ul etichetei AWB din DB/S3 sau direct din GLS API.
+ * Folosește exact aceeași logică ca lib/couriers/gls.ts (fetchGlsLabel).
  */
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
@@ -12,123 +12,89 @@ import { fetchFromS3, isS3Key } from '@/lib/storage/s3';
 
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
-async function glsAuth() {
-  const username = process.env.GLS_USERNAME || '';
-  const password = process.env.GLS_PASSWORD || '';
-  if (!username || !password) throw new Error('GLS credentials lipsă (GLS_USERNAME / GLS_PASSWORD)');
+async function buildBaseReq() {
+  const username     = process.env.GLS_USERNAME || '';
+  const password     = process.env.GLS_PASSWORD || '';
+  const clientNumber = parseInt(process.env.GLS_CLIENT_NUMBER || '0', 10);
 
-  // SHA-512 hash — documentația cere byte array, nu hex string
+  if (!username || !password) {
+    throw new Error('GLS credentials lipsă (GLS_USERNAME / GLS_PASSWORD)');
+  }
+
+  // SHA-512 — exact ca în lib/couriers/gls.ts
   const encoded  = new TextEncoder().encode(password);
   const hashBuf  = await globalThis.crypto.subtle.digest('SHA-512', encoded);
   const pwdBytes = Array.from(new Uint8Array(hashBuf));
 
-  return { Username: username, Password: pwdBytes };
+  return {
+    Username:         username,
+    Password:         pwdBytes,
+    ClientNumberList: [clientNumber],  // folosit în lib și funcționează
+    WebshopEngine:    'Custom',
+  };
 }
 
-async function glsPost(endpoint: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const auth = await glsAuth();
-  const res  = await fetch(`${GLS_BASE}/${endpoint}`, {
+// Descarcă eticheta direct cu ParcelNumberList (tracking number)
+// Exact ca fetchGlsLabel() din lib/couriers/gls.ts
+async function fetchLabelByTrackingNumber(trackingNumber: string): Promise<Buffer | null> {
+  const baseReq = await buildBaseReq();
+
+  const res = await fetch(`${GLS_BASE}/GetPrintedLabels`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body:    JSON.stringify({ ...auth, ...body }),
-    cache:   'no-store',
+    body: JSON.stringify({
+      ...baseReq,
+      ParcelNumberList: [parseInt(trackingNumber, 10)],
+      TypeOfPrinter:    'A4_4x1',
+      PrintPosition:    1,
+      ShowPrintDialog:  false,
+    }),
+    cache: 'no-store',
   });
+
   const text = await res.text();
-  console.log(`[awb-label] GLS ${endpoint} status=${res.status} body=${text.slice(0, 300)}`);
-  if (!res.ok) throw new Error(`GLS HTTP ${res.status}`);
-  return JSON.parse(text);
-}
+  console.log(`[awb-label] GetPrintedLabels status=${res.status} body=${text.slice(0, 400)}`);
 
-// Pasul 1: GetParcelList → găsim ParcelId intern după tracking number
-async function findParcelId(trackingNumber: string): Promise<number | null> {
-  const today = new Date();
-  const from  = new Date();
-  from.setDate(today.getDate() - 180); // 180 zile înapoi
+  if (!res.ok) throw new Error(`GLS HTTP ${res.status}: ${text.slice(0, 200)}`);
 
-  // Căutăm după PrintDate (data generării etichetei)
-  const data = await glsPost('GetParcelList', {
-    PrintDateFrom: from.toISOString(),
-    PrintDateTo:   today.toISOString(),
-  });
+  const data = JSON.parse(text);
 
-  const list: Array<Record<string, unknown>> = (data.PrintDataInfoList as Array<Record<string, unknown>>) || [];
-
-  // Căutăm după ParcelNumber sau ParcelNumberWithCheckdigit
-  // GLS returnează numere ca Long — comparăm ca string pentru a evita overflow
-  const clean = String(trackingNumber).replace(/\s/g, '');
-  const parcel = list.find(p =>
-    String(p.ParcelNumber)               === clean ||
-    String(p.ParcelNumberWithCheckdigit) === clean
-  );
-
-  if (!parcel) {
-    console.log(`[awb-label] Tracking ${clean} negăsit în ${list.length} parcele (PrintDate 180 zile)`);
-
-    // Fallback: caută după PickupDate
-    const data2 = await glsPost('GetParcelList', {
-      PickupDateFrom: from.toISOString(),
-      PickupDateTo:   today.toISOString(),
-    });
-    const list2: Array<Record<string, unknown>> = (data2.PrintDataInfoList as Array<Record<string, unknown>>) || [];
-    const parcel2 = list2.find(p =>
-      String(p.ParcelNumber)               === clean ||
-      String(p.ParcelNumberWithCheckdigit) === clean
-    );
-    if (!parcel2) {
-      console.log(`[awb-label] Tracking ${clean} negăsit nici după PickupDate (${list2.length} parcele)`);
-      return null;
-    }
-    console.log(`[awb-label] Găsit via PickupDate: ParcelId=${parcel2.ParcelId}`);
-    return parcel2.ParcelId as number;
+  // Verifică erori GLS
+  const errors = data?.GetPrintedLabelsErrorList;
+  if (Array.isArray(errors) && errors.length > 0) {
+    console.log(`[awb-label] GLS errors:`, JSON.stringify(errors));
+    // Eroarea 10 = AWB nu are încă număr asignat (prea nou)
+    // Eroarea 4 = ParcelId inexistent
+    throw new Error(`GLS error ${errors[0]?.ErrorCode}: ${errors[0]?.ErrorDescription}`);
   }
 
-  console.log(`[awb-label] Găsit via PrintDate: ParcelId=${parcel.ParcelId}`);
-  return parcel.ParcelId as number;
-}
-
-// Pasul 2: GetPrintedLabels cu ParcelIdList — returnează PDF base64
-async function fetchFromGls(trackingNumber: string): Promise<Buffer | null> {
-  try {
-    const parcelId = await findParcelId(trackingNumber);
-    if (!parcelId) return null;
-
-    // GetPrintedLabels — câmpul corect este ParcelIdList, NU ParcelNumberList
-    const data = await glsPost('GetPrintedLabels', {
-      ParcelIdList:   [parcelId],
-      PrintPosition:  1,
-      ShowPrintDialog: false,
-      TypeOfPrinter:  'A4_4x1', // A4_4x1 = o etichetă per pagină, cea mai clară
-    });
-
-    const errors = data.GetPrintedLabelsErrorList as Array<Record<string, unknown>> | undefined;
-    if (errors?.length) {
-      console.log(`[awb-label] GLS error: ${JSON.stringify(errors[0])}`);
-      return null;
-    }
-
-    // Labels vine ca string base64
-    const labels = data.Labels as string | undefined;
-    if (!labels || labels.length < 100) return null;
-
+  const labels = data?.Labels;
+  if (Array.isArray(labels) && typeof labels[0] === 'string' && labels[0].length > 100) {
+    return Buffer.from(labels[0], 'base64');
+  }
+  if (typeof labels === 'string' && labels.length > 100) {
     return Buffer.from(labels, 'base64');
-  } catch (e) {
-    console.error('[awb-label] fetchFromGls error:', e);
-    return null;
   }
+
+  console.log(`[awb-label] No label in response, keys:`, Object.keys(data));
+  return null;
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const id       = searchParams.get('id') || '';
+  const id       = searchParams.get('id')       || '';
   const tracking = searchParams.get('tracking') || '';
 
-  // Option A: by shipment ID from our DB
+  // ── Option A: by shipment ID from our DB ────────────────────────────────
   if (id) {
     const shipment = await db.shipment.findUnique({ where: { id } });
-    if (!shipment) return NextResponse.json({ error: 'AWB negăsit' }, { status: 404 });
+    if (!shipment) {
+      return NextResponse.json({ error: 'AWB negăsit în DB' }, { status: 404 });
+    }
 
     const filename = `AWB_${shipment.courier.toUpperCase()}_${shipment.trackingNumber}.pdf`;
 
+    // 1. S3
     if (isS3Key(shipment.labelStorageKey)) {
       try {
         const buf = await fetchFromS3(shipment.labelStorageKey!);
@@ -136,67 +102,65 @@ export async function GET(request: Request) {
       } catch { /* fallthrough */ }
     }
 
+    // 2. DB labelData
     if (shipment.labelData) {
       return pdfResponse(Buffer.from(shipment.labelData), filename);
     }
 
-    // No local PDF — try GLS API
-    const glsBuf = await fetchFromGls(shipment.trackingNumber);
-    if (glsBuf) {
-      await db.shipment.update({ where: { id }, data: { labelData: glsBuf } }).catch(() => {});
-      return pdfResponse(glsBuf, filename);
+    // 3. GLS API cu tracking number
+    try {
+      const buf = await fetchLabelByTrackingNumber(shipment.trackingNumber);
+      if (buf) {
+        await db.shipment.update({ where: { id }, data: { labelData: buf } }).catch(() => {});
+        return pdfResponse(buf, filename);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[awb-label] GLS fetch error:', msg);
     }
 
     if (shipment.trackingUrl) return NextResponse.redirect(shipment.trackingUrl);
     return NextResponse.json({ error: 'Eticheta nu este disponibilă' }, { status: 404 });
   }
 
-  // Option B: by tracking number
+  // ── Option B: by tracking number ────────────────────────────────────────
   if (tracking) {
-    const clean = String(tracking).replace(/\s/g, '');
+    const clean    = String(tracking).replace(/\s/g, '');
     const filename = `AWB_GLS_${clean}.pdf`;
 
-    // 1. Caută mai întâi în DB-ul propriu după trackingNumber
-    const shipmentByTracking = await db.shipment.findFirst({
-      where: { trackingNumber: clean },
+    // 1. Caută în DB după trackingNumber
+    const shipment = await db.shipment.findFirst({
+      where:   { trackingNumber: clean },
       orderBy: { createdAt: 'desc' },
     });
 
-    if (shipmentByTracking) {
-      console.log(`[awb-label] Găsit în DB: shipmentId=${shipmentByTracking.id}`);
-
-      if (isS3Key(shipmentByTracking.labelStorageKey)) {
+    if (shipment) {
+      if (isS3Key(shipment.labelStorageKey)) {
         try {
-          const buf = await fetchFromS3(shipmentByTracking.labelStorageKey!);
-          return pdfResponse(buf, `AWB_${shipmentByTracking.courier.toUpperCase()}_${clean}.pdf`);
+          const buf = await fetchFromS3(shipment.labelStorageKey!);
+          return pdfResponse(buf, `AWB_${shipment.courier.toUpperCase()}_${clean}.pdf`);
         } catch { /* fallthrough */ }
       }
-
-      if (shipmentByTracking.labelData) {
-        return pdfResponse(Buffer.from(shipmentByTracking.labelData), filename);
+      if (shipment.labelData) {
+        return pdfResponse(Buffer.from(shipment.labelData), filename);
       }
     }
 
-    // 2. Fallback: încearcă GLS API direct (GetParcelList → GetPrintedLabels)
+    // 2. GLS API direct — exact ca în lib/couriers/gls.ts
     try {
-      const glsBuf = await fetchFromGls(clean);
-      if (glsBuf) {
-        // Salvează în DB dacă avem shipment
-        if (shipmentByTracking) {
-          await db.shipment.update({ where: { id: shipmentByTracking.id }, data: { labelData: glsBuf } }).catch(() => {});
+      const buf = await fetchLabelByTrackingNumber(clean);
+      if (buf) {
+        if (shipment) {
+          await db.shipment.update({ where: { id: shipment.id }, data: { labelData: buf } }).catch(() => {});
         }
-        return pdfResponse(glsBuf, filename);
+        return pdfResponse(buf, filename);
       }
-
       return NextResponse.json({
-        error: `AWB ${clean} negăsit`,
-        hint: 'AWB-ul nu există în DB-ul local și nici în contul MyGLS conectat. Dacă AWB-ul a fost generat de xConnector, încearcă accesarea prin /api/shipping-label cu token semnat.',
-        tracking: clean,
+        error: `Eticheta pentru AWB ${clean} nu este disponibilă`,
+        hint: 'AWB-ul poate fi prea nou (nu a fost încă procesat de GLS) sau aparține altui cont',
       }, { status: 404 });
-
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error('[awb-label] Error:', msg);
       return NextResponse.json({ error: msg }, { status: 500 });
     }
   }
@@ -208,9 +172,9 @@ function pdfResponse(buf: Buffer, filename: string): Response {
   return new Response(buf as unknown as BodyInit, {
     status: 200,
     headers: {
-      'Content-Type': 'application/pdf',
+      'Content-Type':        'application/pdf',
       'Content-Disposition': `inline; filename="${encodeURIComponent(filename)}"`,
-      'Cache-Control': 'private, max-age=3600',
+      'Cache-Control':       'private, max-age=3600',
     },
   });
 }
