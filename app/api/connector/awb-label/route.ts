@@ -10,58 +10,90 @@ export const dynamic = 'force-dynamic';
 import { db } from '@/lib/db';
 import { fetchFromS3, isS3Key } from '@/lib/storage/s3';
 
+const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
+
+async function glsAuth() {
+  const username = process.env.GLS_USERNAME || '';
+  const password = process.env.GLS_PASSWORD || '';
+  if (!username || !password) throw new Error('GLS credentials lipsă (GLS_USERNAME / GLS_PASSWORD)');
+
+  // SHA-512 hash — documentația cere byte array, nu hex string
+  const encoded  = new TextEncoder().encode(password);
+  const hashBuf  = await globalThis.crypto.subtle.digest('SHA-512', encoded);
+  const pwdBytes = Array.from(new Uint8Array(hashBuf));
+
+  return { Username: username, Password: pwdBytes };
+}
+
+async function glsPost(endpoint: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const auth = await glsAuth();
+  const res  = await fetch(`${GLS_BASE}/${endpoint}`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body:    JSON.stringify({ ...auth, ...body }),
+    cache:   'no-store',
+  });
+  const text = await res.text();
+  console.log(`[awb-label] GLS ${endpoint} status=${res.status} body=${text.slice(0, 300)}`);
+  if (!res.ok) throw new Error(`GLS HTTP ${res.status}`);
+  return JSON.parse(text);
+}
+
+// Pasul 1: GetParcelList → găsim ParcelId intern după tracking number
+async function findParcelId(trackingNumber: string): Promise<number | null> {
+  const today = new Date();
+  const from  = new Date();
+  from.setDate(today.getDate() - 90); // 90 zile înapoi
+
+  const data = await glsPost('GetParcelList', {
+    PrintDateFrom: from.toISOString(),
+    PrintDateTo:   today.toISOString(),
+  });
+
+  const list: Array<Record<string, unknown>> = (data.PrintDataInfoList as Array<Record<string, unknown>>) || [];
+  const parcel = list.find(p =>
+    String(p.ParcelNumber)              === String(trackingNumber) ||
+    String(p.ParcelNumberWithCheckdigit) === String(trackingNumber)
+  );
+
+  if (!parcel) {
+    console.log(`[awb-label] Tracking ${trackingNumber} negăsit în ${list.length} parcele din ultimele 90 zile`);
+    return null;
+  }
+
+  console.log(`[awb-label] Găsit ParcelId=${parcel.ParcelId} pentru tracking=${trackingNumber}`);
+  return parcel.ParcelId as number;
+}
+
+// Pasul 2: GetPrintedLabels cu ParcelIdList — returnează PDF base64
 async function fetchFromGls(trackingNumber: string): Promise<Buffer | null> {
   try {
-    const username     = process.env.GLS_USERNAME || '';
-    const password     = process.env.GLS_PASSWORD || '';
-    const clientNumber = parseInt(process.env.GLS_CLIENT_NUMBER || '0', 10);
+    const parcelId = await findParcelId(trackingNumber);
+    if (!parcelId) return null;
 
-    if (!username || !password) return null;
+    // GetPrintedLabels — câmpul corect este ParcelIdList, NU ParcelNumberList
+    const data = await glsPost('GetPrintedLabels', {
+      ParcelIdList:   [parcelId],
+      PrintPosition:  1,
+      ShowPrintDialog: false,
+      TypeOfPrinter:  'A4_4x1', // A4_4x1 = o etichetă per pagină, cea mai clară
+    });
 
-    // SHA-512 hash password
-    const encoded = new TextEncoder().encode(password);
-    const buf     = await globalThis.crypto.subtle.digest('SHA-512', encoded);
-    const pwdBytes = Array.from(new Uint8Array(buf));
-
-    // Try RO first, then HU
-    const bases = ['https://api.mygls.ro/ParcelService.svc/json', 'https://api.mygls.hu/ParcelService.svc/json'];
-
-    for (const base of bases) {
-      try {
-        const res = await fetch(`${base}/GetPrintedLabels`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({
-            Username:         username,
-            Password:         pwdBytes,
-            ClientNumberList: [clientNumber],
-            ParcelNumberList: [parseInt(trackingNumber, 10)],
-            TypeOfPrinter:    'A4_2x2',
-            PrintPosition:    1,
-            ShowPrintDialog:  false,
-          }),
-          cache: 'no-store',
-        });
-
-        const responseText = await res.text();
-        console.log(`[awb-label] GLS ${base} status=${res.status} body=${responseText.slice(0, 500)}`);
-        if (!res.ok) continue;
-        let data: Record<string, unknown>;
-        try { data = JSON.parse(responseText); } catch { continue; }
-        const labels = data?.Labels;
-
-        let labelBase64: string | null = null;
-        if (Array.isArray(labels) && typeof labels[0] === 'string' && labels[0].length > 100) {
-          labelBase64 = labels[0];
-        } else if (typeof labels === 'string' && labels.length > 100) {
-          labelBase64 = labels as string;
-        }
-
-        if (labelBase64) return Buffer.from(labelBase64, 'base64');
-      } catch { continue; }
+    const errors = data.GetPrintedLabelsErrorList as Array<Record<string, unknown>> | undefined;
+    if (errors?.length) {
+      console.log(`[awb-label] GLS error: ${JSON.stringify(errors[0])}`);
+      return null;
     }
+
+    // Labels vine ca string base64
+    const labels = data.Labels as string | undefined;
+    if (!labels || labels.length < 100) return null;
+
+    return Buffer.from(labels, 'base64');
+  } catch (e) {
+    console.error('[awb-label] fetchFromGls error:', e);
     return null;
-  } catch { return null; }
+  }
 }
 
 export async function GET(request: Request) {
@@ -102,9 +134,14 @@ export async function GET(request: Request) {
   // Option B: by tracking number directly (for Shopify fulfillment AWBs)
   if (tracking) {
     const filename = `AWB_GLS_${tracking}.pdf`;
-    const glsBuf = await fetchFromGls(tracking);
-    if (glsBuf) return pdfResponse(glsBuf, filename);
-    return NextResponse.json({ error: 'Eticheta nu a putut fi descărcată din GLS' }, { status: 404 });
+    try {
+      const glsBuf = await fetchFromGls(tracking);
+      if (glsBuf) return pdfResponse(glsBuf, filename);
+      return NextResponse.json({ error: `Tracking ${tracking} negăsit în ultimele 90 de zile sau eticheta nu este disponibilă în GLS` }, { status: 404 });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ error: 'id sau tracking required' }, { status: 400 });
