@@ -1764,6 +1764,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   + '  document.getElementById("lm-download").onclick=function(){fetchAndDownload(idx);};'
                   + '  m.style.display="flex";'
                   + '  var rawUrl=o.labelUrl||"/api/connector/awb-label?tracking="+o.awb;'
+                  + '  alert("labelUrl: "+o.labelUrl+"\nawb: "+o.awb+"\nrawUrl: "+rawUrl);'
                   + '  var labelUrl=rawUrl.startsWith("http")?"/api/connector/label-proxy?url="+encodeURIComponent(rawUrl):rawUrl;'
                   + '  fetch(labelUrl).then(function(r){'
                   + '    if(!r.ok)throw new Error("HTTP "+r.status);'
