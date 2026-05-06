@@ -75,8 +75,9 @@ async function getParcelIdFromStatuses(trackingNumber: string): Promise<number |
   return null;
 }
 
-// Pasul 2: GetPrintedLabels cu ParcelIdList — exact conform documentației
+// Pasul 2: încearcă GetPrintedLabels, dacă eroare 18 folosește GetPrintData
 async function getPrintedLabel(parcelId: number): Promise<Buffer | null> {
+  // Prima încercare: GetPrintedLabels
   const data = await glsPost('GetPrintedLabels', {
     ParcelIdList:    [parcelId],
     PrintPosition:   1,
@@ -85,6 +86,14 @@ async function getPrintedLabel(parcelId: number): Promise<Buffer | null> {
   });
 
   const errors = data.GetPrintedLabelsErrorList as Array<Record<string, unknown>>;
+
+  // Eroarea 18 = "Parcel label is already generated"
+  // În acest caz folosim GetPrintData care funcționează pentru etichete existente
+  if (errors?.length && Number(errors[0]?.ErrorCode) === 18) {
+    console.log(`[awb-label] Eroare 18 — etichetă deja generată, încerc GetPrintData`);
+    return getPrintData(parcelId);
+  }
+
   if (errors?.length) {
     console.log(`[awb-label] GetPrintedLabels errors:`, JSON.stringify(errors));
     throw new Error(`GLS error ${errors[0]?.ErrorCode}: ${errors[0]?.ErrorDescription}`);
@@ -99,6 +108,38 @@ async function getPrintedLabel(parcelId: number): Promise<Buffer | null> {
   }
 
   console.log(`[awb-label] GetPrintedLabels no label. Keys:`, Object.keys(data));
+  return null;
+}
+
+// GetPrintData — pentru etichete deja generate (eroarea 18)
+async function getPrintData(parcelId: number): Promise<Buffer | null> {
+  const data = await glsPost('GetPrintData', {
+    ParcelIdList:    [parcelId],
+    PrintPosition:   1,
+    ShowPrintDialog: false,
+    TypeOfPrinter:   'A4_4x1',
+  });
+
+  console.log(`[awb-label] GetPrintData response keys:`, Object.keys(data));
+
+  const errors = data.GetPrintDataErrorList as Array<Record<string, unknown>>;
+  if (errors?.length) {
+    throw new Error(`GLS GetPrintData error ${errors[0]?.ErrorCode}: ${errors[0]?.ErrorDescription}`);
+  }
+
+  // GetPrintData returnează Pdfdocument (nu Labels)
+  const pdf = data.Pdfdocument;
+  if (typeof pdf === 'string' && pdf.length > 100) {
+    return Buffer.from(pdf, 'base64');
+  }
+
+  // Fallback: verifică și câmpul Labels
+  const labels = data.Labels;
+  if (typeof labels === 'string' && labels.length > 100) {
+    return Buffer.from(labels, 'base64');
+  }
+
+  console.log(`[awb-label] GetPrintData no PDF. Full response:`, JSON.stringify(data).slice(0, 500));
   return null;
 }
 
@@ -145,6 +186,10 @@ export async function GET(request: Request) {
       console.error('[awb-label]', e);
     }
 
+    // Fallback final: xConnector URL (din DB sau Shopify)
+    const xcUrl = await getXConnectorUrl(shipment.trackingNumber, shipment);
+    if (xcUrl) return NextResponse.redirect(xcUrl);
+
     if (shipment.trackingUrl) return NextResponse.redirect(shipment.trackingUrl);
     return NextResponse.json({ error: 'Eticheta nu este disponibilă' }, { status: 404 });
   }
@@ -181,12 +226,20 @@ export async function GET(request: Request) {
         }
         return pdfResponse(buf, filename);
       }
-      return NextResponse.json({
-        error: `Eticheta pentru AWB ${clean} nu este disponibilă`,
-      }, { status: 404 });
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ error: msg }, { status: 500 });
+      console.error('[awb-label] GLS API failed:', (e as Error).message);
+    }
+
+    // 3. Fallback: xConnector URL din shipment.trackingUrl sau din Shopify fulfillment
+    const xcUrl = await getXConnectorUrl(clean, shipment);
+    if (xcUrl) {
+      console.log(`[awb-label] Redirecting to xConnector: ${xcUrl}`);
+      return NextResponse.redirect(xcUrl);
+    }
+
+    return NextResponse.json({
+      error: `Eticheta pentru AWB ${clean} nu este disponibilă`,
+    }, { status: 404 });
     }
   }
 
@@ -202,4 +255,47 @@ function pdfResponse(buf: Buffer, filename: string): Response {
       'Cache-Control':       'private, max-age=3600',
     },
   });
+}
+
+// Obține URL-ul xConnector pentru o etichetă:
+// 1. Din shipment.trackingUrl din DB (dacă e URL xConnector)
+// 2. Din Shopify fulfillment.tracking_url (sursa de adevăr)
+async function getXConnectorUrl(
+  trackingNumber: string,
+  shipment: { trackingUrl?: string | null } | null,
+): Promise<string | null> {
+  // 1. Dacă shipment.trackingUrl e deja un URL xConnector, îl folosim direct
+  if (shipment?.trackingUrl && shipment.trackingUrl.includes('xconnector.app')) {
+    return shipment.trackingUrl;
+  }
+
+  // 2. Căutăm în Shopify fulfillments după tracking number
+  const domain      = process.env.SHOPIFY_DOMAIN_RO || process.env.SHOPIFY_DOMAIN || '';
+  const accessToken = process.env.SHOPIFY_ACCESS_TOKEN_RO || process.env.SHOPIFY_ACCESS_TOKEN || '';
+
+  if (!domain || !accessToken) return null;
+
+  try {
+    // Căutăm order după tracking number via Shopify API
+    const res = await fetch(
+      `https://${domain}/admin/api/2026-07/orders.json?fulfillment_status=shipped&fields=id,fulfillments&limit=250`,
+      { headers: { 'X-Shopify-Access-Token': accessToken }, cache: 'no-store' }
+    );
+    if (!res.ok) return null;
+
+    const { orders } = await res.json() as { orders: Array<{fulfillments: Array<{tracking_number: string; tracking_url: string}>}> };
+
+    for (const order of orders) {
+      for (const f of order.fulfillments || []) {
+        if (String(f.tracking_number) === trackingNumber && f.tracking_url?.includes('xconnector.app')) {
+          console.log(`[awb-label] Found xConnector URL from Shopify for ${trackingNumber}`);
+          return f.tracking_url;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[awb-label] Shopify lookup failed:', (e as Error).message);
+  }
+
+  return null;
 }
