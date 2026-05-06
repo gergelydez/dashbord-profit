@@ -143,7 +143,6 @@ export async function GET(request: Request) {
     // No local PDF — try GLS API
     const glsBuf = await fetchFromGls(shipment.trackingNumber);
     if (glsBuf) {
-      // Save for next time
       await db.shipment.update({ where: { id }, data: { labelData: glsBuf } }).catch(() => {});
       return pdfResponse(glsBuf, filename);
     }
@@ -152,25 +151,53 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Eticheta nu este disponibilă' }, { status: 404 });
   }
 
-  // Option B: by tracking number directly (for Shopify fulfillment AWBs)
+  // Option B: by tracking number
   if (tracking) {
-    const filename = `AWB_GLS_${tracking}.pdf`;
+    const clean = String(tracking).replace(/\s/g, '');
+    const filename = `AWB_GLS_${clean}.pdf`;
+
+    // 1. Caută mai întâi în DB-ul propriu după trackingNumber
+    const shipmentByTracking = await db.shipment.findFirst({
+      where: { trackingNumber: clean },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (shipmentByTracking) {
+      console.log(`[awb-label] Găsit în DB: shipmentId=${shipmentByTracking.id}`);
+
+      if (isS3Key(shipmentByTracking.labelStorageKey)) {
+        try {
+          const buf = await fetchFromS3(shipmentByTracking.labelStorageKey!);
+          return pdfResponse(buf, `AWB_${shipmentByTracking.courier.toUpperCase()}_${clean}.pdf`);
+        } catch { /* fallthrough */ }
+      }
+
+      if (shipmentByTracking.labelData) {
+        return pdfResponse(Buffer.from(shipmentByTracking.labelData), filename);
+      }
+    }
+
+    // 2. Fallback: încearcă GLS API direct (GetParcelList → GetPrintedLabels)
     try {
-      const glsBuf = await fetchFromGls(tracking);
-      if (glsBuf) return pdfResponse(glsBuf, filename);
-      // 404 — eticheta nu a putut fi găsită, returnăm detalii pentru debugging
+      const glsBuf = await fetchFromGls(clean);
+      if (glsBuf) {
+        // Salvează în DB dacă avem shipment
+        if (shipmentByTracking) {
+          await db.shipment.update({ where: { id: shipmentByTracking.id }, data: { labelData: glsBuf } }).catch(() => {});
+        }
+        return pdfResponse(glsBuf, filename);
+      }
+
       return NextResponse.json({
-        error: `AWB ${tracking} negăsit în MyGLS`,
-        hint: 'Verifică că: 1) GLS_USERNAME și GLS_PASSWORD sunt corecte în .env, 2) AWB-ul a fost generat din contul tău MyGLS (nu din alt cont), 3) AWB-ul are max 180 zile vechime',
-        tracking,
+        error: `AWB ${clean} negăsit`,
+        hint: 'AWB-ul nu există în DB-ul local și nici în contul MyGLS conectat. Dacă AWB-ul a fost generat de xConnector, încearcă accesarea prin /api/shipping-label cu token semnat.',
+        tracking: clean,
       }, { status: 404 });
+
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[awb-label] Error:', msg);
-      return NextResponse.json({
-        error: msg,
-        hint: 'Eroare la comunicarea cu GLS API. Verifică credențialele GLS_USERNAME și GLS_PASSWORD.',
-      }, { status: 500 });
+      return NextResponse.json({ error: msg }, { status: 500 });
     }
   }
 
