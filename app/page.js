@@ -1819,7 +1819,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   + '};'
                   + '<\/script></body></html>';
 
-                const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+                // Înlocuiește URL-urile relative cu absolute (necesar pentru blob: pages)
+                const appOrigin = window.location.origin;
+                const htmlFinal = html.replace(/(['"])(\/api\/connector\/)/g, '$1'+appOrigin+'$2');
+                const blob = new Blob([htmlFinal], { type: 'text/html;charset=utf-8' });
                 const blobUrl = URL.createObjectURL(blob);
                 window.open(blobUrl, '_blank');
               };
