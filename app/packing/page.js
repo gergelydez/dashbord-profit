@@ -98,7 +98,6 @@ export default function PackingPage() {
   const [orders,       setOrders]       = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState('');
-  const [filter,       setFilter]       = useState('inregistrat');
   const [courier,      setCourier]      = useState('toate');
   const [packed,       setPacked]       = useState({});
   const [labelModal,   setLabelModal]   = useState(null);
@@ -110,9 +109,7 @@ export default function PackingPage() {
     try { setPacked(JSON.parse(ls.get(PACKED_KEY()) || '{}')); } catch {}
     // Preia filtrul setat în dashboard via URL params
     const params = new URLSearchParams(window.location.search);
-    const f = params.get('filter');
     const c = params.get('courier');
-    if (f) setFilter(f);
     if (c) setCourier(c);
   }, []);
 
@@ -141,11 +138,33 @@ export default function PackingPage() {
         if (!res.ok) throw new Error('API ' + res.status);
         const data = await res.json();
         const raw  = data.orders || data || [];
-        // Doar comenzile cu AWB și status tranzit (pending/incurs/outfor)
-        const parsed = raw.map(procOrder).filter(o =>
+        const allTransit = raw.map(procOrder).filter(o =>
           (o.ts === 'pending' || o.ts === 'incurs' || o.ts === 'outfor') && o.trackingNo
         );
-        setOrders(parsed);
+
+        // Citim statusurile live salvate de dashboard
+        let liveData = {};
+        try { liveData = JSON.parse(localStorage.getItem('glamx_live_tracking') || '{}'); } catch {}
+
+        // Clasificăm exact ca dashboard-ul și păstrăm DOAR înregistrate
+        const inregistrate = allTransit.filter(o => {
+          const live = liveData[o.id];
+          const code = live?.statusCode ? parseInt(live.statusCode) : null;
+          const isGls = o.courier !== 'sameday';
+          if (code) {
+            if (isGls) {
+              if ([51,52,80,83].includes(code)) return true;   // înregistrat
+              return false; // orice alt cod = predat/în drum
+            } else {
+              if ([1].includes(code)) return true;  // SD înregistrat
+              return false;
+            }
+          }
+          // Fără cod live: doar pending = nepredat sigur
+          return o.ts === 'pending';
+        });
+
+        setOrders(inregistrate);
       } catch (e) { setError('Eroare: ' + e.message); }
       setLoading(false);
     };
@@ -153,12 +172,9 @@ export default function PackingPage() {
   }, []);
 
   // Filtrare identică cu dashboard
-  const filtered = orders.filter(o => {
-    if (courier !== 'toate' && o.courier !== courier) return false;
-    if (filter  === 'toate') return true;
-    const cat = o.ts === 'outfor' ? 'ridicat' : o.ts === 'incurs' ? 'centru' : 'inregistrat';
-    return cat === filter;
-  });
+  const filtered = orders.filter(o =>
+    courier === 'toate' || o.courier === courier
+  );
 
   const packedCount = filtered.filter(o => packed[o.id]).length;
   const progPct     = filtered.length ? Math.round(packedCount / filtered.length * 100) : 0;
@@ -237,25 +253,7 @@ export default function PackingPage() {
           ))}
         </div>
 
-        {/* Status filter */}
-        <div style={{ display:'flex', gap:5, overflowX:'auto' }}>
-          {[['toate','Toate',null],['inregistrat','📋 Înregistrat','#f59e0b'],['ridicat','📦 Ridicat','#8b5cf6'],['centru','🏭 Centru','#0ea5e9'],['livrare','🚴 Livrare','#10b981']].map(([k,l,c]) => {
-            const cnt = orders.filter(o => {
-              if (courier !== 'toate' && o.courier !== courier) return false;
-              if (k === 'toate') return true;
-              const cat = o.ts === 'outfor' ? 'ridicat' : o.ts === 'incurs' ? 'centru' : 'inregistrat';
-              return cat === k;
-            }).length;
-            return (
-              <button key={k} onClick={() => setFilter(k)} style={{
-                flexShrink:0, padding:'3px 9px', borderRadius:20, border:'1px solid', fontSize:10, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap',
-                background: filter===k ? (c||'#3b82f6')+'33' : 'rgba(255,255,255,.04)',
-                borderColor: filter===k ? (c||'#3b82f6') : 'rgba(255,255,255,.1)',
-                color: filter===k ? (c||'#93c5fd') : '#64748b',
-              }}>{l} ({cnt})</button>
-            );
-          })}
-        </div>
+
       </div>
 
       {/* Body */}
