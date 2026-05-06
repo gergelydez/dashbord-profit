@@ -1824,12 +1824,36 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   + '};'
                   + '<\/script></body></html>';
 
-                // Înlocuiește URL-urile relative cu absolute (necesar pentru blob: pages)
                 const appOrigin = window.location.origin;
-                const htmlFinal = html.replace(/(['"])(\/api\/connector\/)/g, '$1'+appOrigin+'$2');
-                const blob = new Blob([htmlFinal], { type: 'text/html;charset=utf-8' });
-                const blobUrl = URL.createObjectURL(blob);
-                window.open(blobUrl, '_blank');
+                const htmlFinal = html
+                  .replace(/(['"])(\/api\/connector\/)/g, '$1'+appOrigin+'$2')
+                  .replace(/(['"])(\/api\/shipping-label)/g, '$1'+appOrigin+'$2');
+
+                // Overlay fullscreen in pagina curenta (window.open blob e blocat pe mobile)
+                const existing = document.getElementById('export-overlay');
+                if(existing) existing.remove();
+
+                const overlay = document.createElement('div');
+                overlay.id = 'export-overlay';
+                overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:white;display:flex;flex-direction:column;';
+
+                const topBar = document.createElement('div');
+                topBar.style.cssText = 'background:#0f172a;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;';
+                topBar.innerHTML = '<span style="color:white;font-size:13px;font-weight:700;">📦 Lista Packaging</span>';
+                const closeBtn = document.createElement('button');
+                closeBtn.textContent = '✕ Închide';
+                closeBtn.style.cssText = 'background:rgba(255,255,255,.15);color:white;border:none;border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;';
+                closeBtn.onclick = () => { overlay.remove(); document.body.style.overflow=''; };
+                topBar.appendChild(closeBtn);
+
+                const iframe = document.createElement('iframe');
+                iframe.style.cssText = 'flex:1;width:100%;border:none;';
+                iframe.srcdoc = htmlFinal;
+
+                overlay.appendChild(topBar);
+                overlay.appendChild(iframe);
+                document.body.appendChild(overlay);
+                document.body.style.overflow = 'hidden';
               };
 
               return (
