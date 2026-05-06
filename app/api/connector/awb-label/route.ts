@@ -240,7 +240,6 @@ export async function GET(request: Request) {
     return NextResponse.json({
       error: `Eticheta pentru AWB ${clean} nu este disponibilă`,
     }, { status: 404 });
-    }
   }
 
   return NextResponse.json({ error: 'id sau tracking required' }, { status: 400 });
