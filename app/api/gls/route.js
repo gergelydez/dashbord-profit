@@ -55,32 +55,20 @@ function parseStreet(address) {
   return { street: addr, houseNum: '1' };
 }
 
-// GLS /Date(timestamp)/ format
-function glsDate(date) {
-  return `/Date(${date.getTime()})/`;
-}
-
 let _pickupCache = null;
 
 async function fetchPickupFromGLS(baseReq) {
   if (_pickupCache) return _pickupCache;
   try {
-    const now = new Date();
-    const from = new Date(now.getTime() - 30 * 86400 * 1000);
+    const d = new Date(); d.setDate(d.getDate() - 30);
     const res = await fetch(`${GLS_BASE}/GetParcelList`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({
-        ...baseReq,
-        // FIX: GLS RO expects /Date(timestamp)/ format, NOT ISO string
-        PickupDateFrom: glsDate(from),
-        PickupDateTo:   glsDate(now),
-      }),
+      body: JSON.stringify({ ...baseReq, PickupDateFrom: d.toISOString(), PickupDateTo: new Date().toISOString() }),
       cache: 'no-store',
     });
     const data = JSON.parse(await res.text());
-    const list = data?.PrintDataInfoList || data?.ParcelList || [];
-    for (const p of list) {
+    for (const p of (data?.PrintDataInfoList || data?.ParcelList || [])) {
       const pa = p.Parcel?.PickupAddress || p.PickupAddress;
       if (pa && pa.Name && pa.Street && pa.City && pa.ZipCode) {
         _pickupCache = {
@@ -97,54 +85,36 @@ async function fetchPickupFromGLS(baseReq) {
   return null;
 }
 
-/**
- * FIX: GLS API returns Labels as list[int] (raw bytes), NOT base64.
- * The mygls-python library confirms: Labels is list[int], then bytes(label_data) for PDF.
- * We must convert int array → Buffer → base64.
- * However, GLS RO (api.mygls.ro) can also return base64 string in some versions.
- * We handle both cases.
- */
+// ── Helper: extract Labels base64 from GLS response ─────────────────────────
 function extractLabels(data) {
   if (!data) return null;
 
-  // Case 1: Labels is an array of integers (raw bytes) — confirmed by mygls-python
-  if (Array.isArray(data.Labels)) {
-    if (data.Labels.length > 0) {
-      if (typeof data.Labels[0] === 'number') {
-        // Raw byte array — convert to base64
-        const buf = Buffer.from(data.Labels);
-        console.log('[GLS] Labels is int[] array, length:', data.Labels.length, '→ converting to base64');
-        return buf.toString('base64');
-      }
-      // Array of strings (base64 chunks)
-      if (typeof data.Labels[0] === 'string' && data.Labels[0].length > 50) {
-        console.log('[GLS] Labels is string[] array');
-        return data.Labels[0];
-      }
+  const labels = data.Labels;
+
+  // Case 1: GLS RO returneaza Labels ca array de bytes (numere intregi)
+  // Confirmat de mygls-python: Labels: Optional[list[int]]
+  if (Array.isArray(labels) && labels.length > 0) {
+    if (typeof labels[0] === 'number') {
+      // Raw byte array → convertim la base64
+      const buf = Buffer.from(labels);
+      console.log('[GLS] Labels este int[] byte array, bytes:', buf.length);
+      return buf.toString('base64');
     }
-    return null;
+    // Array de stringuri base64
+    if (typeof labels[0] === 'string' && labels[0].length > 100) return labels[0];
   }
 
-  // Case 2: Labels is a base64 string directly
-  if (typeof data.Labels === 'string' && data.Labels.length > 100) {
-    console.log('[GLS] Labels is base64 string, length:', data.Labels.length);
-    return data.Labels;
-  }
+  // Case 2: Labels ca string base64 direct
+  if (typeof labels === 'string' && labels.length > 100) return labels;
 
-  // Case 3: Pdfdocument field (used by GetPrintData)
-  if (typeof data.Pdfdocument === 'string' && data.Pdfdocument.length > 100) {
-    console.log('[GLS] Using Pdfdocument field');
-    return data.Pdfdocument;
-  }
+  // Case 3: Pdfdocument (folosit de GetPrintData)
+  if (typeof data.Pdfdocument === 'string' && data.Pdfdocument.length > 100) return data.Pdfdocument;
 
-  console.warn('[GLS] No label found. Keys:', Object.keys(data));
+  console.warn('[GLS] extractLabels: nicio eticheta gasita. Keys:', Object.keys(data));
   return null;
 }
 
-/**
- * FIX: GetPrintedLabels must use ParcelIdList (integer IDs), NOT ParcelNumberList (AWB strings).
- * Per GLS API docs and mygls-python: parcel_ids = [label.ParcelId for label in label_info.ParcelInfoList]
- */
+// ── Helper: fetch label PDF using ParcelId (correct per API docs) ────────────
 async function fetchLabelByParcelId(baseReq, parcelId) {
   if (!parcelId) return null;
   try {
@@ -154,7 +124,7 @@ async function fetchLabelByParcelId(baseReq, parcelId) {
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
         ...baseReq,
-        ParcelIdList:    [parseInt(parcelId)],  // MUST be ParcelIdList with integer ID
+        ParcelIdList:    [parseInt(parcelId)],   // ← CORRECT: ParcelIdList per API docs
         TypeOfPrinter:   'A4_2x2',
         PrintPosition:   1,
         ShowPrintDialog: false,
@@ -164,25 +134,7 @@ async function fetchLabelByParcelId(baseReq, parcelId) {
     const data = JSON.parse(await res.text());
     const errs = data?.GetPrintedLabelsErrorList || [];
     if (errs.length > 0) {
-      console.warn('[GLS] GetPrintedLabels errors:', JSON.stringify(errs));
-      // Error 18 = already printed — try GetPrintData
-      if (Number(errs[0]?.ErrorCode) === 18) {
-        console.log('[GLS] Error 18 (already printed) — trying GetPrintData');
-        const printDataRes = await fetch(`${GLS_BASE}/GetPrintData`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({
-            ...baseReq,
-            ParcelIdList: [parseInt(parcelId)],
-            TypeOfPrinter: 'A4_2x2',
-            PrintPosition: 1,
-            ShowPrintDialog: false,
-          }),
-          cache: 'no-store',
-        });
-        const printData = JSON.parse(await printDataRes.text());
-        return extractLabels(printData);
-      }
+      console.warn('[GLS] GetPrintedLabels errors:', errs.map(e=>e.ErrorDescription).join('; '));
       return null;
     }
     return extractLabels(data);
@@ -196,6 +148,7 @@ export async function POST(req) {
   try {
     const body = await req.json();
 
+    // Security: credentials come ONLY from ENV vars — body values ignored
     const user   = ENV_USER   || '';
     const pass   = ENV_PASS   || '';
     const client = ENV_CLIENT || '553003585';
@@ -217,15 +170,14 @@ export async function POST(req) {
 
     // ── Test connection ──────────────────────────────────────────────────────
     if (body.action === 'test_connection' || body.action === 'get_config') {
-      const now  = new Date();
-      const from = new Date(now.getTime() - 86400 * 1000);
+      const d = new Date(); d.setDate(d.getDate() - 1);
       const res = await fetch(`${GLS_BASE}/GetParcelList`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           ...baseReq,
-          PickupDateFrom: glsDate(from),
-          PickupDateTo:   glsDate(now),
+          PickupDateFrom: d.toISOString(),
+          PickupDateTo:   new Date().toISOString(),
         }),
         cache: 'no-store',
       });
@@ -253,29 +205,30 @@ export async function POST(req) {
       return NextResponse.json({ ok: true, labelBase64, awb }, { headers: CORS });
     }
 
-    // ── Re-download label by AWB number ──────────────────────────────────────
+    // ── Re-download label by AWB number (fallback for old AWBs without parcelId) ──
     if (body.action === 'get_label_by_awb') {
       const { awb } = body;
       if (!awb) {
         return NextResponse.json({ ok: false, error: 'AWB number lipsă.' }, { headers: CORS });
       }
 
+      // Step 1: Find ParcelId from GetParcelList using AWB number
       try {
-        const now  = new Date();
-        const from = new Date(now.getTime() - 90 * 86400 * 1000);
+        const d = new Date(); d.setDate(d.getDate() - 90); // search last 90 days
         const listRes = await fetch(`${GLS_BASE}/GetParcelList`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify({
             ...baseReq,
-            PickupDateFrom: glsDate(from),
-            PickupDateTo:   glsDate(now),
+            PickupDateFrom: d.toISOString(),
+            PickupDateTo:   new Date().toISOString(),
           }),
           cache: 'no-store',
         });
         const listData = JSON.parse(await listRes.text());
         const parcels = listData?.PrintDataInfoList || listData?.ParcelList || [];
 
+        // Find matching parcel by AWB number
         const match = parcels.find(p => {
           const pNum = String(p.Parcel?.ParcelNumber || p.ParcelNumber || '');
           return pNum === String(awb);
@@ -292,6 +245,9 @@ export async function POST(req) {
           }
         }
 
+        // Step 2: Try PrintLabels with existing parcel reference (re-print)
+        // Build a minimal parcel payload just to get the label printed again
+        console.log('[GLS] AWB not found in list, trying direct reprint for', awb);
         return NextResponse.json({
           ok: false,
           error: `AWB ${awb} nu a fost găsit în istoricul GLS (ultimele 90 zile). Regenerează AWB-ul.`,
@@ -310,6 +266,7 @@ export async function POST(req) {
       orderName, orderId, selectedServices, observations, manualAwb,
     } = body;
 
+    // Sanitizare
     const safePhone     = (phone||'').replace(/\D/g,'').slice(-10) || '0700000000';
     const safeRecipient = (recipientName||'').trim() || 'Client';
     const safeAddress   = (address||'').trim() || 'Adresa';
@@ -392,7 +349,7 @@ export async function POST(req) {
       serviceList.push(entry);
     }
 
-    console.log('[GLS] Creating AWB for:', safeRecipient, safeCity, zipCleaned);
+    console.log('[GLS] Services:', JSON.stringify(serviceList));
 
     const parcelPayload = {
       ClientNumber:    parseInt(client),
@@ -402,8 +359,7 @@ export async function POST(req) {
       CODReference:    codAmount > 0 ? (orderName||'').slice(0, 40) : '',
       CODCurrency:     codAmount > 0 ? (codCurrency || 'RON') : undefined,
       Content:         (content || orderName || 'Colet').slice(0, 40),
-      // FIX: Use /Date(timestamp)/ format
-      PickupDate:      glsDate(new Date()),
+      PickupDate:      `/Date(${Date.now()})/`,
       PickupAddress: {
         Name:           pickup.name.slice(0, 40),
         Street:         pickup.street.slice(0, 40),
@@ -449,8 +405,6 @@ export async function POST(req) {
     let data;
     try { data = JSON.parse(raw); } catch { throw new Error(`Raspuns invalid GLS: ${raw.slice(0, 200)}`); }
 
-    console.log('[GLS] PrintLabels response keys:', Object.keys(data));
-
     const printErrs = data?.PrintLabelsErrorList || [];
     if (printErrs.length > 0) {
       return NextResponse.json({
@@ -460,14 +414,11 @@ export async function POST(req) {
     }
 
     // ── Extract AWB + ParcelId from response ─────────────────────────────────
-    // PrintLabelsInfoList[0].ParcelNumber = AWB tracking number
-    // PrintLabelsInfoList[0].ParcelId     = internal ID needed for GetPrintedLabels
-    const infoList = data?.PrintLabelsInfoList || [];
-    const info     = infoList[0];
-    const awb      = info?.ParcelNumber ? String(info.ParcelNumber) : null;
-    const parcelId = info?.ParcelId     ? parseInt(info.ParcelId)   : null;
-
-    console.log('[GLS] AWB:', awb, '| ParcelId:', parcelId, '| InfoList count:', infoList.length);
+    // Per API docs: PrintLabelsInfoList[0].ParcelNumber = AWB number
+    //               PrintLabelsInfoList[0].ParcelId     = DB ID needed for GetPrintedLabels
+    const info      = (data?.PrintLabelsInfoList || [])[0];
+    const awb       = info?.ParcelNumber ? String(info.ParcelNumber) : null;
+    const parcelId  = info?.ParcelId     ? parseInt(info.ParcelId)   : null;
 
     if (!awb && !parcelId) {
       return NextResponse.json({
@@ -477,21 +428,18 @@ export async function POST(req) {
       }, { status: 500, headers: CORS });
     }
 
-    // ── Extract label PDF ────────────────────────────────────────────────────
-    // FIX: Use corrected extractLabels that handles int[] byte arrays
-    let labelBase64 = extractLabels(data);
-    console.log('[GLS] Label from PrintLabels:', !!labelBase64, labelBase64 ? `length: ${labelBase64.length}` : '');
+    console.log('[GLS] AWB:', awb, '| ParcelId:', parcelId);
 
-    // If PrintLabels didn't include label → fetch via GetPrintedLabels with ParcelId
-    // FIX: Must use ParcelId (integer), NOT ParcelNumber (AWB string)
+    // ── Extract label PDF ────────────────────────────────────────────────────
+    // 1. Try from PrintLabels response directly (Labels field)
+    let labelBase64 = extractLabels(data);
+    console.log('[GLS] Label from PrintLabels:', !!labelBase64, 'length:', labelBase64?.length || 0);
+
+    // 2. If no label in PrintLabels response → use GetPrintedLabels with ParcelId
+    //    Per API docs: GetPrintedLabels takes ParcelIdList (not ParcelNumberList!)
     if (!labelBase64 && parcelId) {
-      console.log('[GLS] No label in PrintLabels response → fetching via GetPrintedLabels with ParcelId:', parcelId);
       labelBase64 = await fetchLabelByParcelId(baseReq, parcelId);
       console.log('[GLS] Label from GetPrintedLabels:', !!labelBase64);
-    }
-
-    if (!labelBase64) {
-      console.warn('[GLS] WARNING: Could not obtain label PDF. AWB was created but no label available.');
     }
 
     const trackUrl = `https://gls-group.eu/RO/ro/urmarire-colet?match=${awb || parcelId}`;
@@ -500,8 +448,8 @@ export async function POST(req) {
     return NextResponse.json({
       ok:              true,
       awb:             awb || String(parcelId),
-      parcelId,
-      labelBase64,    // may be null if GLS API didn't return it
+      parcelId,                         // ← SAVED: needed for re-downloading label later
+      labelBase64,
       trackUrl,
       myglsUrl,
       servicesApplied: serviceList.map(s => s.Code),
