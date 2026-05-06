@@ -250,7 +250,8 @@ export class GlsAdapter implements CourierAdapter {
 
     // Fallback: fetch label separately if PrintLabels didn't include it
     if (!labelBase64) {
-      labelBase64 = await fetchGlsLabel(baseReq, awbStr, log);
+      const parcelIdNum = info?.ParcelId ? Number(info.ParcelId) : null;
+    labelBase64 = await fetchGlsLabel(baseReq, awbStr, log, parcelIdNum);
     }
 
     const labelPdf    = labelBase64 ? Buffer.from(labelBase64, 'base64') : null;
@@ -268,19 +269,45 @@ async function fetchGlsLabel(
   baseReq: Record<string, unknown>,
   awb: string,
   log: ReturnType<typeof logger.child>,
+  parcelId?: number | null,
 ): Promise<string | null> {
   try {
+    // FIX: Folosim ParcelIdList cu ParcelId (integer) — NU ParcelNumberList cu AWB string
+    // GLS returneaza Labels ca list[int] (bytes raw), nu base64 string
+    const body = parcelId
+      ? { ...baseReq, ParcelIdList: [parcelId], TypeOfPrinter: 'A4_2x2', PrintPosition: 1, ShowPrintDialog: false }
+      : { ...baseReq, ParcelIdList: [parseInt(awb)], TypeOfPrinter: 'A4_2x2', PrintPosition: 1, ShowPrintDialog: false };
+
     const res = await fetch(`${GLS_BASE}/GetPrintedLabels`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ ...baseReq, ParcelNumberList: [awb], TypeOfPrinter: 'A4_2x2', PrintPosition: 1 }),
+      body: JSON.stringify(body),
       cache: 'no-store',
     });
     const data = await res.json();
+    const errs = data?.GetPrintedLabelsErrorList || [];
+    if (errs.length > 0) {
+      log.warn('GLS GetPrintedLabels errors', { errors: errs });
+      return null;
+    }
     const labels = data?.Labels;
+    log.info('GLS GetPrintedLabels response', {
+      labelsType: Array.isArray(labels) ? `array[${labels.length}] type0:${typeof labels[0]}` : typeof labels,
+      hasPdfdocument: !!data?.Pdfdocument,
+    });
+    // Case 1: int[] byte array (confirmat de mygls-python)
+    if (Array.isArray(labels) && labels.length > 0 && typeof labels[0] === 'number') {
+      const buf = Buffer.from(labels as number[]);
+      log.info('GLS label: int[] bytes convertit la base64', { bytes: buf.length });
+      return buf.toString('base64');
+    }
+    // Case 2: string[] array
     if (Array.isArray(labels) && typeof labels[0] === 'string' && labels[0].length > 100) return labels[0];
+    // Case 3: string direct
     if (typeof labels === 'string' && labels.length > 100) return labels;
-    log.warn('GLS GetPrintedLabels returned no label', { keys: Object.keys(data) });
+    // Case 4: Pdfdocument
+    if (typeof data?.Pdfdocument === 'string' && data.Pdfdocument.length > 100) return data.Pdfdocument;
+    log.warn('GLS GetPrintedLabels: nicio eticheta', { keys: Object.keys(data) });
     return null;
   } catch (e) {
     log.warn('GLS GetPrintedLabels failed', { error: (e as Error).message });
