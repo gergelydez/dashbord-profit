@@ -120,7 +120,7 @@ async function resolvePickup(
   cfg: GlsConfig,
   baseReq: Record<string, unknown>,
 ): Promise<GlsConfig['pickup']> {
-  if (cfg.pickup.name && cfg.pickup.city && cfg.pickup.zip) {
+  if (cfg.pickup.name || cfg.pickup.city || cfg.pickup.zip) {
     return cfg.pickup;
   }
   if (_pickupCache) return _pickupCache;
@@ -243,7 +243,7 @@ export class GlsAdapter implements CourierAdapter {
       ServiceList: buildServiceList(input),
     };
 
-    log.debug('GLS PrintLabels request', { ref: parcelPayload.ClientReference });
+    log.info('GLS PrintLabels request', { ref: parcelPayload.ClientReference, pickup: pickup.name, city: pickup.city, zip: pickup.zip, recipientCity: input.recipient.city, recipientZip: zipCleaned });
 
     const res = await fetch(`${GLS_BASE}/PrintLabels`, {
       method: 'POST',
