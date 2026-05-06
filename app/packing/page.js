@@ -180,10 +180,30 @@ export default function PackingPage() {
   const progPct     = filtered.length ? Math.round(packedCount / filtered.length * 100) : 0;
 
   const fetchLabelBlob = async o => {
-    const url = o.labelUrl;
-    if (!url) throw new Error('Fără URL etichetă pentru acest AWB');
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!o.labelUrl && !o.trackingNo) throw new Error('Fără URL etichetă');
+
+    const rawUrl = o.labelUrl || `/api/connector/awb-label?tracking=${o.trackingNo}`;
+
+    // URL-urile xConnector trebuie proxiate (CORS)
+    // URL-urile relative trebuie făcute absolute (packing e pe același origin)
+    let fetchUrl;
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+      if (rawUrl.includes('xconnector.app')) {
+        fetchUrl = `/api/connector/label-proxy?url=${encodeURIComponent(rawUrl)}`;
+      } else {
+        fetchUrl = rawUrl;
+      }
+    } else {
+      fetchUrl = rawUrl; // URL relativ — funcționează direct
+    }
+
+    const res = await fetch(fetchUrl);
+    if (!res.ok) throw new Error(`HTTP ${res.status} pentru ${o.trackingNo}`);
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('pdf') && !ct.includes('octet')) {
+      const text = await res.text();
+      throw new Error(text.includes('error') ? JSON.parse(text).error || 'Eroare server' : `Răspuns invalid (${ct})`);
+    }
     return res.blob();
   };
 
@@ -265,7 +285,7 @@ export default function PackingPage() {
         {!loading && !error && filtered.length === 0 && <div style={{ textAlign:'center', padding:40, color:'#475569' }}>📭 Niciun colet în această categorie</div>}
 
         {filtered.map(o => {
-          const cat      = o.ts === 'outfor' ? 'ridicat' : o.ts === 'incurs' ? 'centru' : 'inregistrat';
+          const cat      = 'inregistrat'; // pe packing page toate sunt înregistrate (nepredate)
           const stripe   = CAT_STRIPE[cat];
           const bg       = CAT_BG[cat];
           const isPacked = !!packed[o.id];
@@ -289,7 +309,7 @@ export default function PackingPage() {
                   </div>
                   <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:3 }}>
                     <span style={{ fontSize:10, fontWeight:800, padding:'2px 8px', borderRadius:20, border:`1.5px solid ${isGls?'#c2410c':'#7c3aed'}44`, background:'white', color:isGls?'#c2410c':'#7c3aed' }}>{isGls?'GLS':'SAMEDAY'}</span>
-                    <span style={{ fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:20, background:stripe+'22', border:`1px solid ${stripe}55`, color:stripe }}>{CAT_ICONS[cat]} {CAT_LABELS[cat]}</span>
+                    <span style={{ fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:20, background:'#f59e0b22', border:'1px solid #f59e0b55', color:'#f59e0b' }}>📋 AWB Înregistrat</span>
                   </div>
                 </div>
 
@@ -329,7 +349,13 @@ export default function PackingPage() {
                           <div style={{ height:1, background:'#e2e8f0', margin:'3px 0' }} />
                           <div style={{ fontFamily:'Courier New,monospace', fontSize:16, fontWeight:900, color:'#0f172a', letterSpacing:2, wordBreak:'break-all', lineHeight:1.2 }}>{o.trackingNo}</div>
                           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-                            <span style={{ fontSize:9, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1 }}>GLS Romania</span>
+                            <div style={{ display:'flex', alignItems:'center', gap:4 }}>
+                            <div style={{ background:'#003087', borderRadius:4, padding:'2px 6px', display:'flex', alignItems:'center', gap:3 }}>
+                              <span style={{ color:'white', fontWeight:900, fontSize:11, letterSpacing:.5 }}>GLS</span>
+                              <div style={{ width:6, height:6, background:'#f59e0b', borderRadius:'50%' }}></div>
+                            </div>
+                            <span style={{ fontSize:9, color:'#94a3b8', fontWeight:600 }}>Romania</span>
+                          </div>
                             {o.total > 0 && <span style={{ fontSize:11, fontWeight:900, color:'#0f172a', background:'#fef3c7', border:'1.5px solid #f59e0b', padding:'2px 8px', borderRadius:6 }}>Ramburs {o.total.toFixed(2)} RON</span>}
                           </div>
                         </div>
@@ -352,8 +378,13 @@ export default function PackingPage() {
                       {/* Header Sameday */}
                       <div style={{ background:'#1a1a2e', padding:'8px 12px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                          <div style={{ background:'#f97316', color:'white', fontWeight:900, fontSize:11, padding:'3px 8px', borderRadius:6, letterSpacing:.5 }}>SAMEDAY</div>
-                          <span style={{ fontSize:9, color:'rgba(255,255,255,.5)', fontWeight:600 }}>#theopenway</span>
+                          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                          <div style={{ background:'white', borderRadius:6, padding:'2px 8px', display:'flex', alignItems:'center' }}>
+                            <span style={{ color:'#1a1a2e', fontWeight:900, fontSize:12, letterSpacing:.5 }}>same</span>
+                            <span style={{ color:'#f97316', fontWeight:900, fontSize:12, letterSpacing:.5 }}>day</span>
+                          </div>
+                          <span style={{ fontSize:9, color:'rgba(255,255,255,.4)', fontWeight:600 }}>#theopenway</span>
+                        </div>
                         </div>
                         {o.total > 0 && (
                           <div style={{ textAlign:'right' }}>
