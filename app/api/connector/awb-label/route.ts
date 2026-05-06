@@ -4,7 +4,7 @@
  *
  * Prioritate:
  * 1. DB propriu (S3 sau labelData)
- * 2. GLS API (GetParcelStatuses → ParcelId → GetPrintedLabels)
+ * 2. GLS API (GetParcelList → find ParcelId → GetPrintedLabels)
  * 3. Redirect la xConnector (dacă shipment.trackingUrl e xconnector.app)
  */
 import { NextResponse } from 'next/server';
@@ -37,46 +37,103 @@ async function glsPost(endpoint: string, body: Record<string, unknown>) {
   return JSON.parse(text);
 }
 
+/**
+ * FIX: Fetch label from GLS API by AWB tracking number.
+ * 
+ * Strategy:
+ * 1. GetParcelList → find ParcelId matching the AWB number
+ * 2. GetPrintedLabels with ParcelIdList: [parcelId]
+ * 3. Handle Labels as int[] (bytes) OR base64 string
+ * 4. Error 18 (already printed) → fallback to GetPrintData
+ */
 async function fetchLabelFromGls(trackingNumber: string): Promise<Buffer | null> {
-  // Pasul 1: GetParcelStatuses → ParcelId din StatusInfo ("MyGLS-12345")
-  const statusData = await glsPost('GetParcelStatuses', {
-    ParcelNumber:    parseInt(trackingNumber, 10),
-    ReturnPOD:       false,
-    LanguageIsoCode: 'RO',
-  });
+  // Step 1: Find ParcelId from GetParcelList by scanning last 90 days
+  const now  = new Date();
+  const from = new Date(now.getTime() - 90 * 86400 * 1000);
 
-  const statusList = statusData.ParcelStatusList as Array<Record<string, unknown>> || [];
   let parcelId: number | null = null;
-  for (const s of statusList) {
-    const match = String(s.StatusInfo || '').match(/MyGLS-(\d+)/);
-    if (match) { parcelId = parseInt(match[1], 10); break; }
-  }
-  if (!parcelId) return null;
 
-  // Pasul 2: GetPrintedLabels cu ParcelIdList
-  const labelData = await glsPost('GetPrintedLabels', {
-    ParcelIdList: [parcelId], PrintPosition: 1,
-    ShowPrintDialog: false, TypeOfPrinter: 'A4_4x1',
-  });
-
-  const errors = labelData.GetPrintedLabelsErrorList as Array<Record<string, unknown>> || [];
-
-  // Eroarea 18 = deja generat → încearcă GetPrintData
-  if (errors.length > 0 && Number(errors[0]?.ErrorCode) === 18) {
-    const printData = await glsPost('GetPrintData', {
-      ParcelIdList: [parcelId], PrintPosition: 1,
-      ShowPrintDialog: false, TypeOfPrinter: 'A4_4x1',
+  try {
+    const listData = await glsPost('GetParcelList', {
+      PickupDateFrom: `/Date(${from.getTime()})/`,
+      PickupDateTo:   `/Date(${now.getTime()})/`,
     });
-    const pdf = printData.Pdfdocument || printData.Labels;
-    if (typeof pdf === 'string' && pdf.length > 100) return Buffer.from(pdf, 'base64');
+
+    const parcels = (listData?.PrintDataInfoList || listData?.ParcelList || []) as Array<Record<string, unknown>>;
+    for (const p of parcels) {
+      const parcel    = (p.Parcel as Record<string, unknown>) || p;
+      const pNum      = String(parcel.ParcelNumber || '');
+      const pNumCheck = String(parcel.ParcelNumberWithCheckdigit || '');
+      if (pNum === trackingNumber || pNumCheck.startsWith(trackingNumber)) {
+        parcelId = Number(parcel.ParcelId || (p as Record<string, unknown>).ParcelId);
+        break;
+      }
+    }
+  } catch (e) {
+    console.warn('[awb-label] GetParcelList failed:', (e as Error).message);
+  }
+
+  if (!parcelId) {
+    console.warn('[awb-label] ParcelId not found for AWB:', trackingNumber);
     return null;
   }
 
-  if (errors.length > 0) throw new Error(`GLS error ${errors[0]?.ErrorCode}: ${errors[0]?.ErrorDescription}`);
+  // Step 2: GetPrintedLabels using ParcelIdList (must be integers)
+  const labelData = await glsPost('GetPrintedLabels', {
+    ParcelIdList:    [parcelId],
+    PrintPosition:   1,
+    ShowPrintDialog: false,
+    TypeOfPrinter:   'A4_2x2',
+  });
 
-  const labels = labelData.Labels;
-  if (typeof labels === 'string' && labels.length > 100) return Buffer.from(labels, 'base64');
-  if (Array.isArray(labels) && typeof labels[0] === 'string') return Buffer.from(labels[0], 'base64');
+  const errors = (labelData.GetPrintedLabelsErrorList as Array<Record<string, unknown>>) || [];
+
+  // Error 18 = already printed → try GetPrintData
+  if (errors.length > 0 && Number(errors[0]?.ErrorCode) === 18) {
+    const printData = await glsPost('GetPrintData', {
+      ParcelIdList: [parcelId], PrintPosition: 1,
+      ShowPrintDialog: false, TypeOfPrinter: 'A4_2x2',
+    });
+    return extractGlsLabelBuffer(printData);
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`GLS error ${errors[0]?.ErrorCode}: ${errors[0]?.ErrorDescription}`);
+  }
+
+  return extractGlsLabelBuffer(labelData);
+}
+
+/**
+ * FIX: Extract label PDF from GLS response.
+ * GLS can return Labels as:
+ *  - list[int] (raw bytes) — per mygls-python library
+ *  - base64 string — some API versions
+ */
+function extractGlsLabelBuffer(data: Record<string, unknown>): Buffer | null {
+  const labels = data?.Labels;
+
+  // Case 1: int[] byte array
+  if (Array.isArray(labels) && labels.length > 0) {
+    if (typeof labels[0] === 'number') {
+      return Buffer.from(labels as number[]);
+    }
+    if (typeof labels[0] === 'string' && (labels[0] as string).length > 50) {
+      return Buffer.from(labels[0] as string, 'base64');
+    }
+  }
+
+  // Case 2: base64 string
+  if (typeof labels === 'string' && labels.length > 100) {
+    return Buffer.from(labels, 'base64');
+  }
+
+  // Case 3: Pdfdocument field
+  const pdf = data?.Pdfdocument;
+  if (typeof pdf === 'string' && pdf.length > 100) {
+    return Buffer.from(pdf, 'base64');
+  }
+
   return null;
 }
 
