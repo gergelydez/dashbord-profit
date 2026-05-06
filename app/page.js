@@ -1864,10 +1864,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                       🚚 Colete în tranzit — {filteredTranzit.length}/{tranzitOrders.length}
                     </div>
                     <div style={{display:'flex',gap:6}}>
-                      <button onClick={handleExport}
-                        style={{background:'rgba(249,115,22,.15)',border:'1px solid rgba(249,115,22,.4)',color:'#f97316',borderRadius:8,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
-                        📄 PDF
-                      </button>
+                      <a href="/packing" target="_blank"
+                        style={{background:'rgba(249,115,22,.15)',border:'1px solid rgba(249,115,22,.4)',color:'#f97316',borderRadius:8,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer',textDecoration:'none',display:'inline-flex',alignItems:'center',gap:4}}>
+                        📦 Packaging
+                      </a>
                       <button onClick={()=>fetchLiveTracking(tranzitOrders)}
                         style={{background:'rgba(59,130,246,.15)',border:'1px solid rgba(59,130,246,.3)',color:'#3b82f6',borderRadius:8,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
                         🔄
