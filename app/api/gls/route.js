@@ -413,9 +413,17 @@ export async function POST(req) {
       }, { status: 422, headers: CORS });
     }
 
+    // ── LOG COMPLET răspuns GLS pentru debugging ────────────────────────────
+    console.log('[GLS DEBUG] Raspuns complet PrintLabels:', JSON.stringify({
+      keys: Object.keys(data),
+      PrintLabelsInfoList: data?.PrintLabelsInfoList,
+      PrintLabelsErrorList: data?.PrintLabelsErrorList,
+      LabelsType: Array.isArray(data?.Labels) ? `array[${data.Labels.length}] primul element tip: ${typeof data.Labels[0]}` : typeof data?.Labels,
+      LabelsLength: data?.Labels?.length || 0,
+      hasPdfdocument: !!data?.Pdfdocument,
+    }));
+
     // ── Extract AWB + ParcelId from response ─────────────────────────────────
-    // Per API docs: PrintLabelsInfoList[0].ParcelNumber = AWB number
-    //               PrintLabelsInfoList[0].ParcelId     = DB ID needed for GetPrintedLabels
     const info      = (data?.PrintLabelsInfoList || [])[0];
     const awb       = info?.ParcelNumber ? String(info.ParcelNumber) : null;
     const parcelId  = info?.ParcelId     ? parseInt(info.ParcelId)   : null;
