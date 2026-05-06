@@ -104,9 +104,11 @@ function applyTrackingOverrides(orders) {
 function procOrder(o) {
   let ts = 'pending', fulfilledAt = '', trackingNo = '';
   if (o.fulfillments?.length > 0) {
-    // Prioritizăm fulfillment-ul cu 'delivered', altfel ultimul
+    // Prioritizăm: 1) delivered, 2) cel cu tracking number valid și status activ, 3) ultimul
     const deliveredF = o.fulfillments.find(f => (f.shipment_status||'').toLowerCase() === 'delivered');
-    const f = deliveredF || o.fulfillments[o.fulfillments.length - 1];
+    const activeF    = o.fulfillments.filter(f => f.status !== 'cancelled')
+                                     .sort((a,b) => new Date(b.updated_at||0) - new Date(a.updated_at||0))[0];
+    const f = deliveredF || activeF || o.fulfillments[o.fulfillments.length - 1];
     fulfilledAt = f.updated_at || f.created_at || '';
     trackingNo = f.tracking_number || '';
     const ss = (f.shipment_status || '').toLowerCase();
@@ -126,7 +128,7 @@ function procOrder(o) {
       // Tentativă de livrare eșuată — mai încearcă
       ts = 'outfor'; // afișăm ca "la curier" că va reîncerca
     }
-    else if (o.fulfillment_status === 'fulfilled') {
+    else if (o.fulfillment_status === 'fulfilled' || f.status === 'success') {
       // fulfillment creat dar fără shipment_status clar
       if (fulfilledAt) {
         const daysSince = (new Date() - new Date(fulfilledAt)) / (1000 * 60 * 60 * 24);
@@ -139,7 +141,7 @@ function procOrder(o) {
   const prods = (o.line_items || []).map(i => i.name || '').join(' + ');
   const fulfillmentData = (o.fulfillments || []).find(f => f.tracking_company || f.tracking_number);
   const trackingCompany = (fulfillmentData?.tracking_company || '').toLowerCase();
-  const courier = trackingCompany.includes('sameday') || trackingCompany.includes('same day') ? 'sameday'
+  const courier = trackingCompany.includes('sameday') || trackingCompany.includes('same day') || trackingCompany.includes('easybox') ? 'sameday'
                 : trackingCompany.includes('gls') || trackingCompany.includes('mygls') ? 'gls'
                 : trackingCompany.includes('fan') ? 'fan'
                 : trackingCompany.includes('cargus') ? 'cargus'
