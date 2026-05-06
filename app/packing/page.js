@@ -32,6 +32,7 @@ function procOrder(o) {
   const addr = o.shipping_address || o.billing_address || {};
   const prods = (o.line_items || []).map(i => i.name || '').join(' + ');
   const fulfillmentData = (o.fulfillments || []).find(f => f.tracking_company || f.tracking_number);
+  const xcFulfillment  = (o.fulfillments || []).find(f => f.tracking_url?.includes('xconnector.app'));
   const tc = (fulfillmentData?.tracking_company || '').toLowerCase();
   const courier = tc.includes('sameday') || tc.includes('same day') || tc.includes('easybox') ? 'sameday'
                 : tc.includes('gls') || tc.includes('mygls') ? 'gls'
@@ -52,7 +53,7 @@ function procOrder(o) {
     total: parseFloat(o.total_price) || 0,
     prods, createdAt: o.created_at || '',
     items: (o.line_items || []).map(i => ({ name: i.name||'', qty: i.quantity||1, sku: i.sku||'' })),
-    labelUrl: xcLabelUrl || fulfillmentData?.tracking_url || (trackingNo ? `/api/connector/awb-label?tracking=${trackingNo}` : ''),
+    labelUrl: xcLabelUrl || xcFulfillment?.tracking_url || fulfillmentData?.tracking_url || (trackingNo ? `/api/connector/awb-label?tracking=${trackingNo}` : ''),
   };
 }
 
