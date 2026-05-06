@@ -190,7 +190,7 @@ function procOrder(o) {
     zip: addr.zip || '',
     phone: o.phone || addr.phone || '',
     clientEmail: o.email || '',
-    labelUrl: xcLabelUrl || (trackingNo ? `/api/connector/awb-label?tracking=${trackingNo}` : ''),
+    labelUrl: xcLabelUrl || fulfillmentData?.tracking_url || (trackingNo ? `/api/connector/awb-label?tracking=${trackingNo}` : ''),
     utmSource: o.utmSource || '', utmMedium: o.utmMedium || '',
     utmCampaign: o.utmCampaign || '', referrerUrl: o.referrerUrl || '',
     items: (o.line_items || []).map(i => ({
@@ -1763,7 +1763,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   + '  document.getElementById("lm-status").textContent="Se încarcă eticheta...";'
                   + '  document.getElementById("lm-download").onclick=function(){fetchAndDownload(idx);};'
                   + '  m.style.display="flex";'
-                  + '  var labelUrl=o.labelUrl||"/api/connector/awb-label?tracking="+o.awb+(o.courier!=="sameday"?"&courier=gls":"");'
+                  + '  var rawUrl=o.labelUrl||"/api/connector/awb-label?tracking="+o.awb;'
+                  + '  var labelUrl=rawUrl.startsWith("http")"/api/connector/label-proxy?url="+encodeURIComponent(rawUrl):rawUrl;'
                   + '  fetch(labelUrl).then(function(r){'
                   + '    if(!r.ok)throw new Error("HTTP "+r.status);'
                   + '    return r.blob();'
@@ -1782,7 +1783,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   + '  var lmbtn=document.getElementById("lm-download");'
                   + '  if(btn)btn.textContent="⏳ Se descarcă...";'
                   + '  if(lmbtn)lmbtn.textContent="⏳ Se descarcă...";'
-                  + '  var labelUrl=o.labelUrl||"/api/connector/awb-label?tracking="+o.awb+(o.courier!=="sameday"?"&courier=gls":"");'
+                  + '  var rawUrl2=o.labelUrl||"/api/connector/awb-label?tracking="+o.awb;'
+                  + '  var labelUrl=rawUrl2.startsWith("http")"/api/connector/label-proxy?url="+encodeURIComponent(rawUrl2):rawUrl2;'
                   + '  fetch(labelUrl).then(function(r){'
                   + '    if(!r.ok)throw new Error("HTTP "+r.status);'
                   + '    return r.blob();'
