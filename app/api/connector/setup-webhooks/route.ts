@@ -29,7 +29,29 @@ export async function GET(request: Request) {
     cache: 'no-store',
   });
   const { webhooks: existing = [] } = await listRes.json();
-  const existingTopics = new Set(existing.map((w: {topic: string}) => w.topic));
+
+  // Șterge webhook-urile care pointează spre un URL diferit (URL vechi după rename/redeploy)
+  for (const w of existing as Array<{id: number; topic: string; address: string}>) {
+    if (REQUIRED_TOPICS.includes(w.topic) && w.address !== webhookUrl) {
+      await fetch(`https://${domain}/admin/api/2026-07/webhooks/${w.id}.json`, {
+        method: 'DELETE',
+        headers: { 'X-Shopify-Access-Token': accessToken },
+        cache: 'no-store',
+      });
+    }
+  }
+
+  // Re-fetch după ștergere
+  const listRes2 = await fetch(`https://${domain}/admin/api/2026-07/webhooks.json`, {
+    headers: { 'X-Shopify-Access-Token': accessToken },
+    cache: 'no-store',
+  });
+  const { webhooks: existing2 = [] } = await listRes2.json();
+  const existingTopics = new Set(
+    (existing2 as Array<{topic: string; address: string}>)
+      .filter(w => w.address === webhookUrl)
+      .map(w => w.topic)
+  );
 
   const results: Record<string, string> = {};
 
