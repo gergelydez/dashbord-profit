@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 // ─── Order parsing (same logic as page.js) ───────────────────────────────────
 
@@ -78,8 +79,8 @@ export default function PackingPage() {
   const [orders,       setOrders]       = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState('');
-  const [filter,       setFilter]       = useState('toate');
-  const [courier,      setCourier]      = useState('toate');
+  const [filter,       setFilter]       = useState(() => searchParams.get('filter') || 'inregistrat');
+  const [courier,      setCourier]      = useState(() => searchParams.get('courier') || 'toate');
   const [packed,       setPacked]       = useState({});
   const [labelModal,   setLabelModal]   = useState(null);
   const [labelLoading, setLabelLoading] = useState(false);
@@ -116,7 +117,14 @@ export default function PackingPage() {
         const data = await res.json();
 
         const raw    = data.orders || data || [];
-        const parsed = raw.map(procOrder).filter(o => o.ts === 'incurs' || o.ts === 'outfor');
+        const parsed = raw.map(procOrder).filter(o => {
+          // Packaging = AWB generat dar NEPREDAT curierului
+          // pending = label_printed în Shopify (etichetă generată, nepredat)
+          // incurs cu classifyStatus='inregistrat' = date înregistrate GLS, cod 51/52
+          if (o.ts === 'pending') return true;
+          if ((o.ts === 'incurs' || o.ts === 'outfor') && o.trackingNo) return true;
+          return false;
+        });
         setOrders(parsed);
       } catch (e) { setError('Eroare: ' + e.message); }
       setLoading(false);
