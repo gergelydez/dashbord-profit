@@ -43,25 +43,46 @@ async function glsPost(endpoint: string, body: Record<string, unknown>): Promise
 async function findParcelId(trackingNumber: string): Promise<number | null> {
   const today = new Date();
   const from  = new Date();
-  from.setDate(today.getDate() - 90); // 90 zile înapoi
+  from.setDate(today.getDate() - 180); // 180 zile înapoi
 
+  // Căutăm după PrintDate (data generării etichetei)
   const data = await glsPost('GetParcelList', {
     PrintDateFrom: from.toISOString(),
     PrintDateTo:   today.toISOString(),
   });
 
   const list: Array<Record<string, unknown>> = (data.PrintDataInfoList as Array<Record<string, unknown>>) || [];
+
+  // Căutăm după ParcelNumber sau ParcelNumberWithCheckdigit
+  // GLS returnează numere ca Long — comparăm ca string pentru a evita overflow
+  const clean = String(trackingNumber).replace(/\s/g, '');
   const parcel = list.find(p =>
-    String(p.ParcelNumber)              === String(trackingNumber) ||
-    String(p.ParcelNumberWithCheckdigit) === String(trackingNumber)
+    String(p.ParcelNumber)               === clean ||
+    String(p.ParcelNumberWithCheckdigit) === clean
   );
 
   if (!parcel) {
-    console.log(`[awb-label] Tracking ${trackingNumber} negăsit în ${list.length} parcele din ultimele 90 zile`);
-    return null;
+    console.log(`[awb-label] Tracking ${clean} negăsit în ${list.length} parcele (PrintDate 180 zile)`);
+
+    // Fallback: caută după PickupDate
+    const data2 = await glsPost('GetParcelList', {
+      PickupDateFrom: from.toISOString(),
+      PickupDateTo:   today.toISOString(),
+    });
+    const list2: Array<Record<string, unknown>> = (data2.PrintDataInfoList as Array<Record<string, unknown>>) || [];
+    const parcel2 = list2.find(p =>
+      String(p.ParcelNumber)               === clean ||
+      String(p.ParcelNumberWithCheckdigit) === clean
+    );
+    if (!parcel2) {
+      console.log(`[awb-label] Tracking ${clean} negăsit nici după PickupDate (${list2.length} parcele)`);
+      return null;
+    }
+    console.log(`[awb-label] Găsit via PickupDate: ParcelId=${parcel2.ParcelId}`);
+    return parcel2.ParcelId as number;
   }
 
-  console.log(`[awb-label] Găsit ParcelId=${parcel.ParcelId} pentru tracking=${trackingNumber}`);
+  console.log(`[awb-label] Găsit via PrintDate: ParcelId=${parcel.ParcelId}`);
   return parcel.ParcelId as number;
 }
 
@@ -137,10 +158,19 @@ export async function GET(request: Request) {
     try {
       const glsBuf = await fetchFromGls(tracking);
       if (glsBuf) return pdfResponse(glsBuf, filename);
-      return NextResponse.json({ error: `Tracking ${tracking} negăsit în ultimele 90 de zile sau eticheta nu este disponibilă în GLS` }, { status: 404 });
+      // 404 — eticheta nu a putut fi găsită, returnăm detalii pentru debugging
+      return NextResponse.json({
+        error: `AWB ${tracking} negăsit în MyGLS`,
+        hint: 'Verifică că: 1) GLS_USERNAME și GLS_PASSWORD sunt corecte în .env, 2) AWB-ul a fost generat din contul tău MyGLS (nu din alt cont), 3) AWB-ul are max 180 zile vechime',
+        tracking,
+      }, { status: 404 });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ error: msg }, { status: 500 });
+      console.error('[awb-label] Error:', msg);
+      return NextResponse.json({
+        error: msg,
+        hint: 'Eroare la comunicarea cu GLS API. Verifică credențialele GLS_USERNAME și GLS_PASSWORD.',
+      }, { status: 500 });
     }
   }
 
