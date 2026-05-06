@@ -278,14 +278,18 @@ export default function Dashboard() {
       try {
         const r = await fetch(`/api/tracking?awb=${o.trackingNo}&courier=${o.courier||'gls'}`);
         const d = await r.json();
-        setLiveTrackingData(prev => ({...prev, [o.id]: {
-          loading: false,
-          statusCode: d.statusRaw,
-          desc: d.statusDescription || d.statusRaw || '—',
-          location: d.location || '',
-          lastUpdate: d.lastUpdate ? new Date(d.lastUpdate).toLocaleString('ro-RO',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '',
-          glsStatus: d.status,
-        }}));
+        setLiveTrackingData(prev => {
+          const next = {...prev, [o.id]: {
+            loading: false,
+            statusCode: d.statusRaw,
+            desc: d.statusDescription || d.statusRaw || '—',
+            location: d.location || '',
+            lastUpdate: d.lastUpdate ? new Date(d.lastUpdate).toLocaleString('ro-RO',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '',
+            glsStatus: d.status,
+          }};
+          try { localStorage.setItem('glamx_live_tracking', JSON.stringify(next)); } catch {}
+          return next;
+        });
       } catch {
         setLiveTrackingData(prev => ({...prev, [o.id]: {loading: false, desc: 'Eroare', statusCode: '?'}}));
       }
