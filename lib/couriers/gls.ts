@@ -1,10 +1,11 @@
 /**
  * lib/couriers/gls.ts — GLS Romania courier adapter
  *
- * Reuses the battle-tested logic from app/api/gls/route.js and wraps it
- * in the CourierAdapter interface with proper TypeScript types.
- *
- * API docs: https://api.mygls.ro (SOAP/JSON hybrid endpoint)
+ * FIXES applied vs original:
+ *  1. PickupDate uses /Date(timestamp)/ format (NOT ISO string)
+ *  2. extractLabels handles both int[] byte arrays AND base64 strings
+ *  3. GetPrintedLabels uses ParcelIdList (integer IDs), NOT ParcelNumberList
+ *  4. GetParcelList date params use /Date(timestamp)/ format
  */
 
 import { logger } from '@/lib/logger';
@@ -15,8 +16,6 @@ import type {
 } from './types';
 
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
-
-// ─── Config ───────────────────────────────────────────────────────────────────
 
 interface GlsConfig {
   username:     string;
@@ -48,8 +47,6 @@ function loadConfig(): GlsConfig {
   };
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 async function sha512Bytes(str: string): Promise<number[]> {
   const encoded = new TextEncoder().encode(str);
   const buf = await globalThis.crypto.subtle.digest('SHA-512', encoded);
@@ -74,7 +71,49 @@ function parseStreet(address: string): { street: string; houseNum: string } {
   return { street: addr, houseNum: '1' };
 }
 
-// In-process pickup cache (valid for process lifetime)
+/** FIX: GLS API requires /Date(milliseconds)/ format */
+function glsDate(date: Date): string {
+  return `/Date(${date.getTime()})/`;
+}
+
+/**
+ * FIX: GLS API returns Labels as either:
+ *  - list[int] (raw byte array) — confirmed by mygls-python library
+ *  - base64 string — some GLS API versions
+ * We handle both cases.
+ */
+function extractLabelsAsBase64(data: Record<string, unknown>): string | null {
+  const labels = data?.Labels;
+
+  // Case 1: int[] byte array (per mygls-python: Labels: Optional[list[int]])
+  if (Array.isArray(labels)) {
+    if (labels.length === 0) return null;
+    if (typeof labels[0] === 'number') {
+      const buf = Buffer.from(labels as number[]);
+      logger.debug('[GLS] Labels is int[] byte array → converted to base64', { bytes: buf.length });
+      return buf.toString('base64');
+    }
+    // Array of base64 strings
+    if (typeof labels[0] === 'string' && (labels[0] as string).length > 50) {
+      return labels[0] as string;
+    }
+    return null;
+  }
+
+  // Case 2: base64 string
+  if (typeof labels === 'string' && labels.length > 100) {
+    return labels;
+  }
+
+  // Case 3: Pdfdocument field
+  const pdfdoc = data?.Pdfdocument;
+  if (typeof pdfdoc === 'string' && pdfdoc.length > 100) {
+    return pdfdoc;
+  }
+
+  return null;
+}
+
 let _pickupCache: GlsConfig['pickup'] | null = null;
 
 async function resolvePickup(
@@ -86,31 +125,33 @@ async function resolvePickup(
   }
   if (_pickupCache) return _pickupCache;
 
-  // Auto-discover pickup from recent parcel history
-  const d = new Date();
-  d.setDate(d.getDate() - 30);
+  const now  = new Date();
+  const from = new Date(now.getTime() - 30 * 86400 * 1000);
   try {
     const res = await fetch(`${GLS_BASE}/GetParcelList`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...baseReq,
-        PickupDateFrom: d.toISOString(),
-        PickupDateTo: new Date().toISOString(),
+        // FIX: /Date(timestamp)/ format
+        PickupDateFrom: glsDate(from),
+        PickupDateTo:   glsDate(now),
       }),
       cache: 'no-store',
     });
     const data = await res.json();
-    for (const p of (data?.ParcelList ?? [])) {
-      const pa = p.PickupAddress;
-      if (pa?.Name && pa?.City && pa?.ZipCode) {
+    const list = (data?.PrintDataInfoList ?? data?.ParcelList ?? []) as Array<Record<string, unknown>>;
+    for (const p of list) {
+      const pa = (p.Parcel as Record<string, unknown>)?.PickupAddress ?? p.PickupAddress;
+      if (pa && (pa as Record<string, unknown>).Name && (pa as Record<string, unknown>).City) {
+        const addr = pa as Record<string, unknown>;
         _pickupCache = {
-          name:   pa.Name  || '',
-          street: pa.Street || '',
-          city:   pa.City  || '',
-          zip:    cleanZip(pa.ZipCode || ''),
-          county: pa.CountyName || '',
-          phone:  (pa.ContactPhone || '').replace(/\D/g, '').slice(-10),
+          name:   String(addr.Name  || ''),
+          street: String(addr.Street || ''),
+          city:   String(addr.City  || ''),
+          zip:    cleanZip(String(addr.ZipCode || '')),
+          county: String(addr.CountyName || ''),
+          phone:  String(addr.ContactPhone || '').replace(/\D/g, '').slice(-10),
         };
         return _pickupCache;
       }
@@ -120,12 +161,10 @@ async function resolvePickup(
   }
 
   throw new Error(
-    'GLS pickup address missing. Set GLS_PICKUP_NAME, GLS_PICKUP_STREET, GLS_PICKUP_CITY, ' +
-    'GLS_PICKUP_ZIP, GLS_PICKUP_COUNTY, GLS_PICKUP_PHONE in env vars.',
+    'GLS pickup address missing. Setează în .env: GLS_PICKUP_NAME, GLS_PICKUP_STREET, ' +
+    'GLS_PICKUP_CITY, GLS_PICKUP_ZIP, GLS_PICKUP_COUNTY, GLS_PICKUP_PHONE',
   );
 }
-
-// ─── Adapter implementation ───────────────────────────────────────────────────
 
 export class GlsAdapter implements CourierAdapter {
   readonly name = 'gls';
@@ -148,7 +187,6 @@ export class GlsAdapter implements CourierAdapter {
 
     const pickup = await resolvePickup(cfg, baseReq);
 
-    // ── Validate pickup completeness — GLS error 1000 = null reference in API ──
     const missingPickup: string[] = [];
     if (!pickup.name)   missingPickup.push('GLS_PICKUP_NAME');
     if (!pickup.city)   missingPickup.push('GLS_PICKUP_CITY');
@@ -156,8 +194,7 @@ export class GlsAdapter implements CourierAdapter {
     if (!pickup.street) missingPickup.push('GLS_PICKUP_STREET');
     if (missingPickup.length > 0) {
       throw new Error(
-        `GLS: adresa de pickup incomplete — setează în .env: ${missingPickup.join(', ')}. ` +
-        `Fără acestea, GLS returnează eroarea 1000 (Object reference not set).`
+        `GLS: adresa de pickup incompletă — setează în .env: ${missingPickup.join(', ')}.`
       );
     }
 
@@ -165,9 +202,8 @@ export class GlsAdapter implements CourierAdapter {
     const { street: dStreet, houseNum: dHouseNum } = parseStreet(input.recipient.address);
     const zipCleaned = cleanZip(input.recipient.zip);
 
-    // Basic validation (RO = 6 digits, HU = 4 digits, other = 4–9)
     if (!zipCleaned || zipCleaned.length < 4 || zipCleaned.length > 9) {
-      throw new Error(`GLS: invalid recipient zip "${input.recipient.zip}" — must be 4–9 digits`);
+      throw new Error(`GLS: cod poștal invalid "${input.recipient.zip}" — trebuie 6 cifre`);
     }
 
     const parcelPayload = {
@@ -178,7 +214,8 @@ export class GlsAdapter implements CourierAdapter {
       CODReference:    input.isCOD ? input.orderName.slice(0, 40) : '',
       CODCurrency:     input.isCOD ? (input.currency || 'RON') : undefined,
       Content:         (input.content || input.orderName || 'Colet').slice(0, 40),
-      PickupDate:      `/Date(${Date.now()})/`,
+      // FIX: /Date(timestamp)/ format — NOT ISO string
+      PickupDate:      glsDate(new Date()),
       PickupAddress: {
         Name:           pickup.name.slice(0, 40),
         Street:         pStreet.slice(0, 40),
@@ -232,56 +269,92 @@ export class GlsAdapter implements CourierAdapter {
       throw new Error(printErrs.map((e) => `GLS ${e.ErrorCode}: ${e.ErrorDescription}`).join('; '));
     }
 
-    const info = ((data?.PrintLabelsInfoList as Array<Record<string, unknown>>) ?? [])[0];
-    const awb  = (info?.ParcelNumber ?? info?.ParcelId) as string | number | undefined;
-    if (!awb) throw new Error(`GLS: AWB not found in response: ${JSON.stringify(data).slice(0, 300)}`);
+    const infoList = (data?.PrintLabelsInfoList as Array<Record<string, unknown>>) ?? [];
+    const info     = infoList[0];
+    const awbNum   = info?.ParcelNumber;
+    const parcelId = info?.ParcelId;
 
-    const awbStr  = String(awb);
-    const country = (input.recipient.country || 'RO').toUpperCase();
-
-    // Extract label PDF (may be base64 string or array)
-    let labelBase64: string | null = null;
-    const labels = data?.Labels;
-    if (Array.isArray(labels) && typeof labels[0] === 'string' && labels[0].length > 100) {
-      labelBase64 = labels[0];
-    } else if (typeof labels === 'string' && (labels as string).length > 100) {
-      labelBase64 = labels as string;
+    if (!awbNum && !parcelId) {
+      throw new Error(`GLS: AWB not found in response: ${JSON.stringify(data).slice(0, 300)}`);
     }
 
-    // Fallback: fetch label separately if PrintLabels didn't include it
+    const awbStr = String(awbNum || parcelId);
+    log.info('GLS AWB created', { awb: awbStr, parcelId });
+
+    // FIX: Use corrected extraction (handles int[] byte arrays)
+    let labelBase64 = extractLabelsAsBase64(data);
+    log.debug('Label from PrintLabels', { found: !!labelBase64 });
+
+    // FIX: Fetch separately using ParcelId (integer) via GetPrintedLabels
+    if (!labelBase64 && parcelId) {
+      labelBase64 = await fetchGlsLabelByParcelId(baseReq, Number(parcelId), log);
+      log.debug('Label from GetPrintedLabels', { found: !!labelBase64 });
+    }
+
     if (!labelBase64) {
-      labelBase64 = await fetchGlsLabel(baseReq, awbStr, log);
+      log.warn('GLS: no label PDF available after all attempts', { awb: awbStr });
     }
 
     const labelPdf    = labelBase64 ? Buffer.from(labelBase64, 'base64') : null;
+    const country     = (input.recipient.country || 'RO').toUpperCase();
     const trackingUrl = country === 'HU'
       ? `https://gls-group.eu/HU/hu/csomagkovetes?match=${awbStr}`
       : `https://gls-group.eu/RO/ro/urmarire-colet?match=${awbStr}`;
-
-    log.info('GLS AWB created', { awb: awbStr, hasLabel: !!labelPdf });
 
     return { trackingNumber: awbStr, trackingUrl, labelPdf, raw: data };
   }
 }
 
-async function fetchGlsLabel(
+/**
+ * FIX: Use ParcelIdList with integer ParcelId (NOT ParcelNumberList with AWB string).
+ * Per mygls-python: parcel_ids = [label.ParcelId for label in label_info.ParcelInfoList]
+ * Per GLS API docs: GetPrintedLabels takes ParcelIdList: list[int]
+ */
+async function fetchGlsLabelByParcelId(
   baseReq: Record<string, unknown>,
-  awb: string,
+  parcelId: number,
   log: ReturnType<typeof logger.child>,
 ): Promise<string | null> {
   try {
     const res = await fetch(`${GLS_BASE}/GetPrintedLabels`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ ...baseReq, ParcelNumberList: [awb], TypeOfPrinter: 'A4_2x2', PrintPosition: 1 }),
+      body: JSON.stringify({
+        ...baseReq,
+        ParcelIdList: [parcelId],   // integer ID, NOT string AWB
+        TypeOfPrinter: 'A4_2x2',
+        PrintPosition: 1,
+        ShowPrintDialog: false,
+      }),
       cache: 'no-store',
     });
-    const data = await res.json();
-    const labels = data?.Labels;
-    if (Array.isArray(labels) && typeof labels[0] === 'string' && labels[0].length > 100) return labels[0];
-    if (typeof labels === 'string' && labels.length > 100) return labels;
-    log.warn('GLS GetPrintedLabels returned no label', { keys: Object.keys(data) });
-    return null;
+    const data = await res.json() as Record<string, unknown>;
+    const errs = (data?.GetPrintedLabelsErrorList as Array<{ ErrorCode: number; ErrorDescription: string }>) || [];
+
+    if (errs.length > 0) {
+      log.warn('GLS GetPrintedLabels errors', { errors: errs });
+      // Error 18 = already printed → try GetPrintData
+      if (Number(errs[0]?.ErrorCode) === 18) {
+        log.debug('Error 18 → trying GetPrintData');
+        const printDataRes = await fetch(`${GLS_BASE}/GetPrintData`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            ...baseReq,
+            ParcelIdList: [parcelId],
+            TypeOfPrinter: 'A4_2x2',
+            PrintPosition: 1,
+            ShowPrintDialog: false,
+          }),
+          cache: 'no-store',
+        });
+        const printData = await printDataRes.json() as Record<string, unknown>;
+        return extractLabelsAsBase64(printData);
+      }
+      return null;
+    }
+
+    return extractLabelsAsBase64(data);
   } catch (e) {
     log.warn('GLS GetPrintedLabels failed', { error: (e as Error).message });
     return null;
@@ -304,5 +377,4 @@ function buildServiceList(input: CreateShipmentInput): Array<Record<string, unkn
   return services;
 }
 
-// Export singleton
 export const glsAdapter = new GlsAdapter();
