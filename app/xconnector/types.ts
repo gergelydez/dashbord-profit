@@ -89,4 +89,11 @@ export interface AwbWizardData {
   courier:          CourierName;
   notifyCustomer:   boolean;
   observations:     string;   // extra notes for courier
+  /** GLS Services */
+  glsFDS:           boolean;  // Flex Delivery Service (email)
+  glsSM1:           boolean;  // SMS notificare cu tracking
+  glsSM2:           boolean;  // SMS notificare simplu
+  glsAOS:           boolean;  // Livrare doar la destinatar
+  glsSAT:           boolean;  // Livrare sambata
+  glsT12:           boolean;  // Livrare pana la 12:00
 }
