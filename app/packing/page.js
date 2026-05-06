@@ -313,40 +313,99 @@ export default function PackingPage() {
                 {o.address && <div style={{ fontSize:11, color:'#475569', marginBottom:2 }}>📍 {o.address}{o.oras?', '+o.oras:''}</div>}
                 {o.phone   && <div style={{ fontSize:11, color:'#475569', marginBottom:8 }}>📞 {o.phone}</div>}
 
-                {/* AWB — stil etichetă identic cu exportul din page.js */}
+                {/* AWB card — GLS style vs Sameday style */}
                 {o.trackingNo ? (
-                  <div style={{ background:'#fff', border:'2.5px solid #1e293b', borderRadius:14, margin:'4px 0 8px', overflow:'hidden', boxShadow:'0 3px 12px rgba(0,0,0,.15)' }}>
-                    <div style={{ display:'flex', minHeight:100 }}>
-                      {/* Barcode col */}
-                      <div style={{ flexShrink:0, width:48, display:'flex', alignItems:'center', justifyContent:'center', background:'#fff', borderRight:'2px solid #e2e8f0', padding:'6px 2px', overflow:'hidden' }}>
-                        <div style={{ display:'flex', gap:'1.5px', height:120, alignItems:'stretch', transform:'rotate(-90deg) translateX(-36px)', width:130 }}
-                          dangerouslySetInnerHTML={{ __html: barsHtml }} />
-                      </div>
-                      {/* Right col */}
-                      <div style={{ flex:1, padding:'10px 12px', display:'flex', flexDirection:'column', gap:3 }}>
-                        <div style={{ fontSize:22, fontWeight:900, color:'#0f172a', letterSpacing:-.5, lineHeight:1 }}>{o.name}</div>
-                        <div style={{ fontSize:12, fontWeight:700, color:'#1e293b', lineHeight:1.3, fontStyle:'italic' }}>{o.prods}</div>
-                        <div style={{ height:1, background:'#e2e8f0', margin:'3px 0' }} />
-                        <div style={{ fontFamily:'Courier New,monospace', fontSize:16, fontWeight:900, color:'#0f172a', letterSpacing:2, wordBreak:'break-all', lineHeight:1.2 }}>{o.trackingNo}</div>
-                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-                          <span style={{ fontSize:9, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1 }}>{isGls?'GLS Romania':'Sameday'}</span>
-                          {o.total > 0 && <span style={{ fontSize:11, fontWeight:900, color:'#0f172a', background:'#fef3c7', border:'1.5px solid #f59e0b', padding:'2px 8px', borderRadius:6 }}>Ramburs {o.total.toFixed(2)} RON</span>}
+                  isGls ? (
+                    /* ── GLS card — bara cod verticală, stil etichetă GLS ── */
+                    <div style={{ background:'#fff', border:'2.5px solid #1e293b', borderRadius:14, margin:'4px 0 8px', overflow:'hidden', boxShadow:'0 3px 12px rgba(0,0,0,.15)' }}>
+                      <div style={{ display:'flex', minHeight:100 }}>
+                        <div style={{ flexShrink:0, width:48, display:'flex', alignItems:'center', justifyContent:'center', background:'#fff', borderRight:'2px solid #e2e8f0', padding:'6px 2px', overflow:'hidden' }}>
+                          <div style={{ display:'flex', gap:'1.5px', height:120, alignItems:'stretch', transform:'rotate(-90deg) translateX(-36px)', width:130 }}
+                            dangerouslySetInnerHTML={{ __html: barsHtml }} />
+                        </div>
+                        <div style={{ flex:1, padding:'10px 12px', display:'flex', flexDirection:'column', gap:3 }}>
+                          <div style={{ fontSize:22, fontWeight:900, color:'#0f172a', letterSpacing:-.5, lineHeight:1 }}>{o.name}</div>
+                          <div style={{ fontSize:12, fontWeight:700, color:'#1e293b', lineHeight:1.3, fontStyle:'italic' }}>{o.prods}</div>
+                          <div style={{ height:1, background:'#e2e8f0', margin:'3px 0' }} />
+                          <div style={{ fontFamily:'Courier New,monospace', fontSize:16, fontWeight:900, color:'#0f172a', letterSpacing:2, wordBreak:'break-all', lineHeight:1.2 }}>{o.trackingNo}</div>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
+                            <span style={{ fontSize:9, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1 }}>GLS Romania</span>
+                            {o.total > 0 && <span style={{ fontSize:11, fontWeight:900, color:'#0f172a', background:'#fef3c7', border:'1.5px solid #f59e0b', padding:'2px 8px', borderRadius:6 }}>Ramburs {o.total.toFixed(2)} RON</span>}
+                          </div>
                         </div>
                       </div>
+                      <div style={{ display:'flex', gap:7, padding:'8px 10px', borderTop:'1px solid #e2e8f0' }}>
+                        <button onClick={() => openLabel(o)} disabled={labelLoading}
+                          style={{ flex:1, padding:'10px 8px', borderRadius:10, border:'none', background:'#003087', color:'white', fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                          {labelLoading ? '⏳' : '👁'} Preview
+                        </button>
+                        <button onClick={() => downloadLabel(o)}
+                          style={{ flex:1, padding:'10px 8px', borderRadius:10, border:'none', fontSize:12, fontWeight:700, cursor:'pointer',
+                            background: dl==='done'?'#10b981':dl==='error'?'#ef4444':'#f97316', color:'white' }}>
+                          {dl==='loading'?'⏳':dl==='done'?'✅ OK':dl==='error'?'⚠ Err':'⬇ PDF'}
+                        </button>
+                      </div>
                     </div>
-                    {/* Label buttons */}
-                    <div style={{ display:'flex', gap:7, padding:'8px 10px', borderTop:'1px solid #e2e8f0' }}>
-                      <button onClick={() => openLabel(o)} disabled={labelLoading}
-                        style={{ flex:1, padding:'10px 8px', borderRadius:10, border:'none', background:'#003087', color:'white', fontSize:12, fontWeight:700, cursor:'pointer' }}>
-                        {labelLoading ? '⏳' : '👁'} Preview etichetă
-                      </button>
-                      <button onClick={() => downloadLabel(o)}
-                        style={{ flex:1, padding:'10px 8px', borderRadius:10, border:'none', fontSize:12, fontWeight:700, cursor:'pointer',
-                          background: dl==='done'?'#10b981' : dl==='error'?'#ef4444' : '#f97316', color:'white' }}>
-                        {dl==='loading'?'⏳ ...' : dl==='done'?'✅ Descărcat' : dl==='error'?'⚠ Eroare' : '⬇ Download PDF'}
-                      </button>
+                  ) : (
+                    /* ── SAMEDAY card — stil etichetă Sameday ── */
+                    <div style={{ background:'#fff', border:'2.5px solid #1a1a2e', borderRadius:14, margin:'4px 0 8px', overflow:'hidden', boxShadow:'0 3px 16px rgba(0,0,0,.2)' }}>
+                      {/* Header Sameday */}
+                      <div style={{ background:'#1a1a2e', padding:'8px 12px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                          <div style={{ background:'#f97316', color:'white', fontWeight:900, fontSize:11, padding:'3px 8px', borderRadius:6, letterSpacing:.5 }}>SAMEDAY</div>
+                          <span style={{ fontSize:9, color:'rgba(255,255,255,.5)', fontWeight:600 }}>#theopenway</span>
+                        </div>
+                        {o.total > 0 && (
+                          <div style={{ textAlign:'right' }}>
+                            <div style={{ fontSize:9, color:'rgba(255,255,255,.5)', fontWeight:600 }}>RAMBURS</div>
+                            <div style={{ fontSize:15, fontWeight:900, color:'#fbbf24' }}>{o.total.toFixed(2)} RON</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Barcode orizontal — ca pe eticheta Sameday */}
+                      <div style={{ background:'white', padding:'10px 12px 4px', borderBottom:'1px solid #f1f5f9' }}>
+                        <div style={{ display:'flex', gap:'1.5px', height:50, alignItems:'stretch', justifyContent:'center', width:'100%', overflow:'hidden' }}
+                          dangerouslySetInnerHTML={{ __html: barsHtml }} />
+                        <div style={{ fontFamily:'Courier New,monospace', fontSize:13, fontWeight:900, color:'#0f172a', letterSpacing:2, textAlign:'center', marginTop:4 }}>
+                          {o.trackingNo}
+                        </div>
+                      </div>
+
+                      {/* Body — două coloane Expeditor / Destinatar */}
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:0, borderBottom:'1px solid #f1f5f9' }}>
+                        <div style={{ padding:'8px 10px', borderRight:'1px solid #f1f5f9' }}>
+                          <div style={{ fontSize:8, fontWeight:800, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1.5, marginBottom:4 }}>Expeditor</div>
+                          <div style={{ fontSize:12, fontWeight:800, color:'#0f172a' }}>GLAMX SRL</div>
+                          <div style={{ fontSize:10, color:'#475569', marginTop:2 }}>Maramureș</div>
+                        </div>
+                        <div style={{ padding:'8px 10px' }}>
+                          <div style={{ fontSize:8, fontWeight:800, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1.5, marginBottom:4 }}>Destinatar</div>
+                          <div style={{ fontSize:12, fontWeight:800, color:'#0f172a', lineHeight:1.3 }}>{o.client}</div>
+                          <div style={{ fontSize:10, color:'#475569', marginTop:2, lineHeight:1.3 }}>{o.oras}</div>
+                        </div>
+                      </div>
+
+                      {/* Observatii */}
+                      <div style={{ padding:'6px 12px', borderBottom:'1px solid #f1f5f9', background:'#fafafa' }}>
+                        <span style={{ fontSize:9, color:'#64748b', fontWeight:600 }}>Obs: </span>
+                        <span style={{ fontSize:10, color:'#334155', fontWeight:700 }}>{o.name} · {o.prods}</span>
+                      </div>
+
+                      {/* Buttons */}
+                      <div style={{ display:'flex', gap:7, padding:'8px 10px' }}>
+                        <button onClick={() => openLabel(o)} disabled={labelLoading}
+                          style={{ flex:1, padding:'10px 8px', borderRadius:10, border:'none', background:'#1a1a2e', color:'white', fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                          {labelLoading ? '⏳' : '👁'} Preview
+                        </button>
+                        <button onClick={() => downloadLabel(o)}
+                          style={{ flex:1, padding:'10px 8px', borderRadius:10, border:'none', fontSize:12, fontWeight:700, cursor:'pointer',
+                            background: dl==='done'?'#10b981':dl==='error'?'#ef4444':'#f97316', color:'white' }}>
+                          {dl==='loading'?'⏳':dl==='done'?'✅ OK':dl==='error'?'⚠ Err':'⬇ PDF'}
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  )
                 ) : (
                   <div style={{ background:'#f8fafc', border:'2px dashed #e2e8f0', borderRadius:14, padding:'12px 14px', margin:'4px 0 8px' }}>
                     <span style={{ fontSize:13, color:'#94a3b8', fontStyle:'italic' }}>Fără AWB generat</span>
