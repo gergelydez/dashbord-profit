@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
 
 // ─── Order parsing (same logic as page.js) ───────────────────────────────────
 
@@ -79,8 +78,8 @@ export default function PackingPage() {
   const [orders,       setOrders]       = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState('');
-  const [filter,       setFilter]       = useState(() => searchParams.get('filter') || 'inregistrat');
-  const [courier,      setCourier]      = useState(() => searchParams.get('courier') || 'toate');
+  const [filter,       setFilter]       = useState('inregistrat');
+  const [courier,      setCourier]      = useState('toate');
   const [packed,       setPacked]       = useState({});
   const [labelModal,   setLabelModal]   = useState(null);
   const [labelLoading, setLabelLoading] = useState(false);
@@ -89,6 +88,12 @@ export default function PackingPage() {
 
   useEffect(() => {
     try { setPacked(JSON.parse(ls.get(PACKED_KEY()) || '{}')); } catch {}
+    // Citim filtrul din URL query params (transmis de dashboard)
+    const params = new URLSearchParams(window.location.search);
+    const f = params.get('filter');
+    const c = params.get('courier');
+    if (f) setFilter(f);
+    if (c) setCourier(c);
   }, []);
 
   const togglePacked = useCallback(id => {
