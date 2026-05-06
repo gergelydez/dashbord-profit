@@ -1600,65 +1600,81 @@ export default function XConnectorPage() {
     setWizardLoading(true);
     setAS(orderId, { shipmentLoading: true, error: null });
     try {
-      if (wizData.courier === 'gls') {
-        const body = {
-          username: '', password: '', clientNumber: '',
-          recipientName: (wizData.recipientName || '').trim() || 'Client',
-          phone: (wizData.recipientPhone || '').replace(/\D/g, '').slice(-10) || '0700000000',
-          email: wizData.recipientEmail || '',
-          address: (wizData.recipientAddress || '').trim(),
-          city: (wizData.recipientCity || '').trim(),
-          county: (wizData.recipientCounty || '').trim(),
-          zip: (wizData.recipientZip || '').replace(/\s/g, ''),
-          weight: parseFloat(String(wizData.weight)) || 1,
-          parcels: parseInt(String(wizData.parcels)) || 1,
-          content: (wizData.productName || order.name || 'Colet').slice(0, 100),
-          codAmount: wizData.isCOD ? wizData.codAmount : 0,
-          codCurrency: 'RON', orderName: order.name, orderId, selectedServices: {},
-        };
-        const res = await fetch('/api/gls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const data = await res.json();
-        if (data.ok) {
-          const awbData = { awb: data.awb, courier: 'gls', labelBase64: data.labelBase64 || null, trackUrl: data.trackUrl || `https://gls-group.eu/RO/ro/urmarire-colet?match=${data.awb}`, myglsUrl: data.myglsUrl || `https://mygls.ro/Parcel/Detail/${data.awb}`, labelUrl: null as string | null };
-          try {
-            const sr = await fetch('/api/connector/save-awb', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopifyOrderId: orderId, shop: activeShop, courier: 'gls', trackingNumber: data.awb, trackingUrl: data.trackUrl, labelBase64: data.labelBase64 || null }) });
-            const sd = await sr.json();
-            if (sd.ok && sd.labelUrl) awbData.labelUrl = sd.labelUrl;
-          } catch {}
-          setAwbResults(p => ({ ...p, [orderId]: awbData }));
-          setAS(orderId, { shipmentLoading: false }); setWizardOrder(null); setWizardLoading(false);
-          addToast('ok', `✅ AWB GLS ${data.awb} generat!`);
-          qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
-          if (data.labelBase64) {
-            try {
-              const bin = atob(data.labelBase64); const arr = new Uint8Array(bin.length);
-              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-              const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
-              const a = document.createElement('a'); a.href = url; a.download = `AWB_GLS_${data.awb}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-            } catch {}
-          }
-        } else { throw new Error(data.error || 'Eroare GLS'); }
-      } else {
-        const body = {
-          username: '', password: '', recipientName: wizData.recipientName, phone: wizData.recipientPhone,
-          email: wizData.recipientEmail || '', address: wizData.recipientAddress, city: wizData.recipientCity,
-          county: wizData.recipientCounty, zip: (wizData.recipientZip || '').replace(/\s/g, ''),
-          weight: parseFloat(String(wizData.weight)) || 1, parcels: parseInt(String(wizData.parcels)) || 1,
-          content: (wizData.productName || order.name || 'Colet').slice(0, 100),
-          isCOD: wizData.isCOD, total: wizData.codAmount, orderName: order.name, orderId, observations: wizData.observations || '',
-        };
-        const res = await fetch('/api/sameday-awb', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const data = await res.json();
-        if (data.ok) {
-          setAwbResults(p => ({ ...p, [orderId]: { awb: data.awb, courier: 'sameday' } }));
-          setAS(orderId, { shipmentLoading: false }); setWizardOrder(null); setWizardLoading(false);
-          addToast('ok', `AWB Sameday ${data.awb} generat!`);
-          qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
-        } else { throw new Error(data.error || 'Eroare Sameday'); }
+      // ── Use /api/connector/shipment which handles full flow:
+      //    1. Calls GLS/Sameday API
+      //    2. Saves Shipment to DB (critical for reprint + xConnector page)
+      //    3. Updates Shopify fulfillment
+      //    4. Stores label PDF (S3 or DB)
+      const shipmentRes = await fetch('/api/connector/shipment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopifyOrderId: orderId,
+          shop:           activeShop,
+          courier:        wizData.courier,
+          overrides: {
+            recipientName:    (wizData.recipientName || '').trim() || 'Client',
+            recipientPhone:   (wizData.recipientPhone || '').replace(/\D/g, '').slice(-10),
+            recipientEmail:   wizData.recipientEmail || '',
+            recipientAddress: (wizData.recipientAddress || '').trim(),
+            recipientCity:    (wizData.recipientCity || '').trim(),
+            recipientCounty:  (wizData.recipientCounty || '').trim(),
+            recipientZip:     (wizData.recipientZip || '').replace(/\s/g, ''),
+            productName:      (wizData.productName || order.name || 'Colet').slice(0, 100),
+            weight:           parseFloat(String(wizData.weight)) || 1,
+            parcels:          parseInt(String(wizData.parcels)) || 1,
+            isCOD:            wizData.isCOD,
+            codAmount:        wizData.isCOD ? wizData.codAmount : 0,
+            notifyCustomer:   wizData.notifyCustomer,
+            observations:     wizData.observations || '',
+          },
+        }),
+      });
+
+      const shipmentData = await shipmentRes.json();
+
+      if (!shipmentRes.ok || !shipmentData.ok) {
+        throw new Error(shipmentData.error || `Eroare ${wizData.courier.toUpperCase()}`);
       }
+
+      // Build local AWB result map entry — labelUrl comes from DB (persisted)
+      const awbData = {
+        awb:         shipmentData.trackingNumber,
+        courier:     shipmentData.courier || wizData.courier,
+        labelBase64: null as string | null,
+        trackUrl:    shipmentData.trackingUrl || `https://gls-group.eu/RO/ro/urmarire-colet?match=${shipmentData.trackingNumber}`,
+        myglsUrl:    `https://mygls.ro/Parcel/Detail/${shipmentData.trackingNumber}`,
+        labelUrl:    shipmentData.labelUrl || null,
+      };
+
+      setAwbResults(p => ({ ...p, [orderId]: awbData }));
+      setAS(orderId, { shipmentLoading: false });
+      setWizardOrder(null);
+      setWizardLoading(false);
+      addToast('ok', `✅ AWB ${wizData.courier.toUpperCase()} ${shipmentData.trackingNumber} generat și salvat!`);
+      qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
+
+      // Auto-download label if available from DB
+      if (awbData.labelUrl) {
+        try {
+          const labelRes = await fetch(awbData.labelUrl);
+          if (labelRes.ok) {
+            const blob = await labelRes.blob();
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href     = url;
+            a.download = `AWB_${wizData.courier.toUpperCase()}_${shipmentData.trackingNumber}.pdf`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }
+        } catch { /* non-fatal — user can download from table */ }
+      }
+
     } catch (err) {
       const msg = (err as Error).message;
-      setAS(orderId, { shipmentLoading: false, error: msg }); addToast('err', msg); setWizardLoading(false);
+      setAS(orderId, { shipmentLoading: false, error: msg });
+      addToast('err', msg);
+      setWizardLoading(false);
     }
   };
 
