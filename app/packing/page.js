@@ -184,8 +184,6 @@ export default function PackingPage() {
 
     const rawUrl = o.labelUrl || `/api/connector/awb-label?tracking=${o.trackingNo}`;
 
-    // URL-urile xConnector trebuie proxiate (CORS)
-    // URL-urile relative trebuie făcute absolute (packing e pe același origin)
     let fetchUrl;
     if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
       if (rawUrl.includes('xconnector.app')) {
@@ -194,15 +192,21 @@ export default function PackingPage() {
         fetchUrl = rawUrl;
       }
     } else {
-      fetchUrl = rawUrl; // URL relativ — funcționează direct
+      fetchUrl = rawUrl;
     }
 
     const res = await fetch(fetchUrl);
-    if (!res.ok) throw new Error(`HTTP ${res.status} pentru ${o.trackingNo}`);
+    if (!res.ok) {
+      let detail = '';
+      try { const j = await res.json(); detail = j.error || j.hint || ''; } catch {}
+      throw new Error(`HTTP ${res.status} | labelUrl: ${rawUrl.slice(0,60)} | ${detail}`);
+    }
     const ct = res.headers.get('content-type') || '';
     if (!ct.includes('pdf') && !ct.includes('octet')) {
       const text = await res.text();
-      throw new Error(text.includes('error') ? JSON.parse(text).error || 'Eroare server' : `Răspuns invalid (${ct})`);
+      let msg = 'Răspuns invalid';
+      try { msg = JSON.parse(text).error || msg; } catch {}
+      throw new Error(`${msg} | URL: ${rawUrl.slice(0,60)}`);
     }
     return res.blob();
   };
