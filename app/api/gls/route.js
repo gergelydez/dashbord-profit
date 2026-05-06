@@ -88,29 +88,18 @@ async function fetchPickupFromGLS(baseReq) {
 // ── Helper: extract Labels base64 from GLS response ─────────────────────────
 function extractLabels(data) {
   if (!data) return null;
-
   const labels = data.Labels;
-
-  // Case 1: GLS RO returneaza Labels ca array de bytes (numere intregi)
-  // Confirmat de mygls-python: Labels: Optional[list[int]]
+  // Case 1: GLS returneaza int[] (bytes raw) - confirmat de mygls-python
   if (Array.isArray(labels) && labels.length > 0) {
     if (typeof labels[0] === 'number') {
-      // Raw byte array → convertim la base64
-      const buf = Buffer.from(labels);
-      console.log('[GLS] Labels este int[] byte array, bytes:', buf.length);
-      return buf.toString('base64');
+      return Buffer.from(labels).toString('base64');
     }
-    // Array de stringuri base64
     if (typeof labels[0] === 'string' && labels[0].length > 100) return labels[0];
   }
-
-  // Case 2: Labels ca string base64 direct
+  // Case 2: string base64 direct
   if (typeof labels === 'string' && labels.length > 100) return labels;
-
-  // Case 3: Pdfdocument (folosit de GetPrintData)
+  // Case 3: Pdfdocument
   if (typeof data.Pdfdocument === 'string' && data.Pdfdocument.length > 100) return data.Pdfdocument;
-
-  console.warn('[GLS] extractLabels: nicio eticheta gasita. Keys:', Object.keys(data));
   return null;
 }
 
@@ -413,17 +402,9 @@ export async function POST(req) {
       }, { status: 422, headers: CORS });
     }
 
-    // ── LOG COMPLET răspuns GLS pentru debugging ────────────────────────────
-    console.log('[GLS DEBUG] Raspuns complet PrintLabels:', JSON.stringify({
-      keys: Object.keys(data),
-      PrintLabelsInfoList: data?.PrintLabelsInfoList,
-      PrintLabelsErrorList: data?.PrintLabelsErrorList,
-      LabelsType: Array.isArray(data?.Labels) ? `array[${data.Labels.length}] primul element tip: ${typeof data.Labels[0]}` : typeof data?.Labels,
-      LabelsLength: data?.Labels?.length || 0,
-      hasPdfdocument: !!data?.Pdfdocument,
-    }));
-
     // ── Extract AWB + ParcelId from response ─────────────────────────────────
+    // Per API docs: PrintLabelsInfoList[0].ParcelNumber = AWB number
+    //               PrintLabelsInfoList[0].ParcelId     = DB ID needed for GetPrintedLabels
     const info      = (data?.PrintLabelsInfoList || [])[0];
     const awb       = info?.ParcelNumber ? String(info.ParcelNumber) : null;
     const parcelId  = info?.ParcelId     ? parseInt(info.ParcelId)   : null;
