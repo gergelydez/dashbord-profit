@@ -96,4 +96,5 @@ export interface AwbWizardData {
   glsAOS:           boolean;  // Livrare doar la destinatar
   glsSAT:           boolean;  // Livrare sambata
   glsT12:           boolean;  // Livrare pana la 12:00
+  fulfillShopify:   boolean;  // Marchează fulfilled în Shopify
 }
