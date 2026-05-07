@@ -977,6 +977,8 @@ function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWiza
     recipientZip:     (order.address.zip      || '').replace(/\s/g, ''),
     productName, weight: 1, parcels: 1, isCOD, codAmount: isCOD ? order.totalPrice : 0,
     courier, notifyCustomer: false, observations: '',
+    glsFDS: false, glsSM1: false, glsSM2: false, glsAOS: false, glsSAT: false, glsT12: false,
+    fulfillShopify: true,
   };
 }
 
