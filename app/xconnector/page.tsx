@@ -1715,25 +1715,21 @@ export default function XConnectorPage() {
       }
     } catch (err) {
       const msg = (err as Error).message;
-      setAS(orderId, { shipmentLoading: false, error: msg });
-      addToast('err', msg);
-      setWizardLoading(false);
+      setAS(orderId, { shipmentLoading: false, error: msg }); addToast('err', msg); setWizardLoading(false);
     }
   };
 
   const [bulkLoading, setBulkLoading] = useState(false);
   const bulkInvoice = async () => {
-    setBulkLoading(true);
-    addToast('info', `Generez facturi pentru ${selected.size} comenzi…`);
+    setBulkLoading(true); addToast('info', `Generez facturi pentru ${selected.size} comenzi…`);
     let ok = 0, fail = 0;
     for (const id of Array.from(selected)) {
       try { await invoiceMut.mutateAsync({ shopifyOrderId: id, withCollection: false }); ok++; } catch { fail++; }
     }
-    setBulkLoading(false);
-    addToast(fail === 0 ? 'ok' : 'err', `${ok} facturi generate${fail ? `, ${fail} erori` : ''}`);
-    setSelected(new Set());
+    setBulkLoading(false); addToast(fail === 0 ? 'ok' : 'err', `${ok} facturi generate${fail ? `, ${fail} erori` : ''}`); setSelected(new Set());
   };
-const orders   = data?.orders ?? [];
+
+  const orders   = data?.orders ?? [];
   const statPaid = orders.filter(o => o.financialStatus === 'paid').length;
   const statCOD  = orders.filter(o => o.financialStatus === 'pending').length;
   const statInv  = orders.filter(o => o.invoice || o.noteAttributes?.['xconnector-invoice-url'] || o.noteAttributes?.['invoice-url']).length;
@@ -1765,6 +1761,7 @@ const orders   = data?.orders ?? [];
         select option { background: var(--c-bg2); }
       `}</style>
 
+      {/* TOP BAR */}
       <div style={S.topbar}>
         <div style={S.topbarRow1}>
           <h1 style={S.h1}>
@@ -1798,6 +1795,7 @@ const orders   = data?.orders ?? [];
         </div>
       </div>
 
+      {/* STATS */}
       <div style={S.statsBar}>
         <div style={S.statCard}><div style={S.statLabel}>Total comenzi</div><div style={S.statValue}>{orders.length}</div></div>
         <div style={S.statCard}><div style={S.statLabel}>💳 Plătite</div><div style={{ ...S.statValue, color: 'var(--c-green)' }}>{statPaid}</div></div>
@@ -1807,6 +1805,7 @@ const orders   = data?.orders ?? [];
         {statFail > 0 && <div style={S.statCard}><div style={S.statLabel}>⚠ Erori</div><div style={{ ...S.statValue, color: 'var(--c-red)' }}>{statFail}</div></div>}
       </div>
 
+      {/* BULK BAR */}
       {selected.size > 0 && (
         <div style={S.bulkBar}>
           <span style={S.bulkLabel}>✓ {selected.size} selectate</span>
@@ -1815,12 +1814,14 @@ const orders   = data?.orders ?? [];
         </div>
       )}
 
+      {/* ERROR */}
       {isError && (
         <div style={{ margin: '0 20px 10px', background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 12, padding: '12px 16px', color: 'var(--c-red)', fontSize: 13 }}>
           ⚠ {(error as Error).message} — <button onClick={() => refetch()} style={{ color: 'var(--c-red)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Retry</button>
         </div>
       )}
 
+      {/* TABLE */}
       <div style={{ overflowX: 'auto' as const, padding: '0 20px' }}>
         <table style={S.table}>
           <thead>
@@ -1873,20 +1874,24 @@ const orders   = data?.orders ?? [];
                   <td style={S.td} onClick={() => setDrawerOrder(order)}>{fulBadge(order.fulfillmentStatus)}</td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
                     {invLink ? (
+                      // Click on invoice number → open modal viewer (not external link)
                       <button
                         onClick={e => {
                           e.stopPropagation();
                           setInvoiceModalOrder(order);
+                          // Pre-populate result so viewer shows immediately
                           const s = order.invoice?.series || '';
                           const n = order.invoice?.number || '';
                           setInvoiceResult({
-                            series: s, number: n,
+                            series: s,
+                            number: n,
                             downloadUrl: `/api/connector/invoice-pdf?series=${encodeURIComponent(s)}&number=${encodeURIComponent(n)}`,
                             smartbillUrl: order.invoice?.url || invLink.url,
                             collected: order.invoice?.status === 'COLLECTED',
                           });
                         }}
                         style={{ ...S.btnGhost, fontSize: 11, cursor: 'pointer' }}
+                        title="Click pentru vizualizare factură"
                       >
                         🧾 {invLink.label}
                       </button>
@@ -1904,7 +1909,12 @@ const orders   = data?.orders ?? [];
                         <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#10b981', fontWeight: 700 }}>{existingAwb}</div>
                         <div style={{ display: 'flex', gap: 4 }}>
                           {(order.shipment?.labelUrl || awbRes?.labelUrl) && (
-                            <a href={order.shipment?.labelUrl || awbRes?.labelUrl || ''} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnPrimary, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>🖨 PDF</a>
+                            <a
+                              href={order.shipment?.labelUrl || awbRes?.labelUrl || ''}
+                              target="_blank" rel="noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              style={{ ...S.btnPrimary, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}
+                            >🖨 PDF</a>
                           )}
                           {awbRes?.labelBase64 && !order.shipment?.labelUrl && (
                             <button style={{ ...S.btnPrimary, fontSize: 10, padding: '3px 7px' }} onClick={e => {
@@ -1944,6 +1954,7 @@ const orders   = data?.orders ?? [];
         </table>
       </div>
 
+      {/* PAGINATION */}
       {data && (
         <div style={{ display: 'flex', gap: 10, padding: '14px 20px', justifyContent: 'center' }}>
           {prevCursors.length > 0 && <button style={S.iconBtn} onClick={() => { const prev = [...prevCursors]; const c = prev.pop() ?? null; setPrev(prev); setCursor(c); }}>← Anterior</button>}
@@ -1951,6 +1962,7 @@ const orders   = data?.orders ?? [];
         </div>
       )}
 
+      {/* ORDER DRAWER */}
       {drawerOrder && !wizardOrder && (
         <OrderDrawer
           order={drawerOrder} onClose={() => setDrawerOrder(null)}
@@ -1963,6 +1975,7 @@ const orders   = data?.orders ?? [];
         />
       )}
 
+      {/* INVOICE MODAL */}
       {awbModalData && (
         <AwbModal
           order={awbModalData.order}
@@ -1973,7 +1986,6 @@ const orders   = data?.orders ?? [];
           onClose={() => setAwbModalData(null)}
         />
       )}
-
       {invoiceModalOrder && (
         <InvoiceModal
           order={invoiceModalOrder}
@@ -1985,6 +1997,7 @@ const orders   = data?.orders ?? [];
         />
       )}
 
+      {/* AWB WIZARD */}
       {wizardOrder && (
         <AwbWizard order={wizardOrder} initialCourier="gls"
           onClose={() => { setWizardOrder(null); setWizardLoading(false); }}
