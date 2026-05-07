@@ -87,12 +87,22 @@ async function fetchPickupFromGLS(baseReq) {
 
 // ── Helper: extract Labels base64 from GLS response ─────────────────────────
 function extractLabels(data) {
-  // GLS can return Labels as: string, array of strings, or base64 directly
   if (!data) return null;
-  if (typeof data.Labels === 'string' && data.Labels.length > 100) return data.Labels;
-  if (Array.isArray(data.Labels) && data.Labels[0]?.length > 100) return data.Labels[0];
-  // Also check Pdfdocument (used by GetPrintData)
+  const labels = data.Labels;
+  // Case 1: GLS RO returneaza int[] (bytes raw) - confirmat de mygls-python
+  if (Array.isArray(labels) && labels.length > 0) {
+    if (typeof labels[0] === 'number') {
+      // Raw byte array → convertim la base64
+      console.log('[GLS] Labels este int[] byte array, bytes:', labels.length);
+      return Buffer.from(labels).toString('base64');
+    }
+    if (typeof labels[0] === 'string' && labels[0].length > 100) return labels[0];
+  }
+  // Case 2: string base64 direct
+  if (typeof labels === 'string' && labels.length > 100) return labels;
+  // Case 3: Pdfdocument
   if (typeof data.Pdfdocument === 'string' && data.Pdfdocument.length > 100) return data.Pdfdocument;
+  console.warn('[GLS] extractLabels: nicio eticheta. Keys:', Object.keys(data));
   return null;
 }
 
@@ -107,7 +117,7 @@ async function fetchLabelByParcelId(baseReq, parcelId) {
       body: JSON.stringify({
         ...baseReq,
         ParcelIdList:    [parseInt(parcelId)],   // ← CORRECT: ParcelIdList per API docs
-        TypeOfPrinter:   'A4_4x1',
+        TypeOfPrinter:   'A4_2x2',
         PrintPosition:   1,
         ShowPrintDialog: false,
       }),
@@ -376,7 +386,7 @@ export async function POST(req) {
       body: JSON.stringify({
         ...baseReq,
         ParcelList:      [parcelPayload],
-        TypeOfPrinter:   'A4_4x1',
+        TypeOfPrinter:   'A4_2x2',
         PrintPosition:   1,
         ShowPrintDialog: false,
       }),
