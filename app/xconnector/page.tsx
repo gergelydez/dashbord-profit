@@ -954,6 +954,133 @@ function CodSection({ order, shop, onToast, onRefresh }: {
   );
 }
 
+/* ADDRESS VALIDATOR COMPONENT */
+function AddressValidator({ county, city, zip, address, onFixZip }: {
+  county: string; city: string; zip: string; address: string;
+  onFixZip: (zip: string) => void;
+}) {
+  const [loading, setLoading]       = useState(false);
+  const [result,  setResult]        = useState<null | {
+    found: boolean; zipMismatch: boolean; correctZip: string | null;
+    inputZip: string; streetMatched: string | null;
+    scores: { street: number | null; city: number | null; county: number | null; zip: number | null } | null;
+    error?: string;
+  }>(null);
+  const [fixing, setFixing]         = useState(false);
+  const [fixed,  setFixed]          = useState(false);
+
+  const validate = async () => {
+    if (!city || !zip) return;
+    setLoading(true); setResult(null); setFixed(false);
+    try {
+      const addrParts = address.trim().match(/^(.*?)[\s,]+(\d+\w*)$/) || [null, address, ''];
+      const res = await fetch('/api/connector/validate-address', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ county, city, zip, street: addrParts[1] || address, number: addrParts[2] || '' }),
+      });
+      const json = await res.json();
+      setResult(json.error ? { found: false, zipMismatch: false, correctZip: null, inputZip: zip, streetMatched: null, scores: null, error: json.error } : json);
+    } catch (e) {
+      setResult({ found: false, zipMismatch: false, correctZip: null, inputZip: zip, streetMatched: null, scores: null, error: (e as Error).message });
+    } finally { setLoading(false); }
+  };
+
+  const applyFix = () => {
+    if (result?.correctZip) {
+      onFixZip(result.correctZip);
+      setFixed(true);
+      setResult(r => r ? { ...r, zipMismatch: false } : r);
+    }
+  };
+
+  const zipOk = zip && zip.replace(/\D/g, '').length === 6;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={validate}
+        disabled={loading || !city || !zipOk}
+        style={{
+          ...(!city || !zipOk
+            ? { background: 'var(--c-bg3)', color: 'var(--c-text4)', border: '1px solid var(--c-border2)', cursor: 'not-allowed' }
+            : { background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)', cursor: 'pointer' }),
+          borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600,
+          display: 'flex', alignItems: 'center', gap: 6, width: '100%', justifyContent: 'center',
+          opacity: loading ? 0.7 : 1,
+        }}
+      >
+        {loading ? <><span style={S.spinner} /> Validez adresa…</> : '🔍 Validează adresa & ZIP'}
+      </button>
+
+      {result && (
+        <div style={{ marginTop: 8, borderRadius: 10, overflow: 'hidden', border: `1px solid ${result.error ? 'rgba(244,63,94,0.3)' : result.zipMismatch ? 'rgba(245,158,11,0.4)' : 'rgba(16,185,129,0.3)'}` }}>
+          {result.error ? (
+            <div style={{ padding: '10px 12px', background: 'rgba(244,63,94,0.08)', fontSize: 12, color: '#f43f5e' }}>
+              ✕ Eroare validare: {result.error}
+            </div>
+          ) : result.zipMismatch ? (
+            <div style={{ padding: '12px 14px', background: 'rgba(245,158,11,0.08)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#f59e0b', marginBottom: 8 }}>
+                ⚠ ZIP incorect detectat!
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10, fontSize: 12 }}>
+                <div style={{ background: 'rgba(244,63,94,0.1)', borderRadius: 6, padding: '6px 10px', textAlign: 'center' as const }}>
+                  <div style={{ fontSize: 10, color: 'var(--c-text3)', marginBottom: 2 }}>ZIP introdus</div>
+                  <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#f43f5e', fontSize: 16 }}>{result.inputZip}</div>
+                </div>
+                <div style={{ background: 'rgba(16,185,129,0.1)', borderRadius: 6, padding: '6px 10px', textAlign: 'center' as const }}>
+                  <div style={{ fontSize: 10, color: 'var(--c-text3)', marginBottom: 2 }}>ZIP corect</div>
+                  <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#10b981', fontSize: 16 }}>{result.correctZip}</div>
+                </div>
+              </div>
+              {result.scores && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, marginBottom: 10 }}>
+                  {Object.entries(result.scores).filter(([,v]) => v !== null).map(([k, v]) => (
+                    <div key={k} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: '3px 8px', fontSize: 11 }}>
+                      <span style={{ color: 'var(--c-text3)', textTransform: 'capitalize' as const }}>{k}: </span>
+                      <span style={{ color: (v as number) >= 80 ? '#10b981' : (v as number) >= 50 ? '#f59e0b' : '#f43f5e', fontWeight: 700 }}>{v}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!fixed ? (
+                <button
+                  type="button" onClick={applyFix} disabled={fixing}
+                  style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', width: '100%' }}
+                >
+                  ✓ Setează ZIP corect: {result.correctZip}
+                </button>
+              ) : (
+                <div style={{ background: 'rgba(16,185,129,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#10b981', textAlign: 'center' as const, fontWeight: 600 }}>
+                  ✓ ZIP actualizat la {result.correctZip}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: '10px 14px', background: 'rgba(16,185,129,0.08)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#10b981', marginBottom: 4 }}>✓ Adresă validă!</div>
+              {result.streetMatched && (
+                <div style={{ fontSize: 11, color: 'var(--c-text3)' }}>Stradă identificată: <strong style={{ color: 'var(--c-text)' }}>{result.streetMatched}</strong></div>
+              )}
+              {result.scores && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, marginTop: 6 }}>
+                  {Object.entries(result.scores).filter(([,v]) => v !== null).map(([k, v]) => (
+                    <div key={k} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: '3px 8px', fontSize: 11 }}>
+                      <span style={{ color: 'var(--c-text3)', textTransform: 'capitalize' as const }}>{k}: </span>
+                      <span style={{ color: (v as number) >= 80 ? '#10b981' : '#f59e0b', fontWeight: 700 }}>{v}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* AWB WIZARD */
 type WizardStep = 1 | 2 | 3;
 const STEP_LABELS: Record<WizardStep, string> = { 1: '👤 Date client', 2: '📦 Colet & produs', 3: '🚚 Opțiuni livrare' };
@@ -1060,6 +1187,14 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
                     <Field label="Județ" value={data.recipientCounty} onChange={set('recipientCounty')} placeholder="Ilfov" />
                   </div>
                   <Field label="Cod poștal *" value={data.recipientZip} onChange={set('recipientZip')} placeholder="077160" />
+                  {/* Address Validator */}
+                  <AddressValidator
+                    county={data.recipientCounty}
+                    city={data.recipientCity}
+                    zip={data.recipientZip}
+                    address={data.recipientAddress}
+                    onFixZip={(zip) => setData(p => ({ ...p, recipientZip: zip }))}
+                  />
                 </div>
               </div>
             </>
