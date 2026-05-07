@@ -960,9 +960,13 @@ const STEP_LABELS: Record<WizardStep, string> = { 1: '👤 Date client', 2: '�
 
 function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWizardData {
   const isCOD = order.financialStatus === 'pending';
-  const productName = order.lineItems.length > 0
-    ? order.lineItems.map(li => li.quantity > 1 ? `${li.quantity}x ${li.name}` : li.name).join(', ')
-    : 'Colet';
+  const invoiceNum = order.invoice
+    ? `${order.invoice.series}${order.invoice.number}`
+    : ((order.noteAttributes as Record<string,string>)?.['invoice-number'] || (order.noteAttributes as Record<string,string>)?.['Factură'] || '');
+  const firstProduct = order.lineItems[0]?.name || 'Colet';
+  const productName = invoiceNum
+    ? `${order.name}- ${invoiceNum}- ${firstProduct}`.slice(0, 40)
+    : `${order.name}- ${firstProduct}`.slice(0, 40);
   return {
     recipientName:    (order.customer.name  || '').trim() || 'Client',
     recipientPhone:   (order.customer.phone || '').replace(/\D/g, '').slice(-10) || '',
@@ -1006,6 +1010,16 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
   const setNum = (key: keyof AwbWizardData) => (val: string) => { const n = parseFloat(val); setData(p => ({ ...p, [key]: isNaN(n) ? 0 : n })); setErrors([]); };
   const next = () => { const e = validateStep(step, data); if (e.length) { setErrors(e); return; } setErrors([]); setStep(s => (s < 3 ? (s + 1) as WizardStep : s)); };
   const prev = () => { setErrors([]); setStep(s => (s > 1 ? (s - 1) as WizardStep : s)); };
+  const invNum = order.invoice
+    ? `${order.invoice.series}${order.invoice.number}`
+    : ((order.noteAttributes as Record<string,string>)?.['invoice-number'] || (order.noteAttributes as Record<string,string>)?.['Factură'] || '');
+  const firstProd = order.lineItems[0]?.name || 'Colet';
+  const templates = [
+    { label: '🏷 Cmd+Fact+Produs', val: invNum ? `${order.name}- ${invNum}- ${firstProd}`.slice(0,40) : `${order.name}- ${firstProd}`.slice(0,40) },
+    { label: '📦 Toate produsele', val: order.lineItems.map((li: any) => li.quantity > 1 ? `${li.quantity}x ${li.name}` : li.name).join(', ').slice(0,40) },
+    { label: '🔢 Cu cantități', val: order.lineItems.map((li: any) => `${li.quantity}buc ${li.name}`).join('+').slice(0,40) },
+    { label: '📫 Generic', val: 'Colet' },
+  ];
 
   const stepActive:  React.CSSProperties = { ...S.stepDot, background: 'var(--c-orange)', color: '#fff' };
   const stepDone:    React.CSSProperties = { ...S.stepDot, background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.4)' };
@@ -1065,12 +1079,74 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
           {step === 2 && (
             <>
               <div style={S.section}>
-                <div style={S.sectionHead}>📦 Conținut colet</div>
+                <div style={S.sectionHead}>📦 Conținut AWB</div>
                 <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
                   <div>
-                    <label style={S.inputLabel}>Denumire produs / conținut AWB * <span style={{ color: 'var(--c-orange)', fontStyle: 'italic' }}>(apare pe etichetă!)</span></label>
-                    <input type="text" value={data.productName} onChange={e => { setData(p => ({ ...p, productName: e.target.value })); setErrors([]); }} placeholder="ex: Bluză damă albă, mărime M" style={S.input} />
-                    <div style={{ fontSize: 11, color: 'var(--c-text4)', marginTop: 4 }}>ℹ Editează dacă produsul are un nume diferit față de Shopify.</div>
+                    <div style={{ fontSize: 11, color: 'var(--c-text3)', marginBottom: 6 }}>Template rapid:</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                      {templates.map(t => (
+                        <button key={t.label} type="button"
+                          style={{ ...S.btnGhost, fontSize: 10, padding: '3px 8px', whiteSpace: 'nowrap' as const }}
+                          onClick={() => { setData(p => ({ ...p, productName: t.val })); setErrors([]); }}>
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {order.lineItems.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--c-text3)', marginBottom: 6 }}>Adaugă produs:</div>
+                      {order.lineItems.map((item: any, i: number) => {
+                        const shortName = item.name.slice(0, 30);
+                        const addition = item.quantity > 1 ? `${item.quantity}x ${shortName}` : shortName;
+                        const isInText = data.productName.includes(item.name.slice(0, 10));
+                        return (
+                          <div key={i}
+                            onClick={() => {
+                              const current = data.productName;
+                              const newText = current && current !== 'Colet'
+                                ? `${current}, ${addition}`.slice(0, 40)
+                                : addition.slice(0, 40);
+                              setData(p => ({ ...p, productName: newText }));
+                              setErrors([]);
+                            }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 8,
+                              padding: '6px 10px', marginBottom: 4,
+                              background: isInText ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.02)',
+                              border: `1px solid ${isInText ? 'rgba(16,185,129,0.3)' : 'var(--c-border)'}`,
+                              borderRadius: 8, cursor: 'pointer',
+                            }}
+                          >
+                            <span style={{ fontSize: 16 }}>{isInText ? '✓' : '+'}</span>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-text)' }}>{item.name.slice(0, 35)}</div>
+                              <div style={{ fontSize: 10, color: 'var(--c-text3)' }}>{item.quantity} buc · {item.price} {order.currency}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div>
+                    <label style={S.inputLabel}>
+                      Text pe etichetă *
+                      <span style={{ marginLeft: 6, color: data.productName.length > 35 ? '#f43f5e' : data.productName.length > 25 ? '#f59e0b' : '#10b981', fontWeight: 700 }}>
+                        {data.productName.length}/40
+                      </span>
+                    </label>
+                    <input type="text" value={data.productName} maxLength={40}
+                      onChange={e => { setData(p => ({ ...p, productName: e.target.value })); setErrors([]); }}
+                      placeholder="ex: #3333- GLA123- Produs"
+                      style={{ ...S.input, borderColor: data.productName.length > 35 ? 'rgba(244,63,94,0.5)' : data.productName.length > 25 ? 'rgba(245,158,11,0.5)' : 'var(--c-border)', fontSize: data.productName.length > 30 ? 11 : 13 }}
+                    />
+                  </div>
+                  <div style={{ background: '#fff', borderRadius: 8, padding: '10px 14px', border: '2px solid #e5e7eb' }}>
+                    <div style={{ fontSize: 9, color: '#888', marginBottom: 4, fontFamily: 'monospace' }}>PREVIEW ETICHETĂ:</div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#000', fontSize: data.productName.length > 30 ? 10 : data.productName.length > 20 ? 12 : 14, wordBreak: 'break-all' as const, lineHeight: 1.4 }}>
+                      {data.productName || <span style={{ color: '#ccc' }}>Text etichetă…</span>}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#999', marginTop: 4, fontFamily: 'monospace' }}>{data.recipientName} · {data.recipientCity}</div>
                   </div>
                   <div style={S.row2col}>
                     <Field label="Greutate (kg) *" value={data.weight} onChange={setNum('weight')} type="number" placeholder="1" />
@@ -1114,12 +1190,43 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
                       <option value="sameday">Sameday</option>
                     </select>
                   </div>
+                  {data.courier === 'gls' && (
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--c-text3)', textTransform: 'uppercase' as const, letterSpacing: '0.07em' }}>Servicii GLS</div>
+                      {[
+                        { key: 'glsFDS', label: 'FDS — Flex Delivery', desc: 'Email cu opțiuni livrare' },
+                        { key: 'glsSM1', label: 'SM1 — SMS Tracking', desc: 'SMS cu link urmărire' },
+                        { key: 'glsSM2', label: 'SM2 — SMS Notificare', desc: 'SMS simplu la livrare' },
+                        { key: 'glsAOS', label: 'AOS — Doar destinatar', desc: 'Livrare exclusiv la persoană' },
+                        { key: 'glsSAT', label: 'SAT — Sâmbătă', desc: 'Livrare în weekend' },
+                        { key: 'glsT12', label: 'T12 — Până la 12:00', desc: 'Livrare dimineață' },
+                      ].map(svc => (
+                        <div key={svc.key}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--c-border)', borderRadius: 10, cursor: 'pointer' }}
+                          onClick={() => setData(p => ({ ...p, [svc.key]: !(p as any)[svc.key] }))}>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{svc.label}</div>
+                            <div style={{ fontSize: 11, color: 'var(--c-text3)', marginTop: 1 }}>{svc.desc}</div>
+                          </div>
+                          <Switch on={!!(data as any)[svc.key]} onChange={v => setData(p => ({ ...p, [svc.key]: v }))} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div style={S.codToggle} onClick={() => setData(p => ({ ...p, notifyCustomer: !p.notifyCustomer }))}>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>Notifică clientul la expediere</div>
                       <div style={{ fontSize: 11, color: 'var(--c-text3)', marginTop: 2 }}>Email/SMS Shopify</div>
                     </div>
                     <Switch on={data.notifyCustomer} onChange={v => setData(p => ({ ...p, notifyCustomer: v }))} />
+                  </div>
+                  <div style={{ ...S.codToggle, background: (data as any).fulfillShopify ? 'rgba(16,185,129,0.07)' : 'rgba(255,255,255,0.02)', borderColor: (data as any).fulfillShopify ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.2)' }}
+                    onClick={() => setData(p => ({ ...p, fulfillShopify: !(p as any).fulfillShopify }))}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: (data as any).fulfillShopify ? '#10b981' : 'var(--c-text2)' }}>✅ Marchează Fulfilled în Shopify</div>
+                      <div style={{ fontSize: 11, color: 'var(--c-text3)', marginTop: 2 }}>Adaugă AWB-ul ca fulfillment pe comandă</div>
+                    </div>
+                    <Switch on={!!(data as any).fulfillShopify} onChange={v => setData(p => ({ ...p, fulfillShopify: v }))} />
                   </div>
                   <div>
                     <label style={S.inputLabel}>Observații pentru curier (opțional)</label>
@@ -1614,7 +1721,15 @@ export default function XConnectorPage() {
           parcels: parseInt(String(wizData.parcels)) || 1,
           content: (wizData.productName || order.name || 'Colet').slice(0, 100),
           codAmount: wizData.isCOD ? wizData.codAmount : 0,
-          codCurrency: 'RON', orderName: order.name, orderId, selectedServices: {},
+          codCurrency: 'RON', orderName: order.name, orderId,
+          selectedServices: {
+            ...((wizData as any).glsFDS ? { FDS: wizData.recipientEmail || true } : {}),
+            ...((wizData as any).glsSM1 ? { SM1: true } : {}),
+            ...((wizData as any).glsSM2 ? { SM2: true } : {}),
+            ...((wizData as any).glsAOS ? { AOS: true } : {}),
+            ...((wizData as any).glsSAT ? { SAT: true } : {}),
+            ...((wizData as any).glsT12 ? { T12: true } : {}),
+          },
         };
         const res = await fetch('/api/gls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json();
@@ -1625,9 +1740,17 @@ export default function XConnectorPage() {
             const sd = await sr.json();
             if (sd.ok && sd.labelUrl) awbData.labelUrl = sd.labelUrl;
           } catch {}
+          if ((wizData as any).fulfillShopify && data.awb) {
+            try {
+              await fetch('/api/connector/fulfill-order', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shopifyOrderId: orderId, shop: activeShop, trackingNumber: data.awb, trackingUrl: data.trackUrl, courier: 'GLS', notifyCustomer: wizData.notifyCustomer }),
+              });
+            } catch {}
+          }
           setAwbResults(p => ({ ...p, [orderId]: awbData }));
           setAS(orderId, { shipmentLoading: false }); setWizardOrder(null); setWizardLoading(false);
-          addToast('ok', `✅ AWB GLS ${data.awb} generat!`);
+          addToast('ok', `✅ AWB GLS ${data.awb} generat${(wizData as any).fulfillShopify ? ' + Fulfilled!' : '!'}`);
           qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
           if (data.labelBase64) {
             try {
