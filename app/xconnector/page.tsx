@@ -1733,3 +1733,266 @@ export default function XConnectorPage() {
     addToast(fail === 0 ? 'ok' : 'err', `${ok} facturi generate${fail ? `, ${fail} erori` : ''}`);
     setSelected(new Set());
   };
+const orders   = data?.orders ?? [];
+  const statPaid = orders.filter(o => o.financialStatus === 'paid').length;
+  const statCOD  = orders.filter(o => o.financialStatus === 'pending').length;
+  const statInv  = orders.filter(o => o.invoice || o.noteAttributes?.['xconnector-invoice-url'] || o.noteAttributes?.['invoice-url']).length;
+  const statShip = orders.filter(o => o.shipment).length;
+  const statFail = orders.filter(o => o.processingStatus === 'failed').length;
+
+  const fmtPrice = (n: number, cur: string) => n.toLocaleString('ro-RO', { minimumFractionDigits: 2 }) + ' ' + cur;
+  const fmtDate  = (s: string) => new Date(s).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short' });
+
+  const getInvoiceLink = (order: EnrichedOrder): { label: string; url: string } | null => {
+    if (order.invoice) return { label: `${order.invoice.series}${order.invoice.number}`, url: order.invoice.url };
+    const attrs = order.noteAttributes ?? {};
+    const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || attrs['xconnector-invoice-short-url'] || '';
+    if (!url) return null;
+    try {
+      const u = new URL(attrs['xconnector-invoice-url'] || '');
+      const s = u.searchParams.get('s') || ''; const n = u.searchParams.get('n') || '';
+      return { label: (s && n) ? `${s}${n}` : (attrs['invoice-number'] || 'Factură'), url };
+    } catch { return { label: attrs['invoice-number'] || 'Factură', url }; }
+  };
+
+  return (
+    <div style={S.page}>
+      <style>{`
+        @keyframes spin  { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100%{opacity:.6} 50%{opacity:1} }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(3px)} to{opacity:1;transform:none} }
+        tr:hover td { background: rgba(255,255,255,0.015) !important; }
+        select option { background: var(--c-bg2); }
+      `}</style>
+
+      <div style={S.topbar}>
+        <div style={S.topbarRow1}>
+          <h1 style={S.h1}>
+            <span style={{ background: 'linear-gradient(135deg,#f97316,#fb923c)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>⚡ xConnector</span>
+          </h1>
+          {currentShopInfo && (
+            <div style={S.shopBadge}><span>{FLAG[currentShopInfo.flag?.toUpperCase()] ?? '🌐'}</span><span>{currentShopInfo.label}</span></div>
+          )}
+          <div style={S.searchWrap}>
+            <span style={S.searchIcon}>🔍</span>
+            <input style={S.searchInput} placeholder="Caută comandă, client, telefon…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          <select value={finFilter} onChange={e => { setFinFilter(e.target.value); setCursor(null); }} style={S.select}>
+            <option value="all">Toate</option>
+            <option value="paid">💳 Plătit</option>
+            <option value="pending">💰 Ramburs</option>
+            <option value="refunded">↩ Returnat</option>
+          </select>
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setCursor(null); }} style={S.select} />
+          <button style={S.iconBtn} onClick={() => refetch()}>{isLoading ? <Spin /> : '↻'} Refresh</button>
+          <SyncButton shop={activeShop} onDone={() => { addToast('ok', 'Sync trimis! Refresh în 30s.'); setTimeout(() => refetch(), 30000); }} />
+          <button
+            style={autoInvLoading ? { ...S.toggleOff, opacity: 0.6, cursor: 'not-allowed' } : autoInvoice ? S.toggleOn : S.toggleOff}
+            onClick={toggleAutoInvoice} disabled={autoInvLoading}
+          >
+            {autoInvLoading ? <><Spin /> Factură auto…</> : autoInvoice
+              ? <>🧾 <span style={{ width: 28, height: 16, background: '#10b981', borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 3px', flexShrink: 0 }}><span style={{ width: 10, height: 10, background: '#fff', borderRadius: '50%' }} /></span> Factură auto</>
+              : <>🧾 <span style={{ width: 28, height: 16, background: 'var(--c-border)', borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-start', padding: '0 3px', flexShrink: 0 }}><span style={{ width: 10, height: 10, background: '#fff', borderRadius: '50%' }} /></span> Factură auto</>
+            }
+          </button>
+        </div>
+      </div>
+
+      <div style={S.statsBar}>
+        <div style={S.statCard}><div style={S.statLabel}>Total comenzi</div><div style={S.statValue}>{orders.length}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>💳 Plătite</div><div style={{ ...S.statValue, color: 'var(--c-green)' }}>{statPaid}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>💰 Ramburs</div><div style={{ ...S.statValue, color: '#f59e0b' }}>{statCOD}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>🧾 Facturate</div><div style={{ ...S.statValue, color: 'var(--c-blue)' }}>{statInv}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>🚚 AWB generat</div><div style={{ ...S.statValue, color: 'var(--c-orange)' }}>{statShip}</div></div>
+        {statFail > 0 && <div style={S.statCard}><div style={S.statLabel}>⚠ Erori</div><div style={{ ...S.statValue, color: 'var(--c-red)' }}>{statFail}</div></div>}
+      </div>
+
+      {selected.size > 0 && (
+        <div style={S.bulkBar}>
+          <span style={S.bulkLabel}>✓ {selected.size} selectate</span>
+          <button style={S.btnPrimary} onClick={bulkInvoice} disabled={bulkLoading}>{bulkLoading ? <Spin /> : '🧾'} Generează facturi</button>
+          <button style={S.btnDisabled} onClick={() => setSelected(new Set())}>✕ Deselectează</button>
+        </div>
+      )}
+
+      {isError && (
+        <div style={{ margin: '0 20px 10px', background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 12, padding: '12px 16px', color: 'var(--c-red)', fontSize: 13 }}>
+          ⚠ {(error as Error).message} — <button onClick={() => refetch()} style={{ color: 'var(--c-red)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Retry</button>
+        </div>
+      )}
+
+      <div style={{ overflowX: 'auto' as const, padding: '0 20px' }}>
+        <table style={S.table}>
+          <thead>
+            <tr>
+              <th style={S.th}><input type="checkbox" style={S.checkbox} onChange={toggleAll} checked={selected.size > 0 && selected.size === orders.length} /></th>
+              <th style={S.th}>Comandă</th>
+              <th style={S.th}>Client</th>
+              <th style={S.th}>Localitate</th>
+              <th style={S.th}>Total</th>
+              <th style={S.th}>Plată</th>
+              <th style={S.th}>Fulfillment</th>
+              <th style={S.th}>Factură</th>
+              <th style={S.th}>AWB</th>
+              <th style={S.th}>Status</th>
+              <th style={S.th}>Edit</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? <Skeleton rows={8} /> : orders.length === 0 ? (
+              <tr><td colSpan={11} style={S.empty}>
+                <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
+                <div>Nicio comandă găsită</div>
+                <div style={{ fontSize: 12, marginTop: 6, color: 'var(--c-text4)' }}>Schimbă filtrele sau verifică conexiunea Shopify</div>
+              </td></tr>
+            ) : orders.map(order => {
+              const as = getState(order.id);
+              const invLink = getInvoiceLink(order);
+              const awbRes  = awbResults[order.id];
+              const existingAwb = order.shipment?.tracking || awbRes?.awb;
+              const labelUrl = awbRes?.labelUrl || order.shipment?.labelUrl || null;
+              return (
+                <tr key={order.id} style={{ cursor: 'pointer', animation: 'fadeIn 0.2s ease' }}>
+                  <td style={S.td} onClick={e => e.stopPropagation()}><input type="checkbox" style={S.checkbox} checked={selected.has(order.id)} onChange={() => toggleSelect(order.id)} /></td>
+                  <td style={S.td} onClick={() => setDrawerOrder(order)}>
+                    <div style={{ fontWeight: 700, color: 'var(--c-orange)' }}>{order.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--c-text3)' }}>{fmtDate(order.createdAt)}</div>
+                  </td>
+                  <td style={S.td} onClick={() => setDrawerOrder(order)}>
+                    <div style={{ fontWeight: 500 }}>{order.customer.name || <span style={{ color: 'var(--c-text4)' }}>—</span>}</div>
+                    <div style={{ fontSize: 11, color: 'var(--c-text3)', fontFamily: 'monospace' }}>{order.customer.phone}</div>
+                  </td>
+                  <td style={S.td} onClick={() => setDrawerOrder(order)}>
+                    <div>{order.address.city || '—'}</div>
+                    <div style={{ fontSize: 11, color: 'var(--c-text3)', fontFamily: 'monospace' }}>{order.address.zip}</div>
+                  </td>
+                  <td style={S.td} onClick={() => setDrawerOrder(order)}>
+                    <div style={{ fontWeight: 700, color: order.financialStatus === 'pending' ? '#f59e0b' : 'var(--c-text)' }}>{fmtPrice(order.totalPrice, order.currency)}</div>
+                  </td>
+                  <td style={S.td} onClick={() => setDrawerOrder(order)}>{finBadge(order.financialStatus)}</td>
+                  <td style={S.td} onClick={() => setDrawerOrder(order)}>{fulBadge(order.fulfillmentStatus)}</td>
+                  <td style={S.td} onClick={e => e.stopPropagation()}>
+                    {invLink ? (
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          setInvoiceModalOrder(order);
+                          const s = order.invoice?.series || '';
+                          const n = order.invoice?.number || '';
+                          setInvoiceResult({
+                            series: s, number: n,
+                            downloadUrl: `/api/connector/invoice-pdf?series=${encodeURIComponent(s)}&number=${encodeURIComponent(n)}`,
+                            smartbillUrl: order.invoice?.url || invLink.url,
+                            collected: order.invoice?.status === 'COLLECTED',
+                          });
+                        }}
+                        style={{ ...S.btnGhost, fontSize: 11, cursor: 'pointer' }}
+                      >
+                        🧾 {invLink.label}
+                      </button>
+                    ) : (
+                      <button style={as.invoiceLoading ? { ...S.btnPrimary, opacity: 0.6, fontSize: 11 } : { ...S.btnPrimary, fontSize: 11 }}
+                        disabled={as.invoiceLoading || order.cancelled}
+                        onClick={e => { e.stopPropagation(); setInvoiceModalOrder(order); setInvoiceResult(null); }}>
+                        {as.invoiceLoading ? <Spin /> : '🧾'} {order.financialStatus === 'pending' ? 'Gen+Inc' : 'Factură'}
+                      </button>
+                    )}
+                  </td>
+                  <td style={S.td} onClick={e => e.stopPropagation()}>
+                    {existingAwb ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#10b981', fontWeight: 700 }}>{existingAwb}</div>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          {(order.shipment?.labelUrl || awbRes?.labelUrl) && (
+                            <a href={order.shipment?.labelUrl || awbRes?.labelUrl || ''} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnPrimary, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>🖨 PDF</a>
+                          )}
+                          {awbRes?.labelBase64 && !order.shipment?.labelUrl && (
+                            <button style={{ ...S.btnPrimary, fontSize: 10, padding: '3px 7px' }} onClick={e => {
+                              e.stopPropagation();
+                              const bin = atob(awbRes.labelBase64!); const arr = new Uint8Array(bin.length);
+                              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+                              const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+                              const a = document.createElement('a'); a.href = url; a.download = `AWB_${existingAwb}.pdf`; a.click(); URL.revokeObjectURL(url);
+                            }}>🖨 PDF</button>
+                          )}
+                          {(awbRes?.myglsUrl || order.shipment?.trackingUrl) && (
+                            <a href={awbRes?.myglsUrl || order.shipment?.trackingUrl || ''} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ ...S.btnGhost, textDecoration: 'none', fontSize: 10, padding: '3px 7px' }}>🔍</a>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <button style={as.shipmentLoading ? { ...S.btnGhost, opacity: 0.6, fontSize: 11 } : { ...S.btnGhost, fontSize: 11 }}
+                        disabled={as.shipmentLoading || order.cancelled}
+                        onClick={e => { e.stopPropagation(); setWizardOrder(order); }}>
+                        {as.shipmentLoading ? <Spin /> : '🚚'} AWB
+                      </button>
+                    )}
+                  </td>
+                  <td style={S.td} onClick={e => e.stopPropagation()}>
+                    <div style={S.actionsCell}>
+                      {procBadge(order.processingStatus)}
+                      {as.error && <button title={as.error} style={S.btnDanger} onClick={e => { e.stopPropagation(); setAS(order.id, { error: null }); }}>⚠</button>}
+                    </div>
+                  </td>
+                  <td style={S.td} onClick={e => e.stopPropagation()}>
+                    <button style={S.btnEdit} onClick={e => { e.stopPropagation(); setDrawerOrder(order); }} title="Editează comanda">✏ Edit</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {data && (
+        <div style={{ display: 'flex', gap: 10, padding: '14px 20px', justifyContent: 'center' }}>
+          {prevCursors.length > 0 && <button style={S.iconBtn} onClick={() => { const prev = [...prevCursors]; const c = prev.pop() ?? null; setPrev(prev); setCursor(c); }}>← Anterior</button>}
+          {data.pageInfo.hasNextPage && <button style={S.iconBtn} onClick={() => { setPrev(p => [...p, cursor ?? '']); setCursor(data.pageInfo.endCursor); }}>Următor →</button>}
+        </div>
+      )}
+
+      {drawerOrder && !wizardOrder && (
+        <OrderDrawer
+          order={drawerOrder} onClose={() => setDrawerOrder(null)}
+          onOpenInvoiceModal={() => { setInvoiceModalOrder(drawerOrder); setInvoiceResult(null); }}
+          onShipmentWizard={order => { setWizardOrder(order); }}
+          actionState={getState(drawerOrder.id)} shop={activeShop}
+          awbResult={awbResults[drawerOrder.id] || null}
+          onAddressFixed={(orderId, newZip) => { addToast('ok', `ZIP ${newZip} actualizat`); qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] }); }}
+          onToast={addToast} onRefresh={() => qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] })}
+        />
+      )}
+
+      {awbModalData && (
+        <AwbModal
+          order={awbModalData.order}
+          awb={awbModalData.awb}
+          courier={awbModalData.courier}
+          shipmentId={awbModalData.shipmentId}
+          trackingUrl={awbModalData.trackingUrl}
+          onClose={() => setAwbModalData(null)}
+        />
+      )}
+
+      {invoiceModalOrder && (
+        <InvoiceModal
+          order={invoiceModalOrder}
+          shop={activeShop}
+          actionState={getState(invoiceModalOrder.id)}
+          onClose={() => { setInvoiceModalOrder(null); setInvoiceResult(null); }}
+          onGenerate={handleInvoiceGenerate}
+          generatedInvoice={invoiceResult}
+        />
+      )}
+
+      {wizardOrder && (
+        <AwbWizard order={wizardOrder} initialCourier="gls"
+          onClose={() => { setWizardOrder(null); setWizardLoading(false); }}
+          onConfirm={handleWizardConfirm} loading={wizardLoading}
+        />
+      )}
+
+      <Toasts toasts={toasts} />
+    </div>
+  );
+}
