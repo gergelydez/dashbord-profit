@@ -1135,6 +1135,16 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
   const setNum = (key: keyof AwbWizardData) => (val: string) => { const n = parseFloat(val); setData(p => ({ ...p, [key]: isNaN(n) ? 0 : n })); setErrors([]); };
   const next = () => { const e = validateStep(step, data); if (e.length) { setErrors(e); return; } setErrors([]); setStep(s => (s < 3 ? (s + 1) as WizardStep : s)); };
   const prev = () => { setErrors([]); setStep(s => (s > 1 ? (s - 1) as WizardStep : s)); };
+  const invoiceNum = order.invoice
+    ? `${order.invoice.series}${order.invoice.number}`
+    : ((order.noteAttributes as any)?.['invoice-number'] || (order.noteAttributes as any)?.['Factură'] || '');
+  const firstProduct = order.lineItems[0]?.name || 'Colet';
+  const templates = [
+    { label: '🏷 Cmd+Fact+Produs', val: invoiceNum ? `${order.name}- ${invoiceNum}- ${firstProduct}`.slice(0,40) : `${order.name}- ${firstProduct}`.slice(0,40) },
+    { label: '📦 Toate', val: order.lineItems.map((li: any) => li.quantity > 1 ? `${li.quantity}x ${li.name}` : li.name).join(', ').slice(0,40) },
+    { label: '🔢 Cantități', val: order.lineItems.map((li: any) => `${li.quantity}buc ${li.name}`).join('+').slice(0,40) },
+    { label: '📫 Generic', val: 'Colet' },
+  ];
 
   const stepActive:  React.CSSProperties = { ...S.stepDot, background: 'var(--c-orange)', color: '#fff' };
   const stepDone:    React.CSSProperties = { ...S.stepDot, background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.4)' };
