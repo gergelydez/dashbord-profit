@@ -1,15 +1,3 @@
-/**
- * app/api/connector/gls-sync/route.ts
- *
- * Sincronizează statusurile coletelor GLS din API-ul mygls.ro în baza de date locală.
- * Fără acest sync, toate coletele rămân "CREATED" (= Centru/Depozit) chiar dacă
- * au fost ridicate de curier, sunt în tranzit sau livrate.
- *
- * GET  /api/connector/gls-sync          — rulează sync (max 100 colete active)
- * GET  /api/connector/gls-sync?dry=true — preview fără să scrie în DB
- * GET  /api/connector/gls-sync?days=60  — extinde fereastra de căutare (default 30 zile)
- */
-
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
@@ -44,17 +32,17 @@ async function glsPost(endpoint: string, body: Record<string, unknown>) {
 
 type AppStatus = 'CREATED' | 'PICKED_UP' | 'IN_TRANSIT' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'FAILED_DELIVERY' | 'RETURNED' | 'EXCEPTION';
 
-function mapGlsStatus(statusCode: number | string, description?: string): AppStatus {
-  const code = typeof statusCode === 'string' ? parseInt(statusCode, 10) : statusCode;
+function mapGlsStatus(statusCode: unknown, description?: string): AppStatus {
+  const code = typeof statusCode === 'string' ? parseInt(statusCode, 10) : Number(statusCode);
   if (!isNaN(code)) {
-    if ([4, 5, 6, 16].includes(code))    return 'DELIVERED';
-    if ([1, 15].includes(code))           return 'PICKED_UP';
-    if ([3, 20].includes(code))           return 'OUT_FOR_DELIVERY';
-    if ([2, 17, 18, 19].includes(code))  return 'IN_TRANSIT';
-    if ([7, 8, 9, 10].includes(code))    return 'FAILED_DELIVERY';
-    if ([11, 14].includes(code))          return 'RETURNED';
-    if ([12, 13].includes(code))          return 'IN_TRANSIT';
-    if (code === 0)                        return 'CREATED';
+    if ([4, 5, 6, 16].includes(code))   return 'DELIVERED';
+    if ([1, 15].includes(code))          return 'PICKED_UP';
+    if ([3, 20].includes(code))          return 'OUT_FOR_DELIVERY';
+    if ([2, 17, 18, 19].includes(code)) return 'IN_TRANSIT';
+    if ([7, 8, 9, 10].includes(code))   return 'FAILED_DELIVERY';
+    if ([11, 14].includes(code))         return 'RETURNED';
+    if ([12, 13].includes(code))         return 'IN_TRANSIT';
+    if (code === 0)                       return 'CREATED';
   }
   const desc = (description || String(statusCode)).toLowerCase();
   if (desc.includes('livrat') || desc.includes('deliver'))   return 'DELIVERED';
@@ -69,7 +57,7 @@ function mapGlsStatus(statusCode: number | string, description?: string): AppSta
 const ACTIVE_STATUSES = ['CREATED', 'PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'FAILED_DELIVERY'];
 
 async function fetchGlsStatuses(trackingNumbers: string[]) {
-  const results = new Map<string, { newStatus: AppStatus; glsCode: number|string; glsDescription: string; lastEvent: string }>();
+  const results = new Map<string, { newStatus: AppStatus; glsCode: unknown; glsDescription: string; lastEvent: string }>();
   const BATCH = 10;
 
   for (let i = 0; i < trackingNumbers.length; i += BATCH) {
@@ -83,14 +71,15 @@ async function fetchGlsStatuses(trackingNumbers: string[]) {
           ReturnPOD:       false,
           LanguageIsoCode: 'RO',
         });
-        const statusList = data?.ParcelStatusList ?? data?.GetParcelStatusesResult?.ParcelStatusList ?? [];
+        const statusList: Array<Record<string, unknown>> =
+          data?.ParcelStatusList ?? data?.GetParcelStatusesResult?.ParcelStatusList ?? [];
         if (!Array.isArray(statusList) || statusList.length === 0) return;
-        const events: Array<{ Code?: number|string; Description?: string; Date?: string; Time?: string }> =
-          statusList[0]?.ParcelEvents ?? statusList[0]?.StatusList ?? [];
+        const events: Array<Record<string, unknown>> =
+          (statusList[0]?.ParcelEvents ?? statusList[0]?.StatusList ?? []) as Array<Record<string, unknown>>;
         if (events.length === 0) return;
-        const last    = events[events.length - 1];
-        const code    = last?.Code ?? last?.StatusCode ?? 0;
-        const desc    = last?.Description ?? last?.StatusDescription ?? '';
+        const last = events[events.length - 1];
+        const code = last?.Code ?? last?.StatusCode ?? 0;
+        const desc = String(last?.Description ?? last?.StatusDescription ?? '');
         results.set(tn, {
           newStatus:      mapGlsStatus(code, desc),
           glsCode:        code,
@@ -116,19 +105,29 @@ export async function GET(request: Request) {
   try {
     const since = new Date(Date.now() - days * 86_400_000);
     const shipments = await db.shipment.findMany({
-      where: { courier: { in: ['gls', 'GLS'] }, status: { in: ACTIVE_STATUSES }, createdAt: { gte: since }, trackingNumber: { not: '' } },
+      where: {
+        courier:        { in: ['gls', 'GLS'] },
+        status:         { in: ACTIVE_STATUSES },
+        createdAt:      { gte: since },
+        trackingNumber: { not: '' },
+      },
       orderBy: { createdAt: 'desc' },
       take: limit,
       select: { id: true, trackingNumber: true, status: true, createdAt: true, orderId: true },
     });
 
     if (shipments.length === 0) {
-      return NextResponse.json({ ok: true, message: `Nu sunt colete GLS active in ultimele ${days} zile.`, synced: 0, elapsed: Date.now() - startedAt });
+      return NextResponse.json({
+        ok: true,
+        message: `Nu sunt colete GLS active in ultimele ${days} zile.`,
+        synced: 0,
+        elapsed: Date.now() - startedAt,
+      });
     }
 
     const trackingNumbers = [...new Set(shipments.map(s => s.trackingNumber).filter(Boolean))];
     const glsStatuses = await fetchGlsStatuses(trackingNumbers).catch((err) => {
-      throw new Error(`GLS API error: ${(err as Error).message} — verifica GLS_USERNAME/PASSWORD/CLIENT_NUMBER in .env`);
+      throw new Error(`GLS API error: ${(err as Error).message}`);
     });
 
     const updates = shipments.flatMap(s => {
@@ -138,16 +137,31 @@ export async function GET(request: Request) {
     });
 
     if (dryRun) {
-      return NextResponse.json({ ok: true, dryRun: true, checked: shipments.length, glsQueried: glsStatuses.size, toUpdate: updates.length, updates, elapsed: Date.now() - startedAt });
+      return NextResponse.json({
+        ok: true, dryRun: true,
+        checked: shipments.length, glsQueried: glsStatuses.size,
+        toUpdate: updates.length, updates,
+        elapsed: Date.now() - startedAt,
+      });
     }
 
     let updated = 0;
     const errors: string[] = [];
     for (const u of updates) {
       try {
-        await db.shipment.update({ where: { id: u.shipmentId }, data: { status: u.newStatus, updatedAt: new Date(), ...(u.newStatus === 'DELIVERED' ? { deliveredAt: new Date() } : {}) } });
+        await db.shipment.update({
+          where: { id: u.shipmentId },
+          data: {
+            status:    u.newStatus,
+            updatedAt: new Date(),
+            ...(u.newStatus === 'DELIVERED' ? { deliveredAt: new Date() } : {}),
+          },
+        });
         if (u.newStatus === 'DELIVERED' && u.orderId) {
-          await db.order.update({ where: { id: u.orderId }, data: { status: 'COMPLETED', fulfilled: true } }).catch(() => {});
+          await db.order.update({
+            where: { id: u.orderId },
+            data: { status: 'COMPLETED', fulfilled: true },
+          }).catch(() => {});
         }
         updated++;
       } catch (dbErr) {
@@ -156,10 +170,19 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({
-      ok: true, checked: shipments.length, glsQueried: glsStatuses.size,
-      updated, unchanged: shipments.length - updates.length,
+      ok: true,
+      checked: shipments.length,
+      glsQueried: glsStatuses.size,
+      updated,
+      unchanged: shipments.length - updates.length,
       errors: errors.length > 0 ? errors : undefined,
-      updates: updates.map(u => ({ tracking: u.trackingNumber, oldStatus: u.oldStatus, newStatus: u.newStatus, glsCode: u.glsCode, lastEvent: u.lastEvent })),
+      updates: updates.map(u => ({
+        tracking:  u.trackingNumber,
+        oldStatus: u.oldStatus,
+        newStatus: u.newStatus,
+        glsCode:   u.glsCode,
+        lastEvent: u.lastEvent,
+      })),
       elapsed: Date.now() - startedAt,
       message: `Actualizat ${updated} din ${shipments.length} colete GLS.`,
     });
