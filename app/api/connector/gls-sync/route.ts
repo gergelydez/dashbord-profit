@@ -190,5 +190,4 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 500 });
   }
 }
-
 export const POST = GET;
