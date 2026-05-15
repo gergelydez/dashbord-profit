@@ -72,7 +72,7 @@ async function fetchGlsStatuses(trackingNumbers: string[]) {
           LanguageIsoCode: 'RO',
         });
         const statusList: Array<Record<string, unknown>> =
-          data?.ParcelStatusList ?? data?.GetParcelStatusesResult?.ParcelStatusList ?? [];
+          (data?.ParcelStatusList ?? data?.GetParcelStatusesResult?.ParcelStatusList ?? []) as Array<Record<string, unknown>>;
         if (!Array.isArray(statusList) || statusList.length === 0) return;
         const events: Array<Record<string, unknown>> =
           (statusList[0]?.ParcelEvents ?? statusList[0]?.StatusList ?? []) as Array<Record<string, unknown>>;
@@ -84,7 +84,7 @@ async function fetchGlsStatuses(trackingNumbers: string[]) {
           newStatus:      mapGlsStatus(code, desc),
           glsCode:        code,
           glsDescription: desc,
-          lastEvent:      `${last?.Date ?? ''} ${last?.Time ?? ''} — ${desc}`.trim(),
+          lastEvent:      `${String(last?.Date ?? '')} ${String(last?.Time ?? '')} — ${desc}`.trim(),
         });
       } catch (err) {
         console.warn(`[gls-sync] failed for ${tn}:`, (err as Error).message);
