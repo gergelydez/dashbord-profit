@@ -132,7 +132,7 @@ export async function GET(request: Request) {
       });
     }
 
-    const trackingNumbers = [...new Set(shipments.map(s => s.trackingNumber).filter(Boolean))];
+    const trackingNumbers = Array.from(new Set(shipments.map(s => s.trackingNumber).filter(Boolean)));
     const glsStatuses = await fetchGlsStatuses(trackingNumbers).catch((err) => {
       throw new Error(`GLS API error: ${(err as Error).message}`);
     });
