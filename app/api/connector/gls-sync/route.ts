@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 import { db } from '@/lib/db';
-import { ShipmentStatus } from '@prisma/client';
+import { ShipmentStatus, OrderStatus } from '@prisma/client';
 
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
@@ -167,7 +167,7 @@ export async function GET(request: Request) {
         if (u.newStatus === ShipmentStatus.DELIVERED && u.orderId) {
           await db.order.update({
             where: { id: u.orderId },
-            data: { status: 'COMPLETED', fulfilled: true },
+            data: { status: OrderStatus.FULFILLED, fulfilled: true },
           }).catch(() => {});
         }
         updated++;
@@ -197,4 +197,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 500 });
   }
 }
+
 export const POST = GET;
