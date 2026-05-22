@@ -26,6 +26,7 @@ const STATUS_MAP = {
   livrat:  { label: '✅ Livrat' },
   incurs:  { label: '🚚 Tranzit' },
   outfor:  { label: '📬 La curier' },
+  easybox: { label: '📦 Easybox' },
   retur:   { label: '↩️ Retur' },
   anulat:  { label: '❌ Anulat' },
   pending: { label: '⏳ Neexpediat' },
@@ -77,8 +78,8 @@ function applyTrackingOverrides(orders) {
 
   return orders.map(o => {
     // Dacă e anulată în Shopify → anulat (indiferent de orice override)
-    if (o.ts === 'incurs' || o.ts === 'outfor') {
-      // Anulată sau în tranzit >30 zile → scoatem din tranzit
+    if (o.ts === 'incurs' || o.ts === 'outfor' || o.ts === 'easybox') {
+      // În tranzit/easybox >30 zile → scoatem din tranzit
       const daysSince = o.createdAt
         ? (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24)
         : 999;
@@ -993,6 +994,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
           const liveTs =
             t.status === 'delivered'         ? 'livrat' :
             t.status === 'out_for_delivery'  ? 'outfor' :
+            t.status === 'easybox'           ? 'easybox' :
             t.status === 'in_transit'        ? 'incurs' :
             t.status === 'failed_attempt'    ? 'outfor' :
             (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
@@ -1092,9 +1094,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const cntAll = s => allOrders.filter(o=>getFinalStatus(o)===s).length;
   // Lista exactă de comenzi în tranzit — pentru KPI și click-to-filter
   // Excludem comenzile cu ts='incurs' dar care au tracking override 'livrat'
-  const tranzitOrders = allOrders.filter(o => ['incurs','outfor'].includes(getFinalStatus(o)));
+  const tranzitOrders = allOrders.filter(o => ['incurs','outfor','easybox'].includes(getFinalStatus(o)));
   const incurs = tranzitOrders.filter(o => getFinalStatus(o) === 'incurs').length;
   const outfor = tranzitOrders.filter(o => getFinalStatus(o) === 'outfor').length;
+  const easyboxCount = tranzitOrders.filter(o => getFinalStatus(o) === 'easybox').length;
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
@@ -1459,9 +1462,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   } else {
                     // SD în livrare activă
                     if ([10,33,34,35].includes(code)) return 'livrare';
-                    // SD livrat în easybox/locker (78 = încărcat în punct livrare)
-                    // Acestea sunt la centru/punct de livrare, nu la curier
-                    if ([70,71,72,73,74,75,76,77,78,79,80,81,82,83].includes(code)) return 'centru';
+                    // SD easybox — colet depus în locker, așteaptă ridicare de client
+                    if ([74,75,78,79].includes(code)) return 'easybox';
+                    // SD easybox sender side / intermediar
+                    if ([70,71,72,73,76,77,80,81,82,83].includes(code)) return 'centru';
                     // SD la depozit/hub
                     if ([3,7,26,27,28,36,37,38,39,40,41,44,52,53,84,85,87].includes(code)) return 'centru';
                     // SD preluat de curier
@@ -1473,6 +1477,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
 
                 // Fallback: status rezolvat din Excel/Shopify/xConnector
                 const finalStatus = getFinalStatus(o);
+                if (finalStatus === 'easybox') return 'easybox';
                 // outfor = la curier (ridicat + în drum spre livrare)
                 if (finalStatus === 'outfor') return 'ridicat';
                 // incurs = în tranzit general — sub-clasificăm după ts intern
@@ -1503,6 +1508,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 { key:'inregistrat', label:'📋 Înregistrat', color:'#f59e0b' },
                 { key:'ridicat', label:'📦 Ridicat', color:'#8b5cf6' },
                 { key:'centru', label:'🏭 Centru/Depozit', color:'#06b6d4' },
+                { key:'easybox', label:'📦 Easybox', color:'#f59e0b' },
                 { key:'livrare', label:'🚴 În livrare', color:'#10b981' },
               ];
 
@@ -2229,8 +2235,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 <div style={{display:'flex',flexDirection:'column',gap:4}}>
                   {allOrders.filter(o => ['incurs','outfor','pending'].includes(o.ts) && o.trackingNo).slice(0,10).map(o => {
                     const ts = trackingResults[o.id];
-                    const statusColor = o.ts==='livrat'?'#10b981':o.ts==='retur'?'#f43f5e':o.ts==='outfor'?'#a855f7':'#3b82f6';
-                    const statusLabel = o.ts==='livrat'?'✅ Livrat':o.ts==='retur'?'↩ Retur':o.ts==='outfor'?'🚚 La curier':'🔄 Tranzit';
+                    const statusColor = o.ts==='livrat'?'#10b981':o.ts==='retur'?'#f43f5e':o.ts==='outfor'?'#a855f7':o.ts==='easybox'?'#f59e0b':'#3b82f6';
+                    const statusLabel = o.ts==='livrat'?'✅ Livrat':o.ts==='retur'?'↩ Retur':o.ts==='outfor'?'🚚 La curier':o.ts==='easybox'?'📦 Easybox':'🔄 Tranzit';
                     return (
                       <div key={o.id} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)'}}>
                         <span style={{fontSize:11,color:'#f97316',fontFamily:'monospace',fontWeight:700,flexShrink:0}}>{o.name}</span>
@@ -2390,7 +2396,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     ):slice.map(o=>{
                       const st=STATUS_MAP[o.ts]||{label:o.ts};
                       const bcc=bc[o.ts]||'badge-gray';
-                      const mc=o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':'mg-y';
+                      const mc=o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':o.ts==='easybox'?'mg-y':'mg-y';
                       return (
                         <tr key={o.id} style={o.fin==='paid'&&!o.hasInvoice?{background:'rgba(245,158,11,0.05)'}:{}}>
                           <td style={{position:'sticky',left:0,background:o.fin==='paid'&&!o.hasInvoice?'#0f1217':'#0a0f14',zIndex:1,boxShadow:'2px 0 6px rgba(0,0,0,.4)'}}><span className="ref">{o.name}</span></td>
