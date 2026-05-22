@@ -302,8 +302,6 @@ export default function Dashboard() {
   const [sbInvSeries, setSbInvSeries]   = useState(() => { try { return ls.get('sb_inv_series') || ''; } catch { return ''; } });
   const [sbInvSeriesList, setSbInvSeriesList] = useState([]);
   const [sbBulkLoading, setSbBulkLoading] = useState(false);
-  const [awbLoading, setAwbLoading]   = useState({});
-  const [awbResults, setAwbResults]   = useState({});
   const [sbCheckLoading, setSbCheckLoading] = useState(false);
   const [sbCheckResults, setSbCheckResults] = useState(null); // { found: {}, notFound: [] }
   const [invoiceModal, setInvoiceModal] = useState(null);
@@ -775,52 +773,6 @@ export default function Dashboard() {
       await new Promise(r => setTimeout(r, 400));
     }
     setSbBulkLoading(false);
-  };
-
-  // ── Generează AWB GLS sau Sameday direct din GLAMX ───────────────────────
-  const generateAwb = async (order, courierType = 'gls') => {
-    const id = order.id;
-    setAwbLoading(prev => ({ ...prev, [id]: true }));
-    setAwbResults(prev => ({ ...prev, [id]: null }));
-    try {
-      const domain = ls.get('gx_d') || '';
-      const token  = ls.get('gx_t') || '';
-      const res = await fetch('/api/gls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          domain,
-          token,
-          orderId:   id,
-          orderName: order.name,
-          courier:   courierType,
-          recipient: {
-            name:    order.client,
-            address: order.address + (order.oras ? ', ' + order.oras : ''),
-            city:    order.oras || '',
-            zip:     order.zip  || '',
-            phone:   order.phone || '',
-            county:  order.county || '',
-          },
-          isCOD:    order.total > 0,
-          codAmount: order.total,
-          weight:   0.5,
-          content:  (order.prods || order.name || 'Colet').slice(0, 40),
-        }),
-      });
-      const data = await res.json();
-      if (data.ok || data.awb || data.trackingNumber) {
-        const awb = data.awb || data.trackingNumber;
-        setAwbResults(prev => ({ ...prev, [id]: { ok: true, awb } }));
-        // Refresh comenzi după generare
-        setTimeout(() => { try { window.location.reload(); } catch {} }, 1500);
-      } else {
-        setAwbResults(prev => ({ ...prev, [id]: { ok: false, error: data.error || data.message || 'Eroare necunoscută' } }));
-      }
-    } catch (e) {
-      setAwbResults(prev => ({ ...prev, [id]: { ok: false, error: e.message } }));
-    }
-    setAwbLoading(prev => ({ ...prev, [id]: false }));
   };
 
   const checkSmartBillInvoices = async () => {
@@ -1458,7 +1410,34 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 26:'Ajuns depozit local', 27:'Procesat depozit', 28:'Stocat',
                 30:'Livrat la vecin', 33:'În livrare — curier în drum',
                 34:'În livrare azi', 35:'Ieșit pentru livrare',
+                36:'Expediat spre depozit', 37:'Colet înregistrat hub',
+                38:'Plecat din hub', 39:'Sosit hub',
+                40:'Procesat hub', 41:'Redirecționat hub',
+                42:'Blocat în hub', 43:'Eliberat din hold',
+                44:'Redirectionat depozit', 45:'Control vamal',
+                50:'Livrat parțial', 51:'Date actualizate',
+                52:'Scanat intrare depozit', 53:'Scanat ieșire depozit',
+                54:'Colet reținut', 55:'Confirmare livrare SMS',
+                56:'Notificat destinatar', 57:'Programat livrare',
+                58:'Confirmat destinatar', 59:'Preluat intern',
+                60:'Livrat la punct relay', 61:'Livrat la locker',
+                62:'Depus la ghișeu', 63:'Ridicat de la ghișeu',
+                70:'Colet în easybox sender', 71:'Pickup easybox confirmat',
+                72:'Colet ridicat din easybox sender', 73:'În tranzit spre destinație',
+                74:'Sosit la easybox destinatar', 75:'Notificat — colet în easybox',
+                76:'Colet în easybox expeditor', 77:'Ridicat din easybox expeditor',
+                78:'Încărcat în punctul de livrare (easybox/locker)',
+                79:'Disponibil în easybox — așteptare ridicare', 80:'Expirat în easybox',
+                81:'Returnat din easybox', 82:'Indisponibil easybox',
+                83:'Realoctat alt easybox',
                 84:'Ajuns depozit central', 85:'Plecat spre livrare',
+                86:'Scanat control calitate', 87:'Avizat la depozit',
+                88:'Reexpediat', 89:'Confiscat', 90:'Inspecție vamală',
+                91:'Livrat — confirmat electronic', 92:'Livrat — semnătură digitală',
+                93:'Livrat — foto confirmare', 94:'Problemă adresă',
+                95:'Blocat clearance', 96:'Redistribuit curier',
+                97:'Verificare conținut', 98:'Reținut depozit',
+                99:'Returnat la expeditor final',
               };
               const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
 
@@ -1478,9 +1457,16 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     if ([51,52,80,83].includes(code)) return 'inregistrat';
                     // orice alt cod — fallthrough la status cunoscut
                   } else {
+                    // SD în livrare activă
                     if ([10,33,34,35].includes(code)) return 'livrare';
-                    if ([3,7,26,27,28,84].includes(code)) return 'centru';
+                    // SD livrat în easybox/locker (78 = încărcat în punct livrare)
+                    // Acestea sunt la centru/punct de livrare, nu la curier
+                    if ([70,71,72,73,74,75,76,77,78,79,80,81,82,83].includes(code)) return 'centru';
+                    // SD la depozit/hub
+                    if ([3,7,26,27,28,36,37,38,39,40,41,44,52,53,84,85,87].includes(code)) return 'centru';
+                    // SD preluat de curier
                     if ([2,4,23].includes(code)) return 'ridicat';
+                    // SD înregistrat/AWB creat
                     if ([1].includes(code)) return 'inregistrat';
                   }
                 }
@@ -2455,29 +2441,6 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                           <td style={{fontSize:'10px',color:'#94a3b8',whiteSpace:'nowrap'}}>{o.fulfilledAt?fmtD(o.fulfilledAt):<span className="mg mg-m">—</span>}</td>
                           <td>
                             {o.courier==='gls'&&<span style={{fontSize:9,background:'rgba(249,115,22,.15)',color:'#f97316',border:'1px solid rgba(249,115,22,.2)',padding:'1px 5px',borderRadius:4}}>GLS</span>}
-                            {/* ── Buton Generează AWB pentru comenzile neexpediate ── */}
-                            {o.ts==='pending'&&!o.trackingNo&&(()=>{
-                              const ar = awbResults[o.id];
-                              const al = awbLoading[o.id];
-                              if (ar?.ok) return <span style={{fontSize:9,color:'#10b981',fontWeight:700}}>✅ AWB: {ar.awb}</span>;
-                              return (
-                                <div style={{display:'flex',gap:3,marginTop:2,flexWrap:'wrap'}}>
-                                  <button
-                                    onClick={e=>{e.stopPropagation();generateAwb(o,'gls');}}
-                                    disabled={al}
-                                    style={{fontSize:9,background:'rgba(249,115,22,.15)',border:'1px solid rgba(249,115,22,.4)',color:'#f97316',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:al?.5:1}}>
-                                    {al?'⟳ GLS...':'📦 AWB GLS'}
-                                  </button>
-                                  <button
-                                    onClick={e=>{e.stopPropagation();generateAwb(o,'sameday');}}
-                                    disabled={al}
-                                    style={{fontSize:9,background:'rgba(139,92,246,.15)',border:'1px solid rgba(139,92,246,.4)',color:'#a78bfa',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:al?.5:1}}>
-                                    {al?'⟳ SD...':'📦 AWB SD'}
-                                  </button>
-                                  {ar?.error&&<div style={{fontSize:9,color:'#f43f5e',marginTop:2}}>{ar.error}</div>}
-                                </div>
-                              );
-                            })()}
                             {o.courier==='sameday'&&(()=>{
                               const sdS=getSdStatus(o);
                               const sdColor=sdS==='livrat'?'#10b981':sdS==='retur'?'#f43f5e':sdS==='outfor'?'#a855f7':'#3b82f6';
