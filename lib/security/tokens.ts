@@ -107,3 +107,4 @@ export function buildShippingLabelUrl(shipmentId: string, ttl?: number): string 
   const token = signToken(shipmentId, ttl);
   return `${appUrl}/api/shipping-label?id=${shipmentId}&token=${token}`;
 }
+
