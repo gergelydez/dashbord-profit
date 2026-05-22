@@ -157,18 +157,19 @@ async function getSamedayToken() {
 // Sursa: documentație Sameday + testare live + coduri complete verificate
 function mapSamedayStatus(statusId) {
   const id = parseInt(statusId);
-  // LIVRAT (inclusiv livrat în easybox/locker = 78)
-  if ([5, 9, 30, 78].includes(id)) return 'delivered';
-  // LA CURIER / ÎN LIVRARE (statusId 33 = curier urmează să livreze, 4 = preluat de curier)
+  // LIVRAT efectiv (preluat de client)
+  if ([5, 9, 30].includes(id)) return 'delivered';
+  // EASYBOX — colet depus în locker/easybox, așteaptă ridicare de client
+  // 74=Sosit la easybox destinatar, 75=Notificat — colet în easybox
+  // 78=Încărcat în punctul de livrare (easybox), 79=Disponibil în easybox
+  if ([74, 75, 78, 79].includes(id)) return 'easybox';
+  // LA CURIER / ÎN LIVRARE activă
   if ([4, 10, 33, 34, 35].includes(id)) return 'out_for_delivery';
-  // RETUR CONFIRMAT — doar când e explicit retur finalizat
+  // RETUR CONFIRMAT
   if ([21, 22].includes(id)) return 'returned';
   // TENTATIVĂ EȘUATĂ
   if ([6, 13, 14, 15, 16, 17, 18, 19, 20].includes(id)) return 'failed_attempt';
-  // ÎNCĂRCAT ÎN EASYBOX / PUNCT DE LIVRARE — considerat livrat
-  // 76=Colet în easybox expeditor, 77=Ridicat din easybox, 78=Încărcat în punct livrare
-  if ([76, 77, 79].includes(id)) return 'in_transit'; // easybox intermediar
-  // ÎN TRANZIT — toate celelalte (1,2,3,7,8,11,23,24,25,26,27,28,84,85 etc.)
+  // ÎN TRANZIT — toate celelalte
   return 'in_transit';
 }
 
