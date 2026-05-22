@@ -948,11 +948,17 @@ export default function Dashboard() {
     const now = new Date();
     const activeOrders = allOrders.filter(o => {
       if (!o.trackingNo) return false;
-      if (['incurs','outfor','pending'].includes(o.ts)) return true;
+      if (['incurs','outfor','pending','easybox'].includes(o.ts)) return true;
       // Sameday: reverificăm 'retur' din ultimele 30 zile — Shopify poate fi greșit
       if (o.ts === 'retur' && o.courier === 'sameday' && o.createdAt) {
         const daysSince = (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
         return daysSince <= 30;
+      }
+      // Sameday: reverificăm 'livrat' din ultimele 7 zile — Shopify marchează livrat
+      // când coletul e încărcat în easybox, dar clientul s-ar putea să nu fi ridicat încă
+      if (o.ts === 'livrat' && o.courier === 'sameday' && o.createdAt) {
+        const daysSince = (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
+        return daysSince <= 7;
       }
       return false;
     });
