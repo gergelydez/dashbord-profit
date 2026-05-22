@@ -21,14 +21,24 @@ const DEFAULT_TTL_SECONDS = parseInt(
   10,
 );
 
+// Warn at startup in production instead of throwing at module load time.
+// Next.js evaluates modules during build when env vars are not available,
+// so throwing here breaks the production build. The check is enforced
+// lazily inside each function that actually needs the secret.
 if (!SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error('CONNECTOR_SECRET env var is required in production');
+  console.warn('[tokens] WARNING: CONNECTOR_SECRET env var is not set. Token signing will fail at runtime.');
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
 
+function getSecret(): string {
+  const s = process.env.CONNECTOR_SECRET || SECRET;
+  if (!s) throw new Error('CONNECTOR_SECRET env var is required');
+  return s;
+}
+
 function hmac(payload: string): string {
-  return createHmac('sha256', SECRET).update(payload).digest('hex');
+  return createHmac('sha256', getSecret()).update(payload).digest('hex');
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
