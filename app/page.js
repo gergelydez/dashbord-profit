@@ -1099,7 +1099,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const outfor = tranzitOrders.filter(o => getFinalStatus(o) === 'outfor').length;
   const easyboxCount = tranzitOrders.filter(o => getFinalStatus(o) === 'easybox').length;
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
-  const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
+  const sA=sum(['incurs','outfor','easybox']), sR=sum(['retur','anulat']);
 
   const { from: rangeFrom, to: rangeTo } = getRange(preset, customFrom, customTo);
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
@@ -1231,7 +1231,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const kpis = [
     {v:n,          lbl:'Total comenzi', e:'📦',color:'#f97316',p:100},
     {v:livrate,    lbl:'Livrate',       e:'✅',color:'#10b981',p:pct(livrate,n)}, // livrate = orders cu ts=livrat în perioadă
-    {v:incurs+outfor, lbl:'În tranzit', e:'🚚',color:'#3b82f6',p:pct(incurs+outfor,n)},
+    {v:incurs+outfor+easyboxCount, lbl:'În tranzit', e:'🚚',color:'#3b82f6',p:pct(incurs+outfor+easyboxCount,n)},
     {v:returTotal, lbl:'Retur',         e:'↩️',color:'#f43f5e',p:pct(returTotal,n)},
     {v:anulate,    lbl:'Anulate',       e:'❌',color:'#4a5568',p:pct(anulate,n)},
     {v:pend,       lbl:'Neexpediate',   e:'⏳',color:'#f59e0b',p:pct(pend,n)},
@@ -2028,7 +2028,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 <div className="sc sc2"><div className="si">🚚</div><div>
                   <div className="slbl">COD în drum</div>
                   <div className="sv">{fmt(sA)} RON</div>
-                  <div className="ssub">{incurs+outfor} comenzi în tranzit</div>
+                  <div className="ssub">{incurs+outfor+easyboxCount} comenzi în tranzit</div>
                 </div></div>
               )}
               <div className="sc" style={{border:'1px solid #a855f7',background:'#0f1419'}}><div className="si">⏰</div><div>
