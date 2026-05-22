@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 import { db } from '@/lib/db';
+import { ShipmentStatus } from '@prisma/client';
 
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
@@ -30,31 +31,37 @@ async function glsPost(endpoint: string, body: Record<string, unknown>) {
   return res.json();
 }
 
-type AppStatus = 'CREATED' | 'PICKED_UP' | 'IN_TRANSIT' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'FAILED_DELIVERY' | 'RETURNED' | 'EXCEPTION';
+// Use Prisma's ShipmentStatus enum directly to stay in sync with the schema
+type AppStatus = ShipmentStatus;
 
 function mapGlsStatus(statusCode: unknown, description?: string): AppStatus {
   const code = typeof statusCode === 'string' ? parseInt(statusCode, 10) : Number(statusCode);
   if (!isNaN(code)) {
-    if ([4, 5, 6, 16].includes(code))   return 'DELIVERED';
-    if ([1, 15].includes(code))          return 'PICKED_UP';
-    if ([3, 20].includes(code))          return 'OUT_FOR_DELIVERY';
-    if ([2, 17, 18, 19].includes(code)) return 'IN_TRANSIT';
-    if ([7, 8, 9, 10].includes(code))   return 'FAILED_DELIVERY';
-    if ([11, 14].includes(code))         return 'RETURNED';
-    if ([12, 13].includes(code))         return 'IN_TRANSIT';
-    if (code === 0)                       return 'CREATED';
+    if ([4, 5, 6, 16].includes(code))   return ShipmentStatus.DELIVERED;
+    if ([1, 15].includes(code))          return ShipmentStatus.IN_TRANSIT;   // PICKED_UP → IN_TRANSIT
+    if ([3, 20].includes(code))          return ShipmentStatus.OUT_FOR_DELIVERY;
+    if ([2, 17, 18, 19].includes(code)) return ShipmentStatus.IN_TRANSIT;
+    if ([7, 8, 9, 10].includes(code))   return ShipmentStatus.FAILED_ATTEMPT; // FAILED_DELIVERY → FAILED_ATTEMPT
+    if ([11, 14].includes(code))         return ShipmentStatus.RETURNED;
+    if ([12, 13].includes(code))         return ShipmentStatus.IN_TRANSIT;
+    if (code === 0)                       return ShipmentStatus.CREATED;
   }
   const desc = (description || String(statusCode)).toLowerCase();
-  if (desc.includes('livrat') || desc.includes('deliver'))   return 'DELIVERED';
-  if (desc.includes('ridicat') || desc.includes('pickup'))   return 'PICKED_UP';
-  if (desc.includes('livrare') || desc.includes('out for'))  return 'OUT_FOR_DELIVERY';
-  if (desc.includes('tranzit') || desc.includes('transit') || desc.includes('hub') || desc.includes('depozit')) return 'IN_TRANSIT';
-  if (desc.includes('refuzat') || desc.includes('absent') || desc.includes('nelivrat')) return 'FAILED_DELIVERY';
-  if (desc.includes('returnat') || desc.includes('return'))  return 'RETURNED';
-  return 'IN_TRANSIT';
+  if (desc.includes('livrat') || desc.includes('deliver'))   return ShipmentStatus.DELIVERED;
+  if (desc.includes('ridicat') || desc.includes('pickup'))   return ShipmentStatus.IN_TRANSIT;
+  if (desc.includes('livrare') || desc.includes('out for'))  return ShipmentStatus.OUT_FOR_DELIVERY;
+  if (desc.includes('tranzit') || desc.includes('transit') || desc.includes('hub') || desc.includes('depozit')) return ShipmentStatus.IN_TRANSIT;
+  if (desc.includes('refuzat') || desc.includes('absent') || desc.includes('nelivrat')) return ShipmentStatus.FAILED_ATTEMPT;
+  if (desc.includes('returnat') || desc.includes('return'))  return ShipmentStatus.RETURNED;
+  return ShipmentStatus.IN_TRANSIT;
 }
 
-const ACTIVE_STATUSES = ['CREATED', 'PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'FAILED_DELIVERY'];
+const ACTIVE_STATUSES: ShipmentStatus[] = [
+  ShipmentStatus.CREATED,
+  ShipmentStatus.IN_TRANSIT,
+  ShipmentStatus.OUT_FOR_DELIVERY,
+  ShipmentStatus.FAILED_ATTEMPT,
+];
 
 async function fetchGlsStatuses(trackingNumbers: string[]) {
   const results = new Map<string, { newStatus: AppStatus; glsCode: unknown; glsDescription: string; lastEvent: string }>();
@@ -154,10 +161,10 @@ export async function GET(request: Request) {
           data: {
             status:    u.newStatus,
             updatedAt: new Date(),
-            ...(u.newStatus === 'DELIVERED' ? { deliveredAt: new Date() } : {}),
+            ...(u.newStatus === ShipmentStatus.DELIVERED ? { deliveredAt: new Date() } : {}),
           },
         });
-        if (u.newStatus === 'DELIVERED' && u.orderId) {
+        if (u.newStatus === ShipmentStatus.DELIVERED && u.orderId) {
           await db.order.update({
             where: { id: u.orderId },
             data: { status: 'COMPLETED', fulfilled: true },
