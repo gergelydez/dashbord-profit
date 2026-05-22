@@ -26,6 +26,7 @@ const STATUS_MAP = {
   livrat:  { label: '✅ Livrat' },
   incurs:  { label: '🚚 Tranzit' },
   outfor:  { label: '📬 La curier' },
+  easybox: { label: '📦 Easybox' },
   retur:   { label: '↩️ Retur' },
   anulat:  { label: '❌ Anulat' },
   pending: { label: '⏳ Neexpediat' },
@@ -77,8 +78,8 @@ function applyTrackingOverrides(orders) {
 
   return orders.map(o => {
     // Dacă e anulată în Shopify → anulat (indiferent de orice override)
-    if (o.ts === 'incurs' || o.ts === 'outfor') {
-      // Anulată sau în tranzit >30 zile → scoatem din tranzit
+    if (o.ts === 'incurs' || o.ts === 'outfor' || o.ts === 'easybox') {
+      // În tranzit/easybox >30 zile → scoatem din tranzit
       const daysSince = o.createdAt
         ? (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24)
         : 999;
@@ -993,6 +994,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
           const liveTs =
             t.status === 'delivered'         ? 'livrat' :
             t.status === 'out_for_delivery'  ? 'outfor' :
+            t.status === 'easybox'           ? 'easybox' :
             t.status === 'in_transit'        ? 'incurs' :
             t.status === 'failed_attempt'    ? 'outfor' :
             (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
@@ -1092,9 +1094,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const cntAll = s => allOrders.filter(o=>getFinalStatus(o)===s).length;
   // Lista exactă de comenzi în tranzit — pentru KPI și click-to-filter
   // Excludem comenzile cu ts='incurs' dar care au tracking override 'livrat'
-  const tranzitOrders = allOrders.filter(o => ['incurs','outfor'].includes(getFinalStatus(o)));
+  const tranzitOrders = allOrders.filter(o => ['incurs','outfor','easybox'].includes(getFinalStatus(o)));
   const incurs = tranzitOrders.filter(o => getFinalStatus(o) === 'incurs').length;
   const outfor = tranzitOrders.filter(o => getFinalStatus(o) === 'outfor').length;
+  const easyboxCount = tranzitOrders.filter(o => getFinalStatus(o) === 'easybox').length;
   const retur=cnt('retur'), anulate=cnt('anulat'), pend=cnt('pending');
   const sA=sum(['incurs','outfor']), sR=sum(['retur','anulat']);
 
@@ -1410,7 +1413,34 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 26:'Ajuns depozit local', 27:'Procesat depozit', 28:'Stocat',
                 30:'Livrat la vecin', 33:'În livrare — curier în drum',
                 34:'În livrare azi', 35:'Ieșit pentru livrare',
+                36:'Expediat spre depozit', 37:'Colet înregistrat hub',
+                38:'Plecat din hub', 39:'Sosit hub',
+                40:'Procesat hub', 41:'Redirecționat hub',
+                42:'Blocat în hub', 43:'Eliberat din hold',
+                44:'Redirectionat depozit', 45:'Control vamal',
+                50:'Livrat parțial', 51:'Date actualizate',
+                52:'Scanat intrare depozit', 53:'Scanat ieșire depozit',
+                54:'Colet reținut', 55:'Confirmare livrare SMS',
+                56:'Notificat destinatar', 57:'Programat livrare',
+                58:'Confirmat destinatar', 59:'Preluat intern',
+                60:'Livrat la punct relay', 61:'Livrat la locker',
+                62:'Depus la ghișeu', 63:'Ridicat de la ghișeu',
+                70:'Colet în easybox sender', 71:'Pickup easybox confirmat',
+                72:'Colet ridicat din easybox sender', 73:'În tranzit spre destinație',
+                74:'Sosit la easybox destinatar', 75:'Notificat — colet în easybox',
+                76:'Colet în easybox expeditor', 77:'Ridicat din easybox expeditor',
+                78:'Încărcat în punctul de livrare (easybox/locker)',
+                79:'Disponibil în easybox — așteptare ridicare', 80:'Expirat în easybox',
+                81:'Returnat din easybox', 82:'Indisponibil easybox',
+                83:'Realoctat alt easybox',
                 84:'Ajuns depozit central', 85:'Plecat spre livrare',
+                86:'Scanat control calitate', 87:'Avizat la depozit',
+                88:'Reexpediat', 89:'Confiscat', 90:'Inspecție vamală',
+                91:'Livrat — confirmat electronic', 92:'Livrat — semnătură digitală',
+                93:'Livrat — foto confirmare', 94:'Problemă adresă',
+                95:'Blocat clearance', 96:'Redistribuit curier',
+                97:'Verificare conținut', 98:'Reținut depozit',
+                99:'Returnat la expeditor final',
               };
               const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
 
@@ -1430,15 +1460,24 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     if ([51,52,80,83].includes(code)) return 'inregistrat';
                     // orice alt cod — fallthrough la status cunoscut
                   } else {
+                    // SD în livrare activă
                     if ([10,33,34,35].includes(code)) return 'livrare';
-                    if ([3,7,26,27,28,84].includes(code)) return 'centru';
+                    // SD easybox — colet depus în locker, așteaptă ridicare de client
+                    if ([74,75,78,79].includes(code)) return 'easybox';
+                    // SD easybox sender side / intermediar
+                    if ([70,71,72,73,76,77,80,81,82,83].includes(code)) return 'centru';
+                    // SD la depozit/hub
+                    if ([3,7,26,27,28,36,37,38,39,40,41,44,52,53,84,85,87].includes(code)) return 'centru';
+                    // SD preluat de curier
                     if ([2,4,23].includes(code)) return 'ridicat';
+                    // SD înregistrat/AWB creat
                     if ([1].includes(code)) return 'inregistrat';
                   }
                 }
 
                 // Fallback: status rezolvat din Excel/Shopify/xConnector
                 const finalStatus = getFinalStatus(o);
+                if (finalStatus === 'easybox') return 'easybox';
                 // outfor = la curier (ridicat + în drum spre livrare)
                 if (finalStatus === 'outfor') return 'ridicat';
                 // incurs = în tranzit general — sub-clasificăm după ts intern
@@ -1469,6 +1508,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 { key:'inregistrat', label:'📋 Înregistrat', color:'#f59e0b' },
                 { key:'ridicat', label:'📦 Ridicat', color:'#8b5cf6' },
                 { key:'centru', label:'🏭 Centru/Depozit', color:'#06b6d4' },
+                { key:'easybox', label:'📦 Easybox', color:'#f59e0b' },
                 { key:'livrare', label:'🚴 În livrare', color:'#10b981' },
               ];
 
@@ -2195,8 +2235,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 <div style={{display:'flex',flexDirection:'column',gap:4}}>
                   {allOrders.filter(o => ['incurs','outfor','pending'].includes(o.ts) && o.trackingNo).slice(0,10).map(o => {
                     const ts = trackingResults[o.id];
-                    const statusColor = o.ts==='livrat'?'#10b981':o.ts==='retur'?'#f43f5e':o.ts==='outfor'?'#a855f7':'#3b82f6';
-                    const statusLabel = o.ts==='livrat'?'✅ Livrat':o.ts==='retur'?'↩ Retur':o.ts==='outfor'?'🚚 La curier':'🔄 Tranzit';
+                    const statusColor = o.ts==='livrat'?'#10b981':o.ts==='retur'?'#f43f5e':o.ts==='outfor'?'#a855f7':o.ts==='easybox'?'#f59e0b':'#3b82f6';
+                    const statusLabel = o.ts==='livrat'?'✅ Livrat':o.ts==='retur'?'↩ Retur':o.ts==='outfor'?'🚚 La curier':o.ts==='easybox'?'📦 Easybox':'🔄 Tranzit';
                     return (
                       <div key={o.id} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)'}}>
                         <span style={{fontSize:11,color:'#f97316',fontFamily:'monospace',fontWeight:700,flexShrink:0}}>{o.name}</span>
@@ -2356,7 +2396,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     ):slice.map(o=>{
                       const st=STATUS_MAP[o.ts]||{label:o.ts};
                       const bcc=bc[o.ts]||'badge-gray';
-                      const mc=o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':'mg-y';
+                      const mc=o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':o.ts==='easybox'?'mg-y':'mg-y';
                       return (
                         <tr key={o.id} style={o.fin==='paid'&&!o.hasInvoice?{background:'rgba(245,158,11,0.05)'}:{}}>
                           <td style={{position:'sticky',left:0,background:o.fin==='paid'&&!o.hasInvoice?'#0f1217':'#0a0f14',zIndex:1,boxShadow:'2px 0 6px rgba(0,0,0,.4)'}}><span className="ref">{o.name}</span></td>
