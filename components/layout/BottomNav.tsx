@@ -28,18 +28,18 @@ const Ico = {
 
 /* ─── Primary tabs (always visible) ────────────────────────── */
 const PRIMARY = [
-  { href: '/',             icon: Ico.comenzi, label: 'Comenzi'    },
-  { href: '/gls',          icon: Ico.gls,     label: 'GLS'        },
-  { href: '/stats',        icon: Ico.stats,   label: 'Stats'      },
-  { href: '/profit',       icon: Ico.profit,  label: 'Profit'     },
+  { href: '/',                  icon: Ico.comenzi, label: 'Comenzi'    },
+  { href: '/stats',             icon: Ico.stats,   label: 'Stats'      },
+  { href: '/profit',            icon: Ico.profit,  label: 'Profit'     },
+  { href: '/xconnector',        icon: Ico.xconn,   label: 'xConn'      },
+  { href: '/whatsapp',          icon: Ico.chat,    label: 'Chat'       },
 ];
 
 /* ─── Secondary tabs (inside "More" drawer) ─────────────────── */
 const SECONDARY = [
-  { href: '/xconnector',      icon: Ico.xconn,  label: 'xConnector', desc: 'Automatizare comenzi' },
-  { href: '/import',          icon: Ico.import, label: 'Import',      desc: 'Importă date'         },
-  { href: '/sales-engine-pro',icon: Ico.sales,  label: 'Sales',       desc: 'Motor de vânzări'     },
-  { href: '/whatsapp',        icon: Ico.chat,   label: 'Chat',        desc: 'WhatsApp mesaje'      },
+  { href: '/gls',               icon: Ico.gls,    label: 'GLS',        desc: 'Colete & AWB'         },
+  { href: '/import',            icon: Ico.import, label: 'Import',     desc: 'Importă date'         },
+  { href: '/sales-engine-pro',  icon: Ico.sales,  label: 'Sales',      desc: 'Motor de vânzări'     },
 ];
 
 const ALL_HREFS = [...PRIMARY, ...SECONDARY].map(i => i.href);
