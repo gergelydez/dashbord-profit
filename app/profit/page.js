@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
@@ -412,9 +412,20 @@ export default function ProfitPage() {
   const [manualCosts, setManualCosts] = useState({});
   const [costSource, setCostSource] = useState({});
 
-  const xlsxImportRef = useRef(null);
-  const importCostRef = useRef(null);
-  const sbExcelRef    = useRef(null);
+  // Refs replaced with dynamic createElement for Android compatibility
+  function _pickFile(accept, onFile) {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    if (accept && accept !== '*') inp.accept = accept;
+    inp.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+    document.body.appendChild(inp);
+    inp.onchange = (e) => {
+      const f = e.target.files?.[0];
+      if (f) onFile(f);
+      try { document.body.removeChild(inp); } catch {}
+    };
+    inp.click();
+  }
   const [sbCostsLoading, setSbCostsLoading] = useState(false);
   const [sbCostsMsg, setSbCostsMsg] = useState('');
 
@@ -2012,12 +2023,10 @@ export default function ProfitPage() {
                   style={{background:'linear-gradient(135deg,#10b981,#059669)'}}>
                   {sbCostsLoading ? <><span className="pf-spin">⟳</span> Se sincronizează...</> : '🔄 Sincronizează prețuri din SmartBill (API)'}
                 </button>
-                <button className="pf-btn pf-btn-ghost" onClick={()=>sbExcelRef.current?.click()}
+                <button className="pf-btn pf-btn-ghost" onClick={()=>_pickFile('*', importSmartBillExcel)}
                   style={{borderColor:'rgba(16,185,129,.4)',color:'#10b981'}}>
                   📊 Import Excel SmartBill (Stoc la zi)
                 </button>
-                <input ref={sbExcelRef} type="file" accept=".xls,.xlsx" style={{display:'none'}}
-                  onChange={e=>{if(e.target.files[0]) importSmartBillExcel(e.target.files[0]); e.target.value='';}}/>
                 {sbCostsMsg && (
                   <div style={{fontSize:11,padding:'6px 10px',borderRadius:8,
                     background: sbCostsMsg.startsWith('✅') ? 'rgba(16,185,129,.1)' : sbCostsMsg.startsWith('⚠') ? 'rgba(245,158,11,.1)' : 'rgba(244,63,94,.1)',
@@ -2027,34 +2036,16 @@ export default function ProfitPage() {
                     {sbCostsMsg}
                   </div>
                 )}
-                <button className="pf-btn pf-btn-orange" onClick={()=>importCostRef.current?.click()}>
+                <button className="pf-btn pf-btn-orange" onClick={()=>_pickFile('*', f => {
                   📦 Import stoc nou (import-cost.xlsx)
                 </button>
                 <div className="xlsx-actions" style={{marginTop:0}}>
                   <button className="pf-btn pf-btn-green" onClick={()=>exportCostsToXLSX(stdCosts)}>⬇️ Export listă curentă</button>
-                  <button className="pf-btn pf-btn-ghost" onClick={()=>xlsxImportRef.current?.click()}>⬆️ Import format standard</button>
+                  <button className="pf-btn pf-btn-ghost" onClick={()=>_pickFile('*', f => { importCostsFromXLSX(f, costs=>{setStdCosts(costs);localStorage.setItem('glamx_std_costs',JSON.stringify(costs));alert('✅ Importat '+costs.length+' produse!');}); })}>⬆️ Import format standard</button>
                 </div>
               </div>
-              <input ref={importCostRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
-                onChange={e=>{
-                  const f=e.target.files[0];
-                  if(f) parseImportCostXLSX(f, stdCosts,
-                    (merged, incoming) => {
-                      setStdCosts(merged);
-                      localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
-                      const blob = new Blob([JSON.stringify(merged, null, 2)], {type:'application/json'});
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url; a.download = 'product-costs.json'; a.click();
-                      URL.revokeObjectURL(url);
-                      alert('✅ Actualizat ' + incoming.length + ' produse! Uploadeaza product-costs.json pe GitHub in folderul /public.');
-                    },
-                    (err) => alert('Eroare import: ' + err)
-                  );
-                  e.target.value='';
-                }} />
-              <input ref={xlsxImportRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
-                onChange={e=>{const f=e.target.files[0]; if(f) importCostsFromXLSX(f,costs=>{setStdCosts(costs);localStorage.setItem('glamx_std_costs',JSON.stringify(costs));alert(`✅ Importat ${costs.length} produse!`);}); e.target.value='';}} />
+
+
             </div>
             {uniqueProducts.length > 0 && (
               <>
