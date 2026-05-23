@@ -577,7 +577,7 @@ export default function MetaIntelligencePage() {
                         </div>
                         {pct <= 25 && <span style={{fontSize:12,color:cpaColor(d.metaCPA),fontWeight:700,minWidth:65}}>{d.metaCPA>0?fmt(d.metaCPA,0)+' RON':'—'}</span>}
                         <div style={{ minWidth:55, textAlign:'right' }}>
-                          {d.metaCPA > 0 && <span style={S.badge(d.metaCPA<=65?'green':d.metaCPA<=80?'yellow':'red')}>{d.metaCPA<=65?'✓ BUN':'d.metaCPA<=80?OK':'↑ SLAB'}</span>}
+                          {d.metaCPA > 0 && <span style={S.badge(d.metaCPA<=65?'green':d.metaCPA<=80?'yellow':'red')}>{d.metaCPA<=65?'✓ BUN':d.metaCPA<=80?'OK':'↑ SLAB'}</span>}
                         </div>
                       </div>
                     );
