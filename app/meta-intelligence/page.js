@@ -75,6 +75,8 @@ export default function MetaIntelligencePage(){
   const [transportSD,setTransportSD]=useState(18.00);
   const [metaAdSpend,setMetaAdSpend]=useState('');
   const [fixedCosts,setFixedCosts]=useState(890);  // Shopify 290 + Conta 600
+  const [shopifyFee,setShopifyFee]=useState(300);  // Shopify fee lunar (TVA 21%)
+  const TVA_RATE=0.21;
 
   /* Load orders */
   useEffect(()=>{
@@ -109,6 +111,8 @@ export default function MetaIntelligencePage(){
       if(mc)setMetaAdSpend(mc);
       const fc=localStorage.getItem('glamx_fixed_manual');
       if(fc)setFixedCosts(parseFloat(fc)||890);
+      const sf=localStorage.getItem('glamx_shopify_fee_manual');
+      if(sf)setShopifyFee(parseFloat(sf)||300);
     }catch{}
   },[]);
 
@@ -1044,6 +1048,8 @@ export default function MetaIntelligencePage(){
               transportSD={transportSD} setTransportSD={setTransportSD}
               metaAdSpend={metaAdSpend} setMetaAdSpend={setMetaAdSpend}
               fixedCosts={fixedCosts} setFixedCosts={setFixedCosts}
+              shopifyFee={shopifyFee} setShopifyFee={setShopifyFee}
+              TVA_RATE={TVA_RATE}
             />
           )}
 
@@ -1105,7 +1111,8 @@ export default function MetaIntelligencePage(){
 ══════════════════════════════════════════════════════════════════════════ */
 function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
   transportGLS,setTransportGLS,transportSD,setTransportSD,
-  metaAdSpend,setMetaAdSpend,fixedCosts,setFixedCosts}){
+  metaAdSpend,setMetaAdSpend,fixedCosts,setFixedCosts,
+  shopifyFee,setShopifyFee,TVA_RATE}){
 
   const fmt=(n,d=2)=>Number(n||0).toLocaleString('ro-RO',{minimumFractionDigits:d,maximumFractionDigits:d});
   const fmtK=(n)=>Math.abs(n)>=1000?(n/1000).toFixed(1)+'K':fmt(n,0);
@@ -1269,7 +1276,15 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
       const roas=marketing>0?revenue/marketing:0;
       const cogsResolved=mLivrate.filter(o=>calcOrderCOGS(o)>0).length;
 
+      // TVA — 21% pe Meta Ads + 21% pe Shopify fee lunar
+      const tvaMarketing=marketing*TVA_RATE;
+      const tvaShopify=pn(shopifyFee)*TVA_RATE;
+      const totalTVA=tvaMarketing+tvaShopify;
+      const netProfitAfterTVA=netProfit-totalTVA;
+      const marginAfterTVA=revenue>0?netProfitAfterTVA/revenue*100:0;
+
       return{...m,revenue,cogs,transport,marketing,fixe,totalCosts,netProfit,margin,roas,
+        totalTVA,tvaMarketing,tvaShopify,netProfitAfterTVA,marginAfterTVA,
         ordersLivrate:mLivrate.length,ordersRetur:mRetur.length,
         cogsResolved,cogsMissing:mLivrate.length-cogsResolved,
         cogsPct:revenue>0?cogs/revenue*100:0,
@@ -1279,13 +1294,18 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
     }).filter(m=>m.revenue>0||m.spent>0);
   },[combined,stockMap,stdCosts,transportGLS,transportSD,metaAdSpend,fixedCosts]);
 
-  const totalRev   =profitMonths.reduce((s,m)=>s+m.revenue,0);
-  const totalNet   =profitMonths.reduce((s,m)=>s+m.netProfit,0);
-  const totalCOGS  =profitMonths.reduce((s,m)=>s+m.cogs,0);
-  const totalTrans =profitMonths.reduce((s,m)=>s+m.transport,0);
-  const totalMkt   =profitMonths.reduce((s,m)=>s+m.marketing,0);
-  const totalFixe  =profitMonths.reduce((s,m)=>s+m.fixe,0);
-  const avgMargin  =totalRev>0?totalNet/totalRev*100:0;
+  const totalRev      =profitMonths.reduce((s,m)=>s+m.revenue,0);
+  const totalNet      =profitMonths.reduce((s,m)=>s+m.netProfit,0);
+  const totalCOGS     =profitMonths.reduce((s,m)=>s+m.cogs,0);
+  const totalTrans    =profitMonths.reduce((s,m)=>s+m.transport,0);
+  const totalMkt      =profitMonths.reduce((s,m)=>s+m.marketing,0);
+  const totalFixe     =profitMonths.reduce((s,m)=>s+m.fixe,0);
+  const totalTVA      =profitMonths.reduce((s,m)=>s+m.totalTVA,0);
+  const totalTVAMkt   =profitMonths.reduce((s,m)=>s+m.tvaMarketing,0);
+  const totalTVAShop  =profitMonths.reduce((s,m)=>s+m.tvaShopify,0);
+  const totalNetTVA   =profitMonths.reduce((s,m)=>s+m.netProfitAfterTVA,0);
+  const avgMargin     =totalRev>0?totalNet/totalRev*100:0;
+  const avgMarginTVA  =totalRev>0?totalNetTVA/totalRev*100:0;
   const cogsCoverage=profitMonths.length>0?profitMonths.reduce((s,m)=>s+m.cogsResolved,0)/Math.max(profitMonths.reduce((s,m)=>s+m.ordersLivrate,0),1)*100:0;
 
   function saveS(k,v){try{localStorage.setItem(k,String(v));}catch{}}
@@ -1334,6 +1354,11 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
             <input style={S.inp} type="number" value={metaAdSpend} placeholder="Ex: 11433"
               onChange={e=>{setMetaAdSpend(e.target.value);saveS('glamx_meta_cost',e.target.value);}}/>
           </div>
+          <div>
+            <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Shopify fee / lună (TVA 21%)</div>
+            <input style={S.inp} type="number" value={shopifyFee} placeholder="300"
+              onChange={e=>{setShopifyFee(pn(e.target.value));saveS('glamx_shopify_fee_manual',e.target.value);}}/>
+          </div>
         </div>
 
         {/* Stock import */}
@@ -1364,11 +1389,14 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
       <div style={{...S.card,background:'rgba(249,115,22,0.04)',border:'1px solid rgba(249,115,22,0.15)'}}>
         <div style={S.hdr}>📐 FORMULA DE CALCUL</div>
         <div style={{fontSize:13,color:'var(--c-text2)',lineHeight:2,fontFamily:'monospace'}}>
-          <span style={{color:'#22c55e'}}>Profit Net</span> = Încasări livrate<br/>
-          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#6366f1'}}>COGS</span> (cost produs × cantitate, din XLS/std)<br/>
+          <span style={{color:'#22c55e'}}>Profit Net (înainte TVA)</span> = Încasări livrate<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#6366f1'}}>COGS</span> (cost produs × cantitate)<br/>
           &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#fbbf24'}}>Transport</span> (GLS + SameDay + retururi)<br/>
-          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#f97316'}}>Marketing</span> (Meta CSV sau manual)<br/>
-          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#06b6d4'}}>Fixe</span> (Shopify + Conta + altele)
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#f97316'}}>Marketing</span> (Meta Ads)<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#06b6d4'}}>Fixe</span> (Shopify abonament + Conta)<br/>
+          <span style={{color:'#f59e0b'}}>Profit Net (după TVA)</span> = Profit Net<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#f59e0b'}}>TVA Meta</span> (21% × cheltuieli Meta)<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#f59e0b'}}>TVA Shopify</span> (21% × {pn(shopifyFee)} RON)
         </div>
       </div>
 
@@ -1381,8 +1409,38 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
             <div style={S.kpi}><div style={S.kL}>Transport</div><div style={{...S.kV,color:'#fbbf24'}}>{fmtK(totalTrans)}</div><div style={S.kS}>RON curier</div></div>
             <div style={S.kpi}><div style={S.kL}>Marketing</div><div style={{...S.kV,color:'#f97316'}}>{fmtK(totalMkt)}</div><div style={S.kS}>RON ads</div></div>
             <div style={S.kpi}><div style={S.kL}>Fixe</div><div style={{...S.kV,color:'#06b6d4'}}>{fmtK(totalFixe)}</div><div style={S.kS}>RON/lună</div></div>
-            <div style={S.kpi}><div style={S.kL}>Profit Net</div><div style={{...S.kV,color:S.pC(totalNet)}}>{fmtK(totalNet)}</div><div style={S.kS}>RON total</div></div>
-            <div style={S.kpi}><div style={S.kL}>Marjă Medie</div><div style={{...S.kV,color:S.mC(avgMargin)}}>{fmt(avgMargin,1)}%</div><div style={S.kS}>net/revenue</div></div>
+            <div style={{...S.kpi,borderColor:'rgba(34,197,94,0.3)'}}><div style={S.kL}>Profit înainte TVA</div><div style={{...S.kV,color:S.pC(totalNet)}}>{fmtK(totalNet)}</div><div style={S.kS}>{fmt(avgMargin,1)}% marjă</div></div>
+            <div style={{...S.kpi,borderColor:'rgba(245,158,11,0.4)',background:'rgba(245,158,11,0.05)'}}><div style={S.kL}>TVA de plată</div><div style={{...S.kV,color:'#f59e0b'}}>{fmtK(totalTVA)}</div><div style={S.kS}>Meta + Shopify 21%</div></div>
+            <div style={{...S.kpi,borderColor:'rgba(34,197,94,0.5)',background:'rgba(34,197,94,0.06)'}}><div style={S.kL}>🏆 Profit NET după TVA</div><div style={{...S.kV,fontSize:24,color:S.pC(totalNetTVA)}}>{fmtK(totalNetTVA)}</div><div style={S.kS}>{fmt(avgMarginTVA,1)}% marjă reală</div></div>
+          </div>
+
+          {/* ── TVA Breakdown ── */}
+          <div style={{...S.card,background:'rgba(245,158,11,0.05)',border:'1px solid rgba(245,158,11,0.25)',marginBottom:12}}>
+            <div style={S.hdr}>🧾 TVA DE PLATĂ — DETALIU COMPLET</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
+              <div style={{textAlign:'center',padding:'12px 8px'}}>
+                <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:6}}>TVA Meta Ads (21%)</div>
+                <div style={{fontSize:28,fontWeight:800,color:'#f59e0b'}}>{fmtK(totalTVAMkt)}</div>
+                <div style={{fontSize:11,color:'var(--c-text3)'}}>RON · {profitMonths.length} luni</div>
+                <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>~{fmtK(totalTVAMkt/Math.max(profitMonths.length,1))} RON/lună</div>
+              </div>
+              <div style={{textAlign:'center',padding:'12px 8px',borderLeft:'1px solid var(--c-border2)',borderRight:'1px solid var(--c-border2)'}}>
+                <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:6}}>TVA Shopify ({fmt(pn(shopifyFee),0)} RON × 21%)</div>
+                <div style={{fontSize:28,fontWeight:800,color:'#f59e0b'}}>{fmtK(totalTVAShop)}</div>
+                <div style={{fontSize:11,color:'var(--c-text3)'}}>RON · {profitMonths.length} luni</div>
+                <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>{fmt(pn(shopifyFee)*TVA_RATE,2)} RON/lună</div>
+              </div>
+              <div style={{textAlign:'center',padding:'12px 8px'}}>
+                <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:6}}>TOTAL TVA DE PLATĂ</div>
+                <div style={{fontSize:28,fontWeight:800,color:'#f59e0b'}}>{fmtK(totalTVA)}</div>
+                <div style={{fontSize:11,color:'var(--c-text3)'}}>RON total perioadă</div>
+                <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>~{fmtK(totalTVA/Math.max(profitMonths.length,1))} RON/lună</div>
+              </div>
+            </div>
+            <div style={{padding:'10px 12px',background:'rgba(0,0,0,0.2)',borderRadius:8,fontSize:12,color:'var(--c-text3)',lineHeight:1.7}}>
+              💡 <strong style={{color:'var(--c-text)'}}>Cum se calculează:</strong> TVA Meta = cheltuieli Meta × 21% (Facebook emite factură cu TVA din Irlanda, deductibil dacă ești plătitor TVA).
+              TVA Shopify = abonament {fmt(pn(shopifyFee),0)} RON × 21% = {fmt(pn(shopifyFee)*TVA_RATE,2)} RON/lună (Shopify Ireland, același mecanism).
+            </div>
           </div>
 
           {/* ── Grafic profit net ── */}
@@ -1413,14 +1471,14 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
               <thead>
                 <tr>
-                  {['Lună','Venituri','COGS','Transport','Marketing','Fixe','= Net Profit','Marjă','ROAS','Livrate','Retururi','COGS%'].map(h=>(
+                  {['Lună','Venituri','COGS','Transport','Marketing','Fixe','Profit brut','TVA 21%','Profit NET','Marjă NET','ROAS','Livrate','Retur'].map(h=>(
                     <th key={h} style={S.th}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {profitMonths.map(m=>(
-                  <tr key={m.key} style={{background:m.netProfit<0?'rgba(239,68,68,0.04)':'transparent'}}>
+                  <tr key={m.key} style={{background:m.netProfitAfterTVA<0?'rgba(239,68,68,0.04)':'transparent'}}>
                     <td style={S.td(true,'var(--c-text)')}>{m.short}</td>
                     <td style={S.td(false,'var(--c-orange)')}>{fmtK(m.revenue)}</td>
                     <td style={S.td(false,'#6366f1')}>{fmtK(m.cogs)}</td>
@@ -1428,14 +1486,15 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
                     <td style={S.td(false,'#f97316')}>{fmtK(m.marketing)}</td>
                     <td style={S.td(false,'#06b6d4')}>{fmtK(m.fixe)}</td>
                     <td style={S.td(true,S.pC(m.netProfit))}>{fmtK(m.netProfit)}</td>
-                    <td style={S.td(true,S.mC(m.margin))}>{fmt(m.margin,1)}%</td>
+                    <td style={S.td(false,'#f59e0b')}>{fmtK(m.totalTVA)}</td>
+                    <td style={S.td(true,S.pC(m.netProfitAfterTVA))}>{fmtK(m.netProfitAfterTVA)}</td>
+                    <td style={S.td(true,S.mC(m.marginAfterTVA))}>{fmt(m.marginAfterTVA,1)}%</td>
                     <td style={S.td(false,m.roas>=3?'#22c55e':m.roas>=2?'#fbbf24':'#ef4444')}>{m.marketing>0?fmt(m.roas,2)+'x':'-'}</td>
                     <td style={S.td(false,'#22c55e')}>{m.ordersLivrate||'-'}</td>
                     <td style={S.td(false,'#ef4444')}>{m.ordersRetur||'-'}</td>
-                    <td style={S.td(false,m.cogsPct>0?'var(--c-text3)':'#ef4444')}>{m.ordersLivrate>0?fmt(m.cogsMissing===0?100:(1-m.cogsMissing/m.ordersLivrate)*100,0)+'%':'-'}</td>
                   </tr>
                 ))}
-                <tr style={{background:'rgba(249,115,22,0.05)'}}>
+                <tr style={{background:'rgba(249,115,22,0.05)',fontWeight:700}}>
                   <td style={S.td(true,'var(--c-text)')}>TOTAL</td>
                   <td style={S.td(true,'var(--c-orange)')}>{fmtK(totalRev)}</td>
                   <td style={S.td(true,'#6366f1')}>{fmtK(totalCOGS)}</td>
@@ -1443,11 +1502,12 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
                   <td style={S.td(true,'#f97316')}>{fmtK(totalMkt)}</td>
                   <td style={S.td(true,'#06b6d4')}>{fmtK(totalFixe)}</td>
                   <td style={S.td(true,S.pC(totalNet))}>{fmtK(totalNet)}</td>
-                  <td style={S.td(true,S.mC(avgMargin))}>{fmt(avgMargin,1)}%</td>
+                  <td style={S.td(true,'#f59e0b')}>{fmtK(totalTVA)}</td>
+                  <td style={S.td(true,S.pC(totalNetTVA))}>{fmtK(totalNetTVA)}</td>
+                  <td style={S.td(true,S.mC(avgMarginTVA))}>{fmt(avgMarginTVA,1)}%</td>
                   <td style={S.td()}>—</td>
                   <td style={S.td(false,'#22c55e')}>{profitMonths.reduce((s,m)=>s+m.ordersLivrate,0)}</td>
                   <td style={S.td(false,'#ef4444')}>{profitMonths.reduce((s,m)=>s+m.ordersRetur,0)}</td>
-                  <td style={S.td()}>{fmt(cogsCoverage,0)}%</td>
                 </tr>
               </tbody>
             </table>
