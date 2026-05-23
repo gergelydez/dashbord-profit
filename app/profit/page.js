@@ -2037,7 +2037,21 @@ export default function ProfitPage() {
                   </div>
                 )}
                 <button className="pf-btn pf-btn-orange" onClick={()=>_pickFile('*', f => {
-                  📦 Import stoc nou (import-cost.xlsx)
+                  parseImportCostXLSX(f, stdCosts,
+                    (merged, incoming) => {
+                      setStdCosts(merged);
+                      localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
+                      const blob = new Blob([JSON.stringify(merged,null,2)],{type:'application/json'});
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href=url; a.download='product-costs.json'; a.click();
+                      URL.revokeObjectURL(url);
+                      alert('✅ Actualizat '+incoming.length+' produse!');
+                    },
+                    (err) => alert('Eroare import: '+err)
+                  );
+                })}>
+                  📦 Import stoc nou (SmartBill XLS)
                 </button>
                 <div className="xlsx-actions" style={{marginTop:0}}>
                   <button className="pf-btn pf-btn-green" onClick={()=>exportCostsToXLSX(stdCosts)}>⬇️ Export listă curentă</button>
