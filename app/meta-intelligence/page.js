@@ -1100,8 +1100,8 @@ export default function MetaIntelligencePage(){
 
 /* ══════════════════════════════════════════════════════════════════════════
    PROFIT TAB COMPONENT
-   Formula identică cu profit/page.js:
-   Net Profit = Revenue - COGS - Transport - Marketing - Fixed - ReturnCost
+   Formula exactă din profit/page.js:
+   Net = Revenue(livrate) - COGS - Transport(GLS+SD+retur) - Marketing - Fixe
 ══════════════════════════════════════════════════════════════════════════ */
 function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
   transportGLS,setTransportGLS,transportSD,setTransportSD,
@@ -1113,28 +1113,119 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
 
   const hasStock=Object.keys(stockMap).length>0;
 
-  /* Resolve COGS per order using stockMap (from XLS) then fallback to hardcoded */
-  const FALLBACK_COSTS={
-    DM56:158.95,DM58:164.16,DM59:184.96,DM76:162.05,M99:319.06,
-    BW2GRI:203.15,'BW-2GRI':203.15,HD300PRO:181.00,SK41:112.73,
-    WATCHX:115.27,Z85BLACK:72.30,WS1B:63.76,'WS-1-B':63.76,
-    EARBUDS1:20.83,EARBUDS2:20.79,G69:93.77,TG19:88.83,VITRO:104.68,
-    WBAND:16.94,'WBAND-M':10.55,'WBAND-P':10.55,FAN1:31.17,
-    XPERTCHEMY:23.45,X122:87.67,SET1:72.96,SET2:23.77,
-  };
-  function resolveCost(sku){
-    if(!sku)return 0;
-    const s=String(sku).toUpperCase().replace(/-/g,'');
-    if(hasStock&&stockMap[sku])return stockMap[sku].cost;
-    if(hasStock&&stockMap[s])return stockMap[s].cost;
-    return FALLBACK_COSTS[sku]||FALLBACK_COSTS[s]||0;
+  /* ── resolveCost: identic cu profit/page.js ──────────────────────────
+     Prioritate: stockMap(XLS) > glamx_std_costs(localStorage) > DEFAULT  */
+  const stdCosts = useMemo(()=>{
+    try{
+      const s=localStorage.getItem('glamx_std_costs');
+      return s?JSON.parse(s):[];
+    }catch{return[];}
+  },[stockMap]); // re-read when stock imported
+
+  function resolveCost(itemName, itemSku){
+    const nameKey=(itemName||'').toLowerCase().trim();
+    const skuKey=(itemSku||'').toLowerCase().trim();
+
+    // 1. stockMap din XLS SmartBill (cel mai precis — CMP real)
+    if(hasStock){
+      // exact SKU
+      if(skuKey&&stockMap[itemSku]) return stockMap[itemSku].cost;
+      // case-insensitive SKU
+      if(skuKey){
+        const found=Object.keys(stockMap).find(k=>k.toLowerCase()===skuKey);
+        if(found) return stockMap[found].cost;
+      }
+      // SKU prefix (DM56-NEGRU → DM56)
+      if(skuKey){
+        const found=Object.keys(stockMap).find(k=>{
+          const b=k.toLowerCase();
+          return b.length>=2&&(skuKey===b||skuKey.startsWith(b+'-')||skuKey.startsWith(b+'/'));
+        });
+        if(found) return stockMap[found].cost;
+      }
+    }
+
+    // 2. glamx_std_costs din localStorage (setat de profit/page.js)
+    if(stdCosts.length){
+      const getCVal=(s)=>typeof s.cost==='number'?s.cost:parseFloat(s.cost)||0;
+      // exact SKU
+      if(skuKey){
+        const ex=stdCosts.find(s=>(s.sku||s.id||'').toLowerCase()===skuKey);
+        if(ex) return getCVal(ex);
+      }
+      // SKU prefix
+      if(skuKey){
+        const pr=stdCosts.find(s=>{
+          const b=(s.sku||s.id||'').toLowerCase();
+          return b.length>=2&&(skuKey===b||skuKey.startsWith(b+'-')||skuKey.startsWith(b+'/'));
+        });
+        if(pr) return getCVal(pr);
+      }
+      // pattern match pe nume (sortat desc dupa lungime)
+      const byLen=[...stdCosts].sort((a,b)=>(b.pattern||'').length-(a.pattern||'').length);
+      for(const s of byLen){
+        const pat=(s.pattern||'').toLowerCase().trim();
+        if(!pat||pat.length<3) continue;
+        if(nameKey.includes(pat)){
+          const excl=(s.excludes||[]).some(ex=>nameKey.includes(ex.toLowerCase()));
+          if(!excl) return getCVal(s);
+        }
+      }
+      // SKU apare în nume
+      for(const s of byLen){
+        const sk=(s.sku||s.id||'').toLowerCase();
+        if(sk.length>=2&&nameKey.includes(sk)) return getCVal(s);
+      }
+    }
+
+    // 3. DEFAULT hardcodat (ultimul fallback)
+    const DEF={
+      DM56:158.95,DM58:164.16,DM59:184.96,DM76:162.05,M99:319.06,
+      'BW-2GRI':203.15,'BW-2NEGRU':203.15,HD300PRO:181.00,SK41:112.73,
+      WATCHX:115.27,Z85BLACK:72.30,'WS-1-B':63.76,U8:207.89,
+      EARBUDS1:20.83,EARBUDS2:20.79,G69:93.77,TG19:88.83,VITRO:104.68,
+      WBAND:16.91,'WBAND-M':10.55,'WBAND-P':10.55,FAN1:31.17,
+      XPERTCHEMY:23.45,X122:87.67,SET1:72.96,SET2:23.77,
+      CP1:32.84,HUSA1:42.54,LED3IN1:47.13,SMC2:42.84,
+      SMSWV4:62.26,SMSWCSV1:70.21,DM56b:158.95,DM56c:158.95,
+    };
+    if(skuKey){
+      const k=itemSku||'';
+      if(DEF[k]) return DEF[k];
+      // prefix match in DEF
+      const found=Object.keys(DEF).find(d=>skuKey===d.toLowerCase()||skuKey.startsWith(d.toLowerCase()+'-'));
+      if(found) return DEF[found];
+    }
+    // name contains default key
+    for(const [k,v] of Object.entries(DEF)){
+      if(nameKey.includes(k.toLowerCase())) return v;
+    }
+    return 0;
   }
 
-  /* Compute per-month profit */
+  /* ── Calculate COGS per order ─────────────────────────────────────── */
+  function calcOrderCOGS(order){
+    const items=order.items||order.line_items||[];
+    if(items.length>0){
+      return items.reduce((s,item)=>{
+        const name=item.name||item.title||item.product_title||'';
+        const sku=item.sku||item.variant_sku||'';
+        const qty=item.quantity||item.qty||1;
+        return s+resolveCost(name,sku)*qty;
+      },0);
+    }
+    // fallback: no items — resolve from order title/name
+    const name=order.title||order.name||order.product_title||'';
+    const sku=order.sku||order.variant_sku||'';
+    return resolveCost(name,sku);
+  }
+
+  /* ── Per-month profit calc ──────────────────────────────────────────── */
   const profitMonths=useMemo(()=>{
-    if(!combined.length)return[];
+    if(!combined.length) return[];
     const glsMap=getGlsMap(),sdMap=getSdMap();
-    const orders=(() => {
+    const pad2=n=>String(n).padStart(2,'0');
+    const allOrders=(()=>{
       try{
         const sk=getShopKey();
         const raw=localStorage.getItem(ordersKey(sk))||localStorage.getItem('gx_orders_60')||localStorage.getItem('gx_orders');
@@ -1142,78 +1233,62 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
       }catch{return[];}
     })();
 
-    const pad2=n=>String(n).padStart(2,'0');
-
     return combined.map(m=>{
       const mKey=m.key;
-      // Filter orders for this month
-      const mOrders=orders.filter(o=>{
+      const mOrders=allOrders.filter(o=>{
         const d=new Date(o.createdAt||o.created_at||'');
-        if(isNaN(d))return false;
+        if(isNaN(d)) return false;
         return `${d.getFullYear()}-${pad2(d.getMonth()+1)}`===mKey;
       });
 
       const mLivrate=mOrders.filter(o=>getFinalStatus(o,glsMap,sdMap)==='livrat');
-      const mRetur=mOrders.filter(o=>getFinalStatus(o,glsMap,sdMap)==='retur');
+      const mRetur  =mOrders.filter(o=>getFinalStatus(o,glsMap,sdMap)==='retur');
 
-      // Revenue = sum of livrate orders
+      // REVENUE = suma comenzilor livrate (ce a intrat în cont)
       const revenue=mLivrate.reduce((s,o)=>s+pn(o.total||o.totalPrice||o.total_price||0),0);
 
-      // COGS = sum of item costs for livrate orders
-      const cogs=mLivrate.reduce((s,o)=>{
-        const items=o.items||o.line_items||[];
-        if(!items.length){
-          // No items — use fallback from product title
-          const title=String(o.title||o.product_title||'').toLowerCase();
-          let cost=0;
-          if(title.includes('delta max plus')||title.includes('dm58'))cost=resolveCost('DM58');
-          else if(title.includes('delta max pro')||title.includes('hd300'))cost=resolveCost('HD300PRO');
-          else if(title.includes('delta max'))cost=resolveCost('DM56');
-          return s+cost;
-        }
-        return s+items.reduce((si,item)=>{
-          const sku=item.sku||item.variant_sku||'';
-          const qty=item.quantity||item.qty||1;
-          return si+resolveCost(sku)*qty;
-        },0);
-      },0);
+      // COGS = cost produse pentru comenzile livrate
+      const cogs=mLivrate.reduce((s,o)=>s+calcOrderCOGS(o),0);
 
-      // Transport
+      // TRANSPORT = GLS + SameDay + transport retururi
       const glsCount=mLivrate.filter(o=>o.courier!=='sameday').length;
-      const sdCount=mLivrate.filter(o=>o.courier==='sameday').length;
+      const sdCount =mLivrate.filter(o=>o.courier==='sameday').length;
       const returCount=mRetur.length;
-      const transport=glsCount*transportGLS + sdCount*transportSD + returCount*transportGLS;
+      const transport=(glsCount*pn(transportGLS))+(sdCount*pn(transportSD))+(returCount*pn(transportGLS));
 
-      // Marketing — from Meta CSV if available, else from manual input
-      const metaSpent=m.spent||0;
-      const manualMeta=pn(metaAdSpend);
-      const marketing=metaSpent>0?metaSpent:manualMeta;
+      // MARKETING = din CSV Meta (prioritate) sau manual
+      const marketing=m.spent>0?m.spent:pn(metaAdSpend);
 
-      // Fixed costs — prorated by months
-      const monthFixed=pn(fixedCosts);
+      // CHELTUIELI FIXE
+      const fixe=pn(fixedCosts);
 
-      // TOTAL COSTS
-      const totalCosts=cogs+transport+marketing+monthFixed;
+      // NET PROFIT
+      const totalCosts=cogs+transport+marketing+fixe;
       const netProfit=revenue-totalCosts;
       const margin=revenue>0?netProfit/revenue*100:0;
       const roas=marketing>0?revenue/marketing:0;
+      const cogsResolved=mLivrate.filter(o=>calcOrderCOGS(o)>0).length;
 
-      return{...m,revenue,cogs,transport,marketing,monthFixed,totalCosts,netProfit,margin,roas,
+      return{...m,revenue,cogs,transport,marketing,fixe,totalCosts,netProfit,margin,roas,
         ordersLivrate:mLivrate.length,ordersRetur:mRetur.length,
+        cogsResolved,cogsMissing:mLivrate.length-cogsResolved,
         cogsPct:revenue>0?cogs/revenue*100:0,
         transportPct:revenue>0?transport/revenue*100:0,
         marketingPct:revenue>0?marketing/revenue*100:0,
       };
     }).filter(m=>m.revenue>0||m.spent>0);
-  },[combined,stockMap,transportGLS,transportSD,metaAdSpend,fixedCosts]);
+  },[combined,stockMap,stdCosts,transportGLS,transportSD,metaAdSpend,fixedCosts]);
 
-  const totalNet=profitMonths.reduce((s,m)=>s+m.netProfit,0);
-  const totalRev=profitMonths.reduce((s,m)=>s+m.revenue,0);
-  const totalMkt=profitMonths.reduce((s,m)=>s+m.marketing,0);
-  const totalCOGS=profitMonths.reduce((s,m)=>s+m.cogs,0);
-  const totalTransport=profitMonths.reduce((s,m)=>s+m.transport,0);
-  const totalFixed2=profitMonths.reduce((s,m)=>s+m.monthFixed,0);
-  const avgMargin=totalRev>0?totalNet/totalRev*100:0;
+  const totalRev   =profitMonths.reduce((s,m)=>s+m.revenue,0);
+  const totalNet   =profitMonths.reduce((s,m)=>s+m.netProfit,0);
+  const totalCOGS  =profitMonths.reduce((s,m)=>s+m.cogs,0);
+  const totalTrans =profitMonths.reduce((s,m)=>s+m.transport,0);
+  const totalMkt   =profitMonths.reduce((s,m)=>s+m.marketing,0);
+  const totalFixe  =profitMonths.reduce((s,m)=>s+m.fixe,0);
+  const avgMargin  =totalRev>0?totalNet/totalRev*100:0;
+  const cogsCoverage=profitMonths.length>0?profitMonths.reduce((s,m)=>s+m.cogsResolved,0)/Math.max(profitMonths.reduce((s,m)=>s+m.ordersLivrate,0),1)*100:0;
+
+  function saveS(k,v){try{localStorage.setItem(k,String(v));}catch{}}
 
   const S={
     card:{background:'var(--c-card)',border:'1px solid var(--c-border2)',borderRadius:12,padding:'14px',marginBottom:12},
@@ -1225,140 +1300,170 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
     th:{textAlign:'left',padding:'7px 10px',fontSize:10,fontWeight:800,color:'var(--c-text4)',textTransform:'uppercase',letterSpacing:'0.05em',borderBottom:'1px solid var(--c-border2)',whiteSpace:'nowrap'},
     td:(bold,color)=>({padding:'8px 10px',borderBottom:'1px solid var(--c-border2)',color:color||'var(--c-text2)',fontWeight:bold?700:400,fontSize:12,whiteSpace:'nowrap'}),
     inp:{background:'var(--c-card2)',border:'1px solid var(--c-border2)',borderRadius:8,padding:'8px 12px',color:'var(--c-text)',fontSize:13,width:'100%',outline:'none'},
-    profColor:(n)=>n>0?'#22c55e':n>-500?'#fbbf24':'#ef4444',
-    marginColor:(n)=>n>=20?'#22c55e':n>=10?'#fbbf24':n>=0?'#f97316':'#ef4444',
+    pC:(n)=>n>0?'#22c55e':n>-500?'#fbbf24':'#ef4444',
+    mC:(n)=>n>=20?'#22c55e':n>=10?'#fbbf24':n>=0?'#f97316':'#ef4444',
   };
 
-  function saveSettings(key,val){try{localStorage.setItem(key,String(val));}catch{}}
+  const srcInfo = stdCosts.length>0
+    ? `✓ ${stdCosts.length} produse din glamx_std_costs`
+    : 'Fără costuri — importează XLS sau setează în Profit page';
 
   return(
     <div>
-      {/* ── Settings bar ── */}
+      {/* ── Settings ── */}
       <div style={S.card}>
-        <div style={S.hdr}>⚙️ SETĂRI CALCUL PROFIT</div>
+        <div style={S.hdr}>⚙️ SETĂRI CALCUL</div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:10,marginBottom:14}}>
           <div>
             <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Transport GLS / colet (RON)</div>
-            <input style={S.inp} type="number" value={transportGLS} onChange={e=>{setTransportGLS(pn(e.target.value));saveSettings('glamx_transport_per_parcel',e.target.value);}} step="0.5"/>
+            <input style={S.inp} type="number" value={transportGLS}
+              onChange={e=>{setTransportGLS(pn(e.target.value));saveS('glamx_transport_per_parcel',e.target.value);}} step="0.5"/>
           </div>
           <div>
             <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Transport SameDay / colet (RON)</div>
-            <input style={S.inp} type="number" value={transportSD} onChange={e=>{setTransportSD(pn(e.target.value));saveSettings('glamx_sd_transport',e.target.value);}} step="0.5"/>
+            <input style={S.inp} type="number" value={transportSD}
+              onChange={e=>{setTransportSD(pn(e.target.value));saveS('glamx_sd_transport',e.target.value);}} step="0.5"/>
           </div>
           <div>
             <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Cheltuieli fixe / lună (RON)</div>
-            <input style={S.inp} type="number" value={fixedCosts} onChange={e=>{setFixedCosts(pn(e.target.value));saveSettings('glamx_fixed_manual',e.target.value);}} step="10"/>
+            <input style={S.inp} type="number" value={fixedCosts}
+              onChange={e=>{setFixedCosts(pn(e.target.value));saveS('glamx_fixed_manual',e.target.value);}} step="10"/>
           </div>
           <div>
-            <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Meta Ads manual (dacă nu ai CSV)</div>
-            <input style={S.inp} type="number" value={metaAdSpend} placeholder="Ex: 2648" onChange={e=>{setMetaAdSpend(e.target.value);saveSettings('glamx_meta_cost',e.target.value);}}/>
+            <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Meta spend manual (fără CSV)</div>
+            <input style={S.inp} type="number" value={metaAdSpend} placeholder="Ex: 11433"
+              onChange={e=>{setMetaAdSpend(e.target.value);saveS('glamx_meta_cost',e.target.value);}}/>
           </div>
         </div>
 
         {/* Stock import */}
         <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',paddingTop:10,borderTop:'1px solid var(--c-border2)'}}>
-          <button onClick={openStockPicker} style={{padding:'8px 14px',borderRadius:8,background:'#22c55e',color:'#000',border:'none',fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
+          <button onClick={openStockPicker} style={{padding:'8px 14px',borderRadius:8,background:'#22c55e',color:'#000',border:'none',fontSize:12,fontWeight:700,cursor:'pointer'}}>
             📊 Import Stoc XLS (SmartBill)
           </button>
           {stockFile
-            ?<span style={{fontSize:11,color:'#22c55e',fontWeight:700}}>✓ {stockFile} · {Object.keys(stockMap).length} SKU-uri la prețuri reale</span>
-            :<span style={{fontSize:11,color:'var(--c-text4)'}}>Fără import → folosește costurile hardcodate din profit/page.js</span>
+            ?<span style={{fontSize:11,color:'#22c55e',fontWeight:700}}>✓ {stockFile} · {Object.keys(stockMap).length} SKU-uri</span>
+            :<span style={{fontSize:11,color:'var(--c-text4)'}}>{srcInfo}</span>
           }
         </div>
-        {hasStock&&(
-          <div style={{marginTop:8,fontSize:11,color:'var(--c-text4)'}}>
-            SKU-uri importate: {Object.keys(stockMap).slice(0,8).join(', ')}{Object.keys(stockMap).length>8?` +${Object.keys(stockMap).length-8} altele`:''}
+
+        {/* Coverage warning */}
+        {profitMonths.length>0&&cogsCoverage<80&&(
+          <div style={{marginTop:10,padding:'10px 12px',background:'rgba(251,191,36,0.08)',border:'1px solid rgba(251,191,36,0.2)',borderRadius:8,fontSize:12,color:'#fbbf24'}}>
+            ⚠️ COGS rezolvat pentru {fmt(cogsCoverage,1)}% din comenzi. Importează XLS SmartBill sau verifică că ai setat costurile în pagina Profit pentru acoperire completă.
+          </div>
+        )}
+        {profitMonths.length>0&&cogsCoverage>=80&&(
+          <div style={{marginTop:10,padding:'10px 12px',background:'rgba(34,197,94,0.07)',border:'1px solid rgba(34,197,94,0.2)',borderRadius:8,fontSize:12,color:'#22c55e'}}>
+            ✅ COGS rezolvat pentru {fmt(cogsCoverage,1)}% din comenzi — calcul profit precis.
           </div>
         )}
       </div>
 
-      {/* ── Totals KPIs ── */}
+      {/* ── Formula vizuală ── */}
+      <div style={{...S.card,background:'rgba(249,115,22,0.04)',border:'1px solid rgba(249,115,22,0.15)'}}>
+        <div style={S.hdr}>📐 FORMULA DE CALCUL</div>
+        <div style={{fontSize:13,color:'var(--c-text2)',lineHeight:2,fontFamily:'monospace'}}>
+          <span style={{color:'#22c55e'}}>Profit Net</span> = Încasări livrate<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#6366f1'}}>COGS</span> (cost produs × cantitate, din XLS/std)<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#fbbf24'}}>Transport</span> (GLS + SameDay + retururi)<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#f97316'}}>Marketing</span> (Meta CSV sau manual)<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;− <span style={{color:'#06b6d4'}}>Fixe</span> (Shopify + Conta + altele)
+        </div>
+      </div>
+
       {profitMonths.length>0&&(
         <>
+          {/* ── KPI totale ── */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:8,marginBottom:12}}>
-            <div style={S.kpi}><div style={S.kL}>Venituri Totale</div><div style={{...S.kV,color:'var(--c-orange)'}}>{fmtK(totalRev)}</div><div style={S.kS}>RON livrate</div></div>
-            <div style={S.kpi}><div style={S.kL}>Profit Net Total</div><div style={{...S.kV,color:S.profColor(totalNet)}}>{fmtK(totalNet)}</div><div style={S.kS}>RON</div></div>
-            <div style={S.kpi}><div style={S.kL}>Marjă Medie</div><div style={{...S.kV,color:S.marginColor(avgMargin)}}>{fmt(avgMargin,1)}%</div><div style={S.kS}>net / revenue</div></div>
-            <div style={S.kpi}><div style={S.kL}>COGS Total</div><div style={S.kV}>{fmtK(totalCOGS)}</div><div style={S.kS}>RON marfă</div></div>
-            <div style={S.kpi}><div style={S.kL}>Marketing Total</div><div style={{...S.kV,color:'#f97316'}}>{fmtK(totalMkt)}</div><div style={S.kS}>RON ads</div></div>
-            <div style={S.kpi}><div style={S.kL}>Transport Total</div><div style={S.kV}>{fmtK(totalTransport)}</div><div style={S.kS}>RON curier</div></div>
+            <div style={S.kpi}><div style={S.kL}>Venituri</div><div style={{...S.kV,color:'var(--c-orange)'}}>{fmtK(totalRev)}</div><div style={S.kS}>RON livrate</div></div>
+            <div style={S.kpi}><div style={S.kL}>COGS</div><div style={{...S.kV,color:'#6366f1'}}>{fmtK(totalCOGS)}</div><div style={S.kS}>RON marfă</div></div>
+            <div style={S.kpi}><div style={S.kL}>Transport</div><div style={{...S.kV,color:'#fbbf24'}}>{fmtK(totalTrans)}</div><div style={S.kS}>RON curier</div></div>
+            <div style={S.kpi}><div style={S.kL}>Marketing</div><div style={{...S.kV,color:'#f97316'}}>{fmtK(totalMkt)}</div><div style={S.kS}>RON ads</div></div>
+            <div style={S.kpi}><div style={S.kL}>Fixe</div><div style={{...S.kV,color:'#06b6d4'}}>{fmtK(totalFixe)}</div><div style={S.kS}>RON/lună</div></div>
+            <div style={S.kpi}><div style={S.kL}>Profit Net</div><div style={{...S.kV,color:S.pC(totalNet)}}>{fmtK(totalNet)}</div><div style={S.kS}>RON total</div></div>
+            <div style={S.kpi}><div style={S.kL}>Marjă Medie</div><div style={{...S.kV,color:S.mC(avgMargin)}}>{fmt(avgMargin,1)}%</div><div style={S.kS}>net/revenue</div></div>
           </div>
 
-          {/* Profit waterfall chart */}
-          <div style={{...S.card}}>
+          {/* ── Grafic profit net ── */}
+          <div style={S.card}>
             <div style={S.hdr}>PROFIT NET PE LUNĂ</div>
             {profitMonths.map(m=>{
-              const maxAbs=Math.max(...profitMonths.map(x=>Math.abs(x.netProfit)),1);
-              const pct=Math.abs(m.netProfit)/maxAbs*100;
-              const col=S.profColor(m.netProfit);
+              const maxA=Math.max(...profitMonths.map(x=>Math.abs(x.netProfit)),1);
+              const pct=Math.abs(m.netProfit)/maxA*100;
+              const col=S.pC(m.netProfit);
               return(
                 <div key={m.key} style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
                   <div style={{width:55,fontSize:11,color:'var(--c-text3)',textAlign:'right',flexShrink:0}}>{m.short}</div>
-                  <div style={{flex:1,height:28,background:'var(--c-card2)',borderRadius:4,overflow:'hidden',position:'relative'}}>
-                    <div style={{width:`${pct}%`,height:'100%',background:col,borderRadius:4,display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:8,minWidth:2,transition:'width 0.7s ease'}}>
-                      {pct>20&&<span style={{fontSize:11,fontWeight:700,color:'#fff'}}>{fmtK(m.netProfit)} RON</span>}
+                  <div style={{flex:1,height:28,background:'var(--c-card2)',borderRadius:4,overflow:'hidden'}}>
+                    <div style={{width:`${pct}%`,height:'100%',background:col,borderRadius:4,display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:8,minWidth:2,transition:'width 0.7s'}}>
+                      {pct>22&&<span style={{fontSize:11,fontWeight:700,color:'#fff'}}>{fmtK(m.netProfit)} RON</span>}
                     </div>
                   </div>
-                  {pct<=20&&<span style={{fontSize:11,fontWeight:700,color:col,minWidth:80}}>{fmtK(m.netProfit)} RON</span>}
-                  <span style={{fontSize:12,fontWeight:700,color:S.marginColor(m.margin),minWidth:45,textAlign:'right'}}>{fmt(m.margin,1)}%</span>
+                  {pct<=22&&<span style={{fontSize:11,fontWeight:700,color:col,minWidth:80}}>{fmtK(m.netProfit)} RON</span>}
+                  <span style={{fontSize:12,fontWeight:700,color:S.mC(m.margin),minWidth:48,textAlign:'right'}}>{fmt(m.margin,1)}%</span>
                 </div>
               );
             })}
           </div>
 
-          {/* Detaliu P&L pe luni */}
+          {/* ── P&L tabel detaliat ── */}
           <div style={{...S.card,overflowX:'auto'}}>
             <div style={S.hdr}>P&L DETALIAT PE LUNI</div>
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
               <thead>
-                <tr>{['Lună','Venituri','COGS','Transport','Marketing','Fixe','Total Cost','Profit Net','Marjă','ROAS','Livrate','Retururi'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr>
+                <tr>
+                  {['Lună','Venituri','COGS','Transport','Marketing','Fixe','= Net Profit','Marjă','ROAS','Livrate','Retururi','COGS%'].map(h=>(
+                    <th key={h} style={S.th}>{h}</th>
+                  ))}
+                </tr>
               </thead>
               <tbody>
                 {profitMonths.map(m=>(
-                  <tr key={m.key} style={{background:m.netProfit>0?'transparent':'rgba(239,68,68,0.04)'}}>
+                  <tr key={m.key} style={{background:m.netProfit<0?'rgba(239,68,68,0.04)':'transparent'}}>
                     <td style={S.td(true,'var(--c-text)')}>{m.short}</td>
                     <td style={S.td(false,'var(--c-orange)')}>{fmtK(m.revenue)}</td>
-                    <td style={S.td()}>{fmtK(m.cogs)}</td>
-                    <td style={S.td()}>{fmtK(m.transport)}</td>
+                    <td style={S.td(false,'#6366f1')}>{fmtK(m.cogs)}</td>
+                    <td style={S.td(false,'#fbbf24')}>{fmtK(m.transport)}</td>
                     <td style={S.td(false,'#f97316')}>{fmtK(m.marketing)}</td>
-                    <td style={S.td()}>{fmtK(m.monthFixed)}</td>
-                    <td style={S.td()}>{fmtK(m.totalCosts)}</td>
-                    <td style={S.td(true,S.profColor(m.netProfit))}>{fmtK(m.netProfit)}</td>
-                    <td style={S.td(true,S.marginColor(m.margin))}>{fmt(m.margin,1)}%</td>
+                    <td style={S.td(false,'#06b6d4')}>{fmtK(m.fixe)}</td>
+                    <td style={S.td(true,S.pC(m.netProfit))}>{fmtK(m.netProfit)}</td>
+                    <td style={S.td(true,S.mC(m.margin))}>{fmt(m.margin,1)}%</td>
                     <td style={S.td(false,m.roas>=3?'#22c55e':m.roas>=2?'#fbbf24':'#ef4444')}>{m.marketing>0?fmt(m.roas,2)+'x':'-'}</td>
                     <td style={S.td(false,'#22c55e')}>{m.ordersLivrate||'-'}</td>
                     <td style={S.td(false,'#ef4444')}>{m.ordersRetur||'-'}</td>
+                    <td style={S.td(false,m.cogsPct>0?'var(--c-text3)':'#ef4444')}>{m.ordersLivrate>0?fmt(m.cogsMissing===0?100:(1-m.cogsMissing/m.ordersLivrate)*100,0)+'%':'-'}</td>
                   </tr>
                 ))}
-                <tr style={{background:'rgba(249,115,22,0.05)',fontWeight:700}}>
+                <tr style={{background:'rgba(249,115,22,0.05)'}}>
                   <td style={S.td(true,'var(--c-text)')}>TOTAL</td>
                   <td style={S.td(true,'var(--c-orange)')}>{fmtK(totalRev)}</td>
-                  <td style={S.td(true)}>{fmtK(totalCOGS)}</td>
-                  <td style={S.td(true)}>{fmtK(totalTransport)}</td>
+                  <td style={S.td(true,'#6366f1')}>{fmtK(totalCOGS)}</td>
+                  <td style={S.td(true,'#fbbf24')}>{fmtK(totalTrans)}</td>
                   <td style={S.td(true,'#f97316')}>{fmtK(totalMkt)}</td>
-                  <td style={S.td(true)}>{fmtK(totalFixed2)}</td>
-                  <td style={S.td(true)}>{fmtK(totalCOGS+totalTransport+totalMkt+totalFixed2)}</td>
-                  <td style={S.td(true,S.profColor(totalNet))}>{fmtK(totalNet)}</td>
-                  <td style={S.td(true,S.marginColor(avgMargin))}>{fmt(avgMargin,1)}%</td>
+                  <td style={S.td(true,'#06b6d4')}>{fmtK(totalFixe)}</td>
+                  <td style={S.td(true,S.pC(totalNet))}>{fmtK(totalNet)}</td>
+                  <td style={S.td(true,S.mC(avgMargin))}>{fmt(avgMargin,1)}%</td>
                   <td style={S.td()}>—</td>
-                  <td style={S.td()}>{profitMonths.reduce((s,m)=>s+m.ordersLivrate,0)}</td>
-                  <td style={S.td()}>{profitMonths.reduce((s,m)=>s+m.ordersRetur,0)}</td>
+                  <td style={S.td(false,'#22c55e')}>{profitMonths.reduce((s,m)=>s+m.ordersLivrate,0)}</td>
+                  <td style={S.td(false,'#ef4444')}>{profitMonths.reduce((s,m)=>s+m.ordersRetur,0)}</td>
+                  <td style={S.td()}>{fmt(cogsCoverage,0)}%</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          {/* Cost breakdown */}
-          <div style={{...S.card}}>
-            <div style={S.hdr}>STRUCTURA COSTURILOR — TOTAL PERIOADĂ</div>
+          {/* ── Structura costuri ── */}
+          <div style={S.card}>
+            <div style={S.hdr}>STRUCTURA COSTURILOR — TOTAL</div>
             {[
               {label:'COGS (marfă)',val:totalCOGS,color:'#6366f1'},
               {label:'Marketing (Meta Ads)',val:totalMkt,color:'#f97316'},
-              {label:'Transport (GLS + SD + retur)',val:totalTransport,color:'#fbbf24'},
-              {label:'Cheltuieli fixe',val:totalFixed2,color:'#06b6d4'},
+              {label:'Transport',val:totalTrans,color:'#fbbf24'},
+              {label:'Cheltuieli fixe',val:totalFixe,color:'#06b6d4'},
             ].map((c,i)=>{
-              const totalC=totalCOGS+totalMkt+totalTransport+totalFixed2;
-              const pct=totalC>0?c.val/totalC*100:0;
+              const tot=totalCOGS+totalMkt+totalTrans+totalFixe;
+              const pct=tot>0?c.val/tot*100:0;
               return(
                 <div key={i} style={{marginBottom:12}}>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
@@ -1366,30 +1471,30 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
                     <span style={{color:c.color,fontWeight:700}}>{fmtK(c.val)} RON · {fmt(pct,1)}%</span>
                   </div>
                   <div style={{height:10,background:'var(--c-card2)',borderRadius:5,overflow:'hidden'}}>
-                    <div style={{width:`${pct}%`,height:'100%',background:c.color,transition:'width 0.7s ease'}}/>
+                    <div style={{width:`${pct}%`,height:'100%',background:c.color,transition:'width 0.7s'}}/>
                   </div>
                 </div>
               );
             })}
           </div>
 
-          {/* Stock value */}
+          {/* ── Stoc din XLS ── */}
           {hasStock&&(
-            <div style={{...S.card,background:'rgba(34,197,94,0.05)',border:'1px solid rgba(34,197,94,0.2)'}}>
-              <div style={S.hdr}>📦 STOC LA ZI (din XLS importat)</div>
+            <div style={{...S.card,background:'rgba(34,197,94,0.04)',border:'1px solid rgba(34,197,94,0.15)'}}>
+              <div style={S.hdr}>📦 STOC LA ZI DIN XLS</div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:8,marginBottom:12}}>
-                <div style={S.kpi}><div style={S.kL}>Valoare totală stoc</div><div style={{...S.kV,color:'#22c55e'}}>{fmtK(Object.values(stockMap).reduce((s,v)=>s+v.sold,0))}</div><div style={S.kS}>RON</div></div>
-                <div style={S.kpi}><div style={S.kL}>Nr. SKU-uri</div><div style={S.kV}>{Object.keys(stockMap).length}</div><div style={S.kS}>produse distincte</div></div>
-                <div style={S.kpi}><div style={S.kL}>Total unități</div><div style={S.kV}>{Object.values(stockMap).reduce((s,v)=>s+v.stoc,0)}</div><div style={S.kS}>bucăți în stoc</div></div>
+                <div style={S.kpi}><div style={S.kL}>Valoare stoc</div><div style={{...S.kV,color:'#22c55e',fontSize:20}}>{fmtK(Object.values(stockMap).reduce((s,v)=>s+v.sold,0))}</div><div style={S.kS}>RON</div></div>
+                <div style={S.kpi}><div style={S.kL}>SKU-uri</div><div style={{...S.kV,fontSize:20}}>{Object.keys(stockMap).length}</div><div style={S.kS}>produse</div></div>
+                <div style={S.kpi}><div style={S.kL}>Unități</div><div style={{...S.kV,fontSize:20}}>{Object.values(stockMap).reduce((s,v)=>s+v.stoc,0)}</div><div style={S.kS}>buc în stoc</div></div>
               </div>
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
-                  <thead><tr>{['SKU','Produs','Stoc (buc)','Cost mediu','Valoare'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <thead><tr>{['SKU','Produs','Stoc buc','Cost CMP','Valoare'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
-                    {Object.entries(stockMap).sort((a,b)=>b[1].sold-a[1].sold).map(([cod,v])=>(
+                    {Object.entries(stockMap).sort((a,b)=>b[1].sold-a[1].sold).slice(0,20).map(([cod,v])=>(
                       <tr key={cod}>
                         <td style={S.td(true,'var(--c-orange)')}>{cod}</td>
-                        <td style={{...S.td(),maxWidth:200,overflow:'hidden',textOverflow:'ellipsis'}}>{v.produs.slice(0,40)}{v.produs.length>40?'…':''}</td>
+                        <td style={{...S.td(),maxWidth:180,overflow:'hidden',textOverflow:'ellipsis'}}>{v.produs.slice(0,35)}{v.produs.length>35?'…':''}</td>
                         <td style={S.td()}>{v.stoc}</td>
                         <td style={S.td()}>{fmt(v.cost,2)} RON</td>
                         <td style={S.td(true,'#22c55e')}>{fmt(v.sold,2)} RON</td>
@@ -1407,7 +1512,7 @@ function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
         <div style={{...S.card,textAlign:'center',padding:40}}>
           <div style={{fontSize:32,marginBottom:10}}>💰</div>
           <div style={{fontSize:14,fontWeight:700,color:'var(--c-text)',marginBottom:8}}>Nicio dată disponibilă</div>
-          <div style={{fontSize:12,color:'var(--c-text3)'}}>Asigură-te că comenzile Shopify sunt sincronizate și datele Meta sunt importate.</div>
+          <div style={{fontSize:12,color:'var(--c-text3)'}}>Sincronizează comenzile Shopify și importează CSV Meta.</div>
         </div>
       )}
     </div>
