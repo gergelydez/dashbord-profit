@@ -68,6 +68,13 @@ export default function MetaIntelligencePage(){
   const [tab,setTab]=useState('overview');
   const [selMonth,setSelMonth]=useState(null);
   const [loading,setLoading]=useState(true);
+  const [stockMap,setStockMap]=useState({});   // cod -> {produs,stoc,cost,sold}
+  const [stockFile,setStockFile]=useState('');
+  // Profit settings — mirrors profit/page.js defaults
+  const [transportGLS,setTransportGLS]=useState(21.37);
+  const [transportSD,setTransportSD]=useState(18.00);
+  const [metaAdSpend,setMetaAdSpend]=useState('');
+  const [fixedCosts,setFixedCosts]=useState(890);  // Shopify 290 + Conta 600
 
   /* Load orders */
   useEffect(()=>{
@@ -86,6 +93,22 @@ export default function MetaIntelligencePage(){
       if(saved)setMetaRows(JSON.parse(saved));
       const fn=localStorage.getItem('glamx_meta_csv_name');
       if(fn)setMetaFileName(fn);
+    }catch{}
+  },[]);
+
+  /* Load saved stock */
+  useEffect(()=>{
+    try{
+      const s=localStorage.getItem('glamx_stock_map');
+      if(s)setStockMap(JSON.parse(s));
+      const fn=localStorage.getItem('glamx_stock_file');
+      if(fn)setStockFile(fn);
+      const tr=localStorage.getItem('glamx_transport_per_parcel');
+      if(tr)setTransportGLS(parseFloat(tr)||21.37);
+      const mc=localStorage.getItem('glamx_meta_cost');
+      if(mc)setMetaAdSpend(mc);
+      const fc=localStorage.getItem('glamx_fixed_manual');
+      if(fc)setFixedCosts(parseFloat(fc)||890);
     }catch{}
   },[]);
 
@@ -110,6 +133,53 @@ export default function MetaIntelligencePage(){
         document.body.removeChild(input);
       };
       reader.readAsText(file,'UTF-8');
+    };
+    input.click();
+  }
+
+  /* ── Parse SmartBill XLS stoc ──────────────────────────────────────── */
+  function openStockPicker(){
+    const input=document.createElement('input');
+    input.type='file';
+    input.accept='.xls,.xlsx';
+    input.style.cssText='position:fixed;top:-1000px;left:-1000px;opacity:0;';
+    document.body.appendChild(input);
+    input.onchange=(e)=>{
+      const file=e.target.files[0];
+      if(!file){document.body.removeChild(input);return;}
+      setStockFile(file.name);
+      const reader=new FileReader();
+      reader.onload=(ev)=>{
+        const loadXLS=()=>{
+          try{
+            const wb=window.XLSX.read(ev.target.result,{type:'array'});
+            const ws=wb.Sheets[wb.SheetNames[0]];
+            const rows=window.XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+            let hdrIdx=rows.findIndex(r=>String(r[0]||'').toLowerCase().includes('gestiune'));
+            if(hdrIdx<0)hdrIdx=8;
+            const map={};
+            for(let i=hdrIdx+1;i<rows.length;i++){
+              const r=rows[i];
+              const cod=String(r[2]||'').trim();
+              const produs=String(r[1]||'').trim();
+              const stoc=parseFloat(r[4])||0;
+              const cost=parseFloat(r[5])||0;
+              const sold=parseFloat(r[6])||0;
+              if(!cod||stoc<=0)continue;
+              if(!map[cod]){map[cod]={produs,stoc:0,sold:0,cost};}
+              map[cod].stoc+=stoc;
+              map[cod].sold+=sold;
+              map[cod].cost=map[cod].stoc>0?map[cod].sold/map[cod].stoc:cost;
+            }
+            setStockMap(map);
+            try{localStorage.setItem('glamx_stock_map',JSON.stringify(map));localStorage.setItem('glamx_stock_file',file.name);}catch{}
+          }catch(err){alert('Eroare XLS: '+err.message);}
+        };
+        if(window.XLSX)loadXLS();
+        else{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=loadXLS;document.head.appendChild(s);}
+        document.body.removeChild(input);
+      };
+      reader.readAsArrayBuffer(file);
     };
     input.click();
   }
@@ -422,6 +492,7 @@ export default function MetaIntelligencePage(){
               {id:'campaigns',label:'🏹 Campanii'},
               {id:'audience',label:'👥 Audiențe'},
               {id:'dow',label:'📆 Zile & Ore'},
+              {id:'profit',label:'💰 Profit Lunar'},
               {id:'insights',label:'💡 Insights'},
             ].map(t=><button key={t.id} style={c.tab(tab===t.id)} onClick={()=>setTab(t.id)}>{t.label}</button>)}
           </div>
@@ -959,6 +1030,22 @@ export default function MetaIntelligencePage(){
             </>
           )}
 
+          {/* ══ PROFIT LUNAR ══ */}
+          {tab==='profit'&&(
+            <ProfitTab
+              combined={combined}
+              ord={ord}
+              meta={meta}
+              stockMap={stockMap}
+              stockFile={stockFile}
+              openStockPicker={openStockPicker}
+              transportGLS={transportGLS} setTransportGLS={setTransportGLS}
+              transportSD={transportSD} setTransportSD={setTransportSD}
+              metaAdSpend={metaAdSpend} setMetaAdSpend={setMetaAdSpend}
+              fixedCosts={fixedCosts} setFixedCosts={setFixedCosts}
+            />
+          )}
+
           {/* ══ INSIGHTS ══ */}
           {tab==='insights'&&(
             <>
@@ -1005,6 +1092,322 @@ export default function MetaIntelligencePage(){
             </>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PROFIT TAB COMPONENT
+   Formula identică cu profit/page.js:
+   Net Profit = Revenue - COGS - Transport - Marketing - Fixed - ReturnCost
+══════════════════════════════════════════════════════════════════════════ */
+function ProfitTab({combined,ord,meta,stockMap,stockFile,openStockPicker,
+  transportGLS,setTransportGLS,transportSD,setTransportSD,
+  metaAdSpend,setMetaAdSpend,fixedCosts,setFixedCosts}){
+
+  const fmt=(n,d=2)=>Number(n||0).toLocaleString('ro-RO',{minimumFractionDigits:d,maximumFractionDigits:d});
+  const fmtK=(n)=>Math.abs(n)>=1000?(n/1000).toFixed(1)+'K':fmt(n,0);
+  const pn=(v)=>parseFloat(String(v||'0').replace(/[^\d.-]/g,''))||0;
+
+  const hasStock=Object.keys(stockMap).length>0;
+
+  /* Resolve COGS per order using stockMap (from XLS) then fallback to hardcoded */
+  const FALLBACK_COSTS={
+    DM56:158.95,DM58:164.16,DM59:184.96,DM76:162.05,M99:319.06,
+    BW2GRI:203.15,'BW-2GRI':203.15,HD300PRO:181.00,SK41:112.73,
+    WATCHX:115.27,Z85BLACK:72.30,WS1B:63.76,'WS-1-B':63.76,
+    EARBUDS1:20.83,EARBUDS2:20.79,G69:93.77,TG19:88.83,VITRO:104.68,
+    WBAND:16.94,'WBAND-M':10.55,'WBAND-P':10.55,FAN1:31.17,
+    XPERTCHEMY:23.45,X122:87.67,SET1:72.96,SET2:23.77,
+  };
+  function resolveCost(sku){
+    if(!sku)return 0;
+    const s=String(sku).toUpperCase().replace(/-/g,'');
+    if(hasStock&&stockMap[sku])return stockMap[sku].cost;
+    if(hasStock&&stockMap[s])return stockMap[s].cost;
+    return FALLBACK_COSTS[sku]||FALLBACK_COSTS[s]||0;
+  }
+
+  /* Compute per-month profit */
+  const profitMonths=useMemo(()=>{
+    if(!combined.length)return[];
+    const glsMap=getGlsMap(),sdMap=getSdMap();
+    const orders=(() => {
+      try{
+        const sk=getShopKey();
+        const raw=localStorage.getItem(ordersKey(sk))||localStorage.getItem('gx_orders_60')||localStorage.getItem('gx_orders');
+        return raw?JSON.parse(raw):[];
+      }catch{return[];}
+    })();
+
+    const pad2=n=>String(n).padStart(2,'0');
+
+    return combined.map(m=>{
+      const mKey=m.key;
+      // Filter orders for this month
+      const mOrders=orders.filter(o=>{
+        const d=new Date(o.createdAt||o.created_at||'');
+        if(isNaN(d))return false;
+        return `${d.getFullYear()}-${pad2(d.getMonth()+1)}`===mKey;
+      });
+
+      const mLivrate=mOrders.filter(o=>getFinalStatus(o,glsMap,sdMap)==='livrat');
+      const mRetur=mOrders.filter(o=>getFinalStatus(o,glsMap,sdMap)==='retur');
+
+      // Revenue = sum of livrate orders
+      const revenue=mLivrate.reduce((s,o)=>s+pn(o.total||o.totalPrice||o.total_price||0),0);
+
+      // COGS = sum of item costs for livrate orders
+      const cogs=mLivrate.reduce((s,o)=>{
+        const items=o.items||o.line_items||[];
+        if(!items.length){
+          // No items — use fallback from product title
+          const title=String(o.title||o.product_title||'').toLowerCase();
+          let cost=0;
+          if(title.includes('delta max plus')||title.includes('dm58'))cost=resolveCost('DM58');
+          else if(title.includes('delta max pro')||title.includes('hd300'))cost=resolveCost('HD300PRO');
+          else if(title.includes('delta max'))cost=resolveCost('DM56');
+          return s+cost;
+        }
+        return s+items.reduce((si,item)=>{
+          const sku=item.sku||item.variant_sku||'';
+          const qty=item.quantity||item.qty||1;
+          return si+resolveCost(sku)*qty;
+        },0);
+      },0);
+
+      // Transport
+      const glsCount=mLivrate.filter(o=>o.courier!=='sameday').length;
+      const sdCount=mLivrate.filter(o=>o.courier==='sameday').length;
+      const returCount=mRetur.length;
+      const transport=glsCount*transportGLS + sdCount*transportSD + returCount*transportGLS;
+
+      // Marketing — from Meta CSV if available, else from manual input
+      const metaSpent=m.spent||0;
+      const manualMeta=pn(metaAdSpend);
+      const marketing=metaSpent>0?metaSpent:manualMeta;
+
+      // Fixed costs — prorated by months
+      const monthFixed=pn(fixedCosts);
+
+      // TOTAL COSTS
+      const totalCosts=cogs+transport+marketing+monthFixed;
+      const netProfit=revenue-totalCosts;
+      const margin=revenue>0?netProfit/revenue*100:0;
+      const roas=marketing>0?revenue/marketing:0;
+
+      return{...m,revenue,cogs,transport,marketing,monthFixed,totalCosts,netProfit,margin,roas,
+        ordersLivrate:mLivrate.length,ordersRetur:mRetur.length,
+        cogsPct:revenue>0?cogs/revenue*100:0,
+        transportPct:revenue>0?transport/revenue*100:0,
+        marketingPct:revenue>0?marketing/revenue*100:0,
+      };
+    }).filter(m=>m.revenue>0||m.spent>0);
+  },[combined,stockMap,transportGLS,transportSD,metaAdSpend,fixedCosts]);
+
+  const totalNet=profitMonths.reduce((s,m)=>s+m.netProfit,0);
+  const totalRev=profitMonths.reduce((s,m)=>s+m.revenue,0);
+  const totalMkt=profitMonths.reduce((s,m)=>s+m.marketing,0);
+  const totalCOGS=profitMonths.reduce((s,m)=>s+m.cogs,0);
+  const totalTransport=profitMonths.reduce((s,m)=>s+m.transport,0);
+  const totalFixed2=profitMonths.reduce((s,m)=>s+m.monthFixed,0);
+  const avgMargin=totalRev>0?totalNet/totalRev*100:0;
+
+  const S={
+    card:{background:'var(--c-card)',border:'1px solid var(--c-border2)',borderRadius:12,padding:'14px',marginBottom:12},
+    hdr:{fontSize:10,fontWeight:800,color:'var(--c-text4)',letterSpacing:'0.07em',textTransform:'uppercase',marginBottom:12},
+    kpi:{background:'var(--c-card)',border:'1px solid var(--c-border2)',borderRadius:10,padding:'12px 14px'},
+    kL:{fontSize:10,color:'var(--c-text4)',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:5},
+    kV:{fontSize:22,fontWeight:800,color:'var(--c-text)',lineHeight:1},
+    kS:{fontSize:11,color:'var(--c-text3)',marginTop:4},
+    th:{textAlign:'left',padding:'7px 10px',fontSize:10,fontWeight:800,color:'var(--c-text4)',textTransform:'uppercase',letterSpacing:'0.05em',borderBottom:'1px solid var(--c-border2)',whiteSpace:'nowrap'},
+    td:(bold,color)=>({padding:'8px 10px',borderBottom:'1px solid var(--c-border2)',color:color||'var(--c-text2)',fontWeight:bold?700:400,fontSize:12,whiteSpace:'nowrap'}),
+    inp:{background:'var(--c-card2)',border:'1px solid var(--c-border2)',borderRadius:8,padding:'8px 12px',color:'var(--c-text)',fontSize:13,width:'100%',outline:'none'},
+    profColor:(n)=>n>0?'#22c55e':n>-500?'#fbbf24':'#ef4444',
+    marginColor:(n)=>n>=20?'#22c55e':n>=10?'#fbbf24':n>=0?'#f97316':'#ef4444',
+  };
+
+  function saveSettings(key,val){try{localStorage.setItem(key,String(val));}catch{}}
+
+  return(
+    <div>
+      {/* ── Settings bar ── */}
+      <div style={S.card}>
+        <div style={S.hdr}>⚙️ SETĂRI CALCUL PROFIT</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:10,marginBottom:14}}>
+          <div>
+            <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Transport GLS / colet (RON)</div>
+            <input style={S.inp} type="number" value={transportGLS} onChange={e=>{setTransportGLS(pn(e.target.value));saveSettings('glamx_transport_per_parcel',e.target.value);}} step="0.5"/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Transport SameDay / colet (RON)</div>
+            <input style={S.inp} type="number" value={transportSD} onChange={e=>{setTransportSD(pn(e.target.value));saveSettings('glamx_sd_transport',e.target.value);}} step="0.5"/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Cheltuieli fixe / lună (RON)</div>
+            <input style={S.inp} type="number" value={fixedCosts} onChange={e=>{setFixedCosts(pn(e.target.value));saveSettings('glamx_fixed_manual',e.target.value);}} step="10"/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:4}}>Meta Ads manual (dacă nu ai CSV)</div>
+            <input style={S.inp} type="number" value={metaAdSpend} placeholder="Ex: 2648" onChange={e=>{setMetaAdSpend(e.target.value);saveSettings('glamx_meta_cost',e.target.value);}}/>
+          </div>
+        </div>
+
+        {/* Stock import */}
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',paddingTop:10,borderTop:'1px solid var(--c-border2)'}}>
+          <button onClick={openStockPicker} style={{padding:'8px 14px',borderRadius:8,background:'#22c55e',color:'#000',border:'none',fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
+            📊 Import Stoc XLS (SmartBill)
+          </button>
+          {stockFile
+            ?<span style={{fontSize:11,color:'#22c55e',fontWeight:700}}>✓ {stockFile} · {Object.keys(stockMap).length} SKU-uri la prețuri reale</span>
+            :<span style={{fontSize:11,color:'var(--c-text4)'}}>Fără import → folosește costurile hardcodate din profit/page.js</span>
+          }
+        </div>
+        {hasStock&&(
+          <div style={{marginTop:8,fontSize:11,color:'var(--c-text4)'}}>
+            SKU-uri importate: {Object.keys(stockMap).slice(0,8).join(', ')}{Object.keys(stockMap).length>8?` +${Object.keys(stockMap).length-8} altele`:''}
+          </div>
+        )}
+      </div>
+
+      {/* ── Totals KPIs ── */}
+      {profitMonths.length>0&&(
+        <>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:8,marginBottom:12}}>
+            <div style={S.kpi}><div style={S.kL}>Venituri Totale</div><div style={{...S.kV,color:'var(--c-orange)'}}>{fmtK(totalRev)}</div><div style={S.kS}>RON livrate</div></div>
+            <div style={S.kpi}><div style={S.kL}>Profit Net Total</div><div style={{...S.kV,color:S.profColor(totalNet)}}>{fmtK(totalNet)}</div><div style={S.kS}>RON</div></div>
+            <div style={S.kpi}><div style={S.kL}>Marjă Medie</div><div style={{...S.kV,color:S.marginColor(avgMargin)}}>{fmt(avgMargin,1)}%</div><div style={S.kS}>net / revenue</div></div>
+            <div style={S.kpi}><div style={S.kL}>COGS Total</div><div style={S.kV}>{fmtK(totalCOGS)}</div><div style={S.kS}>RON marfă</div></div>
+            <div style={S.kpi}><div style={S.kL}>Marketing Total</div><div style={{...S.kV,color:'#f97316'}}>{fmtK(totalMkt)}</div><div style={S.kS}>RON ads</div></div>
+            <div style={S.kpi}><div style={S.kL}>Transport Total</div><div style={S.kV}>{fmtK(totalTransport)}</div><div style={S.kS}>RON curier</div></div>
+          </div>
+
+          {/* Profit waterfall chart */}
+          <div style={{...S.card}}>
+            <div style={S.hdr}>PROFIT NET PE LUNĂ</div>
+            {profitMonths.map(m=>{
+              const maxAbs=Math.max(...profitMonths.map(x=>Math.abs(x.netProfit)),1);
+              const pct=Math.abs(m.netProfit)/maxAbs*100;
+              const col=S.profColor(m.netProfit);
+              return(
+                <div key={m.key} style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+                  <div style={{width:55,fontSize:11,color:'var(--c-text3)',textAlign:'right',flexShrink:0}}>{m.short}</div>
+                  <div style={{flex:1,height:28,background:'var(--c-card2)',borderRadius:4,overflow:'hidden',position:'relative'}}>
+                    <div style={{width:`${pct}%`,height:'100%',background:col,borderRadius:4,display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:8,minWidth:2,transition:'width 0.7s ease'}}>
+                      {pct>20&&<span style={{fontSize:11,fontWeight:700,color:'#fff'}}>{fmtK(m.netProfit)} RON</span>}
+                    </div>
+                  </div>
+                  {pct<=20&&<span style={{fontSize:11,fontWeight:700,color:col,minWidth:80}}>{fmtK(m.netProfit)} RON</span>}
+                  <span style={{fontSize:12,fontWeight:700,color:S.marginColor(m.margin),minWidth:45,textAlign:'right'}}>{fmt(m.margin,1)}%</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Detaliu P&L pe luni */}
+          <div style={{...S.card,overflowX:'auto'}}>
+            <div style={S.hdr}>P&L DETALIAT PE LUNI</div>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+              <thead>
+                <tr>{['Lună','Venituri','COGS','Transport','Marketing','Fixe','Total Cost','Profit Net','Marjă','ROAS','Livrate','Retururi'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {profitMonths.map(m=>(
+                  <tr key={m.key} style={{background:m.netProfit>0?'transparent':'rgba(239,68,68,0.04)'}}>
+                    <td style={S.td(true,'var(--c-text)')}>{m.short}</td>
+                    <td style={S.td(false,'var(--c-orange)')}>{fmtK(m.revenue)}</td>
+                    <td style={S.td()}>{fmtK(m.cogs)}</td>
+                    <td style={S.td()}>{fmtK(m.transport)}</td>
+                    <td style={S.td(false,'#f97316')}>{fmtK(m.marketing)}</td>
+                    <td style={S.td()}>{fmtK(m.monthFixed)}</td>
+                    <td style={S.td()}>{fmtK(m.totalCosts)}</td>
+                    <td style={S.td(true,S.profColor(m.netProfit))}>{fmtK(m.netProfit)}</td>
+                    <td style={S.td(true,S.marginColor(m.margin))}>{fmt(m.margin,1)}%</td>
+                    <td style={S.td(false,m.roas>=3?'#22c55e':m.roas>=2?'#fbbf24':'#ef4444')}>{m.marketing>0?fmt(m.roas,2)+'x':'-'}</td>
+                    <td style={S.td(false,'#22c55e')}>{m.ordersLivrate||'-'}</td>
+                    <td style={S.td(false,'#ef4444')}>{m.ordersRetur||'-'}</td>
+                  </tr>
+                ))}
+                <tr style={{background:'rgba(249,115,22,0.05)',fontWeight:700}}>
+                  <td style={S.td(true,'var(--c-text)')}>TOTAL</td>
+                  <td style={S.td(true,'var(--c-orange)')}>{fmtK(totalRev)}</td>
+                  <td style={S.td(true)}>{fmtK(totalCOGS)}</td>
+                  <td style={S.td(true)}>{fmtK(totalTransport)}</td>
+                  <td style={S.td(true,'#f97316')}>{fmtK(totalMkt)}</td>
+                  <td style={S.td(true)}>{fmtK(totalFixed2)}</td>
+                  <td style={S.td(true)}>{fmtK(totalCOGS+totalTransport+totalMkt+totalFixed2)}</td>
+                  <td style={S.td(true,S.profColor(totalNet))}>{fmtK(totalNet)}</td>
+                  <td style={S.td(true,S.marginColor(avgMargin))}>{fmt(avgMargin,1)}%</td>
+                  <td style={S.td()}>—</td>
+                  <td style={S.td()}>{profitMonths.reduce((s,m)=>s+m.ordersLivrate,0)}</td>
+                  <td style={S.td()}>{profitMonths.reduce((s,m)=>s+m.ordersRetur,0)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Cost breakdown */}
+          <div style={{...S.card}}>
+            <div style={S.hdr}>STRUCTURA COSTURILOR — TOTAL PERIOADĂ</div>
+            {[
+              {label:'COGS (marfă)',val:totalCOGS,color:'#6366f1'},
+              {label:'Marketing (Meta Ads)',val:totalMkt,color:'#f97316'},
+              {label:'Transport (GLS + SD + retur)',val:totalTransport,color:'#fbbf24'},
+              {label:'Cheltuieli fixe',val:totalFixed2,color:'#06b6d4'},
+            ].map((c,i)=>{
+              const totalC=totalCOGS+totalMkt+totalTransport+totalFixed2;
+              const pct=totalC>0?c.val/totalC*100:0;
+              return(
+                <div key={i} style={{marginBottom:12}}>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
+                    <span style={{color:'var(--c-text)',fontWeight:600}}>{c.label}</span>
+                    <span style={{color:c.color,fontWeight:700}}>{fmtK(c.val)} RON · {fmt(pct,1)}%</span>
+                  </div>
+                  <div style={{height:10,background:'var(--c-card2)',borderRadius:5,overflow:'hidden'}}>
+                    <div style={{width:`${pct}%`,height:'100%',background:c.color,transition:'width 0.7s ease'}}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Stock value */}
+          {hasStock&&(
+            <div style={{...S.card,background:'rgba(34,197,94,0.05)',border:'1px solid rgba(34,197,94,0.2)'}}>
+              <div style={S.hdr}>📦 STOC LA ZI (din XLS importat)</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:8,marginBottom:12}}>
+                <div style={S.kpi}><div style={S.kL}>Valoare totală stoc</div><div style={{...S.kV,color:'#22c55e'}}>{fmtK(Object.values(stockMap).reduce((s,v)=>s+v.sold,0))}</div><div style={S.kS}>RON</div></div>
+                <div style={S.kpi}><div style={S.kL}>Nr. SKU-uri</div><div style={S.kV}>{Object.keys(stockMap).length}</div><div style={S.kS}>produse distincte</div></div>
+                <div style={S.kpi}><div style={S.kL}>Total unități</div><div style={S.kV}>{Object.values(stockMap).reduce((s,v)=>s+v.stoc,0)}</div><div style={S.kS}>bucăți în stoc</div></div>
+              </div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead><tr>{['SKU','Produs','Stoc (buc)','Cost mediu','Valoare'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {Object.entries(stockMap).sort((a,b)=>b[1].sold-a[1].sold).map(([cod,v])=>(
+                      <tr key={cod}>
+                        <td style={S.td(true,'var(--c-orange)')}>{cod}</td>
+                        <td style={{...S.td(),maxWidth:200,overflow:'hidden',textOverflow:'ellipsis'}}>{v.produs.slice(0,40)}{v.produs.length>40?'…':''}</td>
+                        <td style={S.td()}>{v.stoc}</td>
+                        <td style={S.td()}>{fmt(v.cost,2)} RON</td>
+                        <td style={S.td(true,'#22c55e')}>{fmt(v.sold,2)} RON</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {profitMonths.length===0&&(
+        <div style={{...S.card,textAlign:'center',padding:40}}>
+          <div style={{fontSize:32,marginBottom:10}}>💰</div>
+          <div style={{fontSize:14,fontWeight:700,color:'var(--c-text)',marginBottom:8}}>Nicio dată disponibilă</div>
+          <div style={{fontSize:12,color:'var(--c-text3)'}}>Asigură-te că comenzile Shopify sunt sincronizate și datele Meta sunt importate.</div>
+        </div>
       )}
     </div>
   );
