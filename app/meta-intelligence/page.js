@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 /* ─── Helpers ────────────────────────────────────────────────────────────── */
 const fmt  = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -82,7 +82,6 @@ export default function MetaIntelligencePage() {
   const [activeTab, setActiveTab]   = useState('overview');
   const [activeMonth, setActiveMonth] = useState(null);
   const [loading, setLoading]       = useState(true);
-  const fileRef = useRef();
 
   /* Load orders from localStorage */
   useEffect(() => {
@@ -359,23 +358,24 @@ export default function MetaIntelligencePage() {
             <div style={S.sub}>Performanță completă · Meta Ads + Comenzi Shopify · Lunar & Zilnic</div>
           </div>
           <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-            <button onClick={()=>fileRef.current?.click()} style={{ padding:'8px 14px', borderRadius:8, background:'var(--c-orange)', color:'#fff', border:'none', fontSize:13, fontWeight:700, cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}>
+            <label style={{ padding:'8px 14px', borderRadius:8, background:'var(--c-orange)', color:'#fff', border:'none', fontSize:13, fontWeight:700, cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}>
               📥 Import CSV Meta
-            </button>
+              <input type="file" accept=".csv" style={{display:'none'}} onChange={handleMetaUpload} />
+            </label>
             {metaFile && <span style={{ ...S.badge('green'), padding:'8px 12px', fontSize:12 }}>✓ {metaFile}</span>}
-            <input ref={fileRef} type="file" accept=".csv" style={{display:'none'}} onChange={handleMetaUpload} />
           </div>
         </div>
       </div>
 
       {/* ── No data state ── */}
       {!hasData && !loading && (
-        <div style={{ ...S.uploadZone, maxWidth:500, margin:'40px auto' }} onClick={()=>fileRef.current?.click()}>
+        <label style={{ ...S.uploadZone, maxWidth:500, margin:'40px auto', display:'block' }}>
           <div style={{ fontSize:48, marginBottom:12 }}>📊</div>
           <div style={{ fontSize:16, fontWeight:700, color:'var(--c-text)', marginBottom:8 }}>Importă datele Meta Ads</div>
-          <div style={{ fontSize:13, color:'var(--c-text3)', marginBottom:16 }}>Exportă CSV din Meta Ads Manager (Jan–Mai 2026) și încarcă-l aici. Datele din Shopify se încarcă automat.</div>
-          <div style={{ ...S.badge(''), padding:'10px 20px', fontSize:13, borderRadius:8, background:'var(--c-orange)', color:'#fff', display:'inline-block', fontWeight:700 }}>Alege fișier CSV →</div>
-        </div>
+          <div style={{ fontSize:13, color:'var(--c-text3)', marginBottom:16 }}>Exportă CSV din Meta Ads Manager și încarcă-l aici. Datele din Shopify se încarcă automat.</div>
+          <div style={{ padding:'10px 20px', fontSize:13, borderRadius:8, background:'var(--c-orange)', color:'#fff', display:'inline-block', fontWeight:700 }}>Alege fișier CSV →</div>
+          <input type="file" accept=".csv" style={{display:'none'}} onChange={handleMetaUpload} />
+        </label>
       )}
 
       {/* ── Tabs ── */}
