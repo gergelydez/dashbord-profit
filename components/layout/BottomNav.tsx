@@ -18,6 +18,7 @@ const Ico = {
   xconn:   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
   gls:     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v4h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>,
   stats:   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>,
+  meta:    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/><circle cx="18" cy="2" r="2"/><circle cx="6" cy="14" r="2"/><circle cx="12" cy="8" r="2"/></svg>,
   profit:  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
   import:  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
   sales:   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>,
@@ -28,10 +29,11 @@ const Ico = {
 
 /* ─── Primary tabs (always visible) ────────────────────────── */
 const PRIMARY = [
-  { href: '/',                  icon: Ico.comenzi, label: 'Comenzi'    },
-  { href: '/stats',             icon: Ico.stats,   label: 'Stats'      },
-  { href: '/profit',            icon: Ico.profit,  label: 'Profit'     },
-  { href: '/xconnector',        icon: Ico.xconn,   label: 'xConn'      },
+  { href: '/',                      icon: Ico.comenzi, label: 'Comenzi'    },
+  { href: '/stats',                 icon: Ico.stats,   label: 'Stats'      },
+  { href: '/profit',                icon: Ico.profit,  label: 'Profit'     },
+  { href: '/meta-intelligence',     icon: Ico.meta,    label: 'Meta Intel' },
+  { href: '/xconnector',            icon: Ico.xconn,   label: 'xConn'      },
 ];
 
 /* ─── Secondary tabs (inside "More" drawer) ─────────────────── */
