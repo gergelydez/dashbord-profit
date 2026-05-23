@@ -1,640 +1,957 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
 
-/* ─── Helpers ────────────────────────────────────────────────────────────── */
-const fmt  = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
-const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
-const pad2 = (n) => String(n).padStart(2, '0');
+/* ─── Helpers ─────────────────────────────────────────────────────────────── */
+const fmt  = (n, dec=2) => Number(n||0).toLocaleString('ro-RO',{minimumFractionDigits:dec,maximumFractionDigits:dec});
+const fmtK = (n) => Math.abs(n)>=1000?(n/1000).toFixed(1)+'K':fmt(n,0);
+const pad2 = (n) => String(n).padStart(2,'0');
 const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+const pn = (v) => parseFloat(String(v||'0').replace(/[^\d.-]/g,''))||0;
 
-function getShopKey() {
-  try {
-    const s = typeof window !== 'undefined' ? localStorage.getItem('glamx-shop') : null;
-    const p = s ? JSON.parse(s) : null;
-    return p?.state?.currentShop || 'ro';
-  } catch { return 'ro'; }
-}
-const ordersKey = (sk) => sk === 'ro' ? 'gx_orders_all' : `gx_orders_all_${sk}`;
+function getShopKey(){try{const s=typeof window!=='undefined'?localStorage.getItem('glamx-shop'):null;const p=s?JSON.parse(s):null;return p?.state?.currentShop||'ro';}catch{return'ro';}}
+const ordersKey=(sk)=>sk==='ro'?'gx_orders_all':`gx_orders_all_${sk}`;
+function getGlsMap(){try{const s=localStorage.getItem('gls_awb_map');return s?JSON.parse(s):{};}catch{return{};}}
+function getSdMap(){try{const s=localStorage.getItem('sd_awb_map');return s?JSON.parse(s):{};}catch{return{};}}
 
-function getGlsAwbMap() { try { const s=localStorage.getItem('gls_awb_map'); return s?JSON.parse(s):{};} catch{return {};}}
-function getSdAwbMap()  { try { const s=localStorage.getItem('sd_awb_map');  return s?JSON.parse(s):{};} catch{return {};}}
-
-const RETUR_STATUSES = ['returned','failure','failed_attempt','return_in_progress','failed_delivery'];
-function getFinalStatus(o, glsMap, sdMap) {
-  if (o.courier === 'gls') { const awb=(o.trackingNo||'').trim(); if (awb && glsMap[awb]) return glsMap[awb]; }
-  if (o.courier === 'sameday') { const awb=(o.trackingNo||'').trim(); if (awb && sdMap[awb]) return sdMap[awb]; if (o.ts && o.ts!=='pending') return o.ts; return 'incurs'; }
-  if (o.ts && o.ts !== 'pending') return o.ts;
-  const tags = (Array.isArray(o.tags)?o.tags:[]).map(t=>String(t).toLowerCase());
-  if (RETUR_STATUSES.some(s=>tags.includes(s))||tags.includes('retur')||tags.includes('refuz')) return 'retur';
+const RETUR_ST=['returned','failure','failed_attempt','return_in_progress','failed_delivery'];
+function getFinalStatus(o,gls,sd){
+  if(o.courier==='gls'){const a=(o.trackingNo||'').trim();if(a&&gls[a])return gls[a];}
+  if(o.courier==='sameday'){const a=(o.trackingNo||'').trim();if(a&&sd[a])return sd[a];if(o.ts&&o.ts!=='pending')return o.ts;return'incurs';}
+  if(o.ts&&o.ts!=='pending')return o.ts;
+  const tags=(Array.isArray(o.tags)?o.tags:[]).map(t=>String(t).toLowerCase());
+  if(RETUR_ST.some(s=>tags.includes(s))||tags.includes('retur')||tags.includes('refuz'))return'retur';
   const fin=(o.financial||o.financial_status||'').toLowerCase();
-  if (fin==='paid'||(o.fulfillmentStatus||'').toLowerCase()==='fulfilled') return 'livrat';
-  return o.ts || 'pending';
+  if(fin==='paid'||(o.fulfillmentStatus||'').toLowerCase()==='fulfilled')return'livrat';
+  return o.ts||'pending';
 }
 
-const MONTHS_RO = ['Ian','Feb','Mar','Apr','Mai','Iun','Iul','Aug','Sep','Oct','Nov','Dec'];
-const MONTHS_FULL = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
-const DAYS_RO = ['Dum','Lun','Mar','Mie','Joi','Vin','Sâm'];
-const DAYS_FULL = ['Duminică','Luni','Marți','Miercuri','Joi','Vineri','Sâmbătă'];
+const MONTHS_RO=['Ian','Feb','Mar','Apr','Mai','Iun','Iul','Aug','Sep','Oct','Nov','Dec'];
+const MONTHS_FULL=['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+const DAYS_FULL=['Duminică','Luni','Marți','Miercuri','Joi','Vineri','Sâmbătă'];
+const DAYS_SHORT=['Dum','Lun','Mar','Mie','Joi','Vin','Sâm'];
 
-/* ─── CSV Parser for Meta Ads ────────────────────────────────────────────── */
-function splitCSV(line) {
-  const res=[]; let cur='', q=false;
-  for (const c of line) { if(c==='"') q=!q; else if((c===','||c===';')&&!q){res.push(cur);cur='';} else cur+=c; }
-  res.push(cur); return res;
+/* ─── CSV Parser ─────────────────────────────────────────────────────────── */
+function splitCSV(line){const res=[];let cur='',q=false;for(const c of line){if(c==='"')q=!q;else if((c===','||c===';')&&!q){res.push(cur);cur='';}else cur+=c;}res.push(cur);return res;}
+function parseMetaCSV(text){
+  const lines=text.split('\n').filter(l=>l.trim());
+  if(lines.length<2)return[];
+  const headers=splitCSV(lines[0]).map(h=>h.trim().replace(/^"|"$/g,''));
+  return lines.slice(1).map(line=>{
+    const cols=splitCSV(line);
+    const row={};
+    headers.forEach((h,i)=>{row[h]=(cols[i]||'').trim().replace(/^"|"$/g,'');});
+    return row;
+  }).filter(r=>Object.values(r).some(v=>v));
 }
 
-function parseMetaCSV(text) {
-  const lines = text.split('\n').filter(l=>l.trim());
-  if (lines.length < 2) return [];
-  const headers = splitCSV(lines[0]).map(h=>h.trim().replace(/^"|"$/g,''));
-  const rows = [];
-  for (let i=1; i<lines.length; i++) {
-    const cols = splitCSV(lines[i]);
-    const row = {};
-    headers.forEach((h,idx) => { row[h] = (cols[idx]||'').trim().replace(/^"|"$/g,''); });
-    rows.push(row);
-  }
-  return rows;
+/* ─── Color scale ────────────────────────────────────────────────────────── */
+const cpaColor=(v)=>v<=52?'#22c55e':v<=65?'#86efac':v<=80?'#fbbf24':v<=100?'#f97316':'#ef4444';
+const cpaBg=(v)=>v<=52?'rgba(34,197,94,0.1)':v<=65?'rgba(134,239,172,0.06)':v<=80?'rgba(251,191,36,0.08)':'rgba(239,68,68,0.08)';
+const ctrColor=(v)=>v>=3.5?'#22c55e':v>=2.5?'#fbbf24':'#ef4444';
+const cvrColor=(v)=>v>=1.3?'#22c55e':v>=1.0?'#fbbf24':'#ef4444';
+
+/* ─── Grade helper ───────────────────────────────────────────────────────── */
+function grade(cpa){
+  if(cpa<=0)return{label:'—',color:'var(--c-text4)'};
+  if(cpa<=52)return{label:'A+',color:'#22c55e'};
+  if(cpa<=65)return{label:'A',color:'#86efac'};
+  if(cpa<=80)return{label:'B',color:'#fbbf24'};
+  if(cpa<=100)return{label:'C',color:'#f97316'};
+  return{label:'D',color:'#ef4444'};
 }
 
-function parseNum(v) { return parseFloat(String(v||'0').replace(/[^\d.-]/g,''))||0; }
+/* ══════════════════════════════════════════════════════════════════════════ */
+export default function MetaIntelligencePage(){
+  const [orders,setOrders]=useState([]);
+  const [metaRows,setMetaRows]=useState([]);
+  const [metaFileName,setMetaFileName]=useState('');
+  const [tab,setTab]=useState('overview');
+  const [selMonth,setSelMonth]=useState(null);
+  const [loading,setLoading]=useState(true);
 
-/* ─── Color helpers ──────────────────────────────────────────────────────── */
-function cpaColor(cpa) {
-  if (cpa <= 55) return '#22c55e';
-  if (cpa <= 70) return '#86efac';
-  if (cpa <= 85) return '#fbbf24';
-  if (cpa <= 100) return '#f97316';
-  return '#ef4444';
-}
-function cpaBg(cpa) {
-  if (cpa <= 55) return 'rgba(34,197,94,0.12)';
-  if (cpa <= 70) return 'rgba(134,239,172,0.08)';
-  if (cpa <= 85) return 'rgba(251,191,36,0.1)';
-  return 'rgba(249,115,22,0.1)';
-}
-
-/* ─── Main Component ─────────────────────────────────────────────────────── */
-export default function MetaIntelligencePage() {
-  const [orders, setOrders]         = useState([]);
-  const [metaRows, setMetaRows]     = useState([]);
-  const [metaFile, setMetaFile]     = useState(null);
-  const [activeTab, setActiveTab]   = useState('overview');
-  const [activeMonth, setActiveMonth] = useState(null);
-  const [loading, setLoading]       = useState(true);
-
-  /* Load orders from localStorage */
-  useEffect(() => {
-    try {
-      const sk = getShopKey();
-      const raw = localStorage.getItem(ordersKey(sk)) || localStorage.getItem('gx_orders_60') || localStorage.getItem('gx_orders');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setOrders(Array.isArray(parsed) ? parsed : []);
-      }
-    } catch(e) { console.error(e); }
+  /* Load orders */
+  useEffect(()=>{
+    try{
+      const sk=getShopKey();
+      const raw=localStorage.getItem(ordersKey(sk))||localStorage.getItem('gx_orders_60')||localStorage.getItem('gx_orders');
+      if(raw)setOrders(JSON.parse(raw)||[]);
+    }catch(e){console.error(e);}
     setLoading(false);
-  }, []);
+  },[]);
 
-  /* Load saved Meta CSV from localStorage */
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('glamx_meta_csv_rows');
-      if (saved) setMetaRows(JSON.parse(saved));
-    } catch {}
-  }, []);
+  /* Load saved Meta rows */
+  useEffect(()=>{
+    try{
+      const saved=localStorage.getItem('glamx_meta_csv_rows');
+      if(saved)setMetaRows(JSON.parse(saved));
+      const fn=localStorage.getItem('glamx_meta_csv_name');
+      if(fn)setMetaFileName(fn);
+    }catch{}
+  },[]);
 
-  /* Handle Meta CSV upload */
-  function handleMetaUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    setMetaFile(file.name);
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const rows = parseMetaCSV(ev.target.result);
-      setMetaRows(rows);
-      try { localStorage.setItem('glamx_meta_csv_rows', JSON.stringify(rows)); } catch {}
+  function openFilePicker(){
+    const input=document.createElement('input');
+    input.type='file';
+    input.accept='.csv,text/csv,application/csv';
+    input.style.position='fixed';
+    input.style.top='-1000px';
+    input.style.left='-1000px';
+    input.style.opacity='0';
+    document.body.appendChild(input);
+    input.onchange=(e)=>{
+      const file=e.target.files[0];
+      if(!file){document.body.removeChild(input);return;}
+      setMetaFileName(file.name);
+      const reader=new FileReader();
+      reader.onload=(ev)=>{
+        const rows=parseMetaCSV(ev.target.result);
+        setMetaRows(rows);
+        try{localStorage.setItem('glamx_meta_csv_rows',JSON.stringify(rows));localStorage.setItem('glamx_meta_csv_name',file.name);}catch{}
+        document.body.removeChild(input);
+      };
+      reader.readAsText(file,'UTF-8');
     };
-    reader.readAsText(file, 'UTF-8');
+    input.click();
   }
 
-  /* ─── Compute Meta stats ──────────────────────────────────────────────── */
-  const metaStats = useMemo(() => {
-    if (!metaRows.length) return null;
-    // Find column names flexibly
-    const sample = metaRows[0];
-    const keys = Object.keys(sample);
-    const findKey = (...candidates) => keys.find(k => candidates.some(c => k.toLowerCase().includes(c.toLowerCase()))) || '';
-    const dateKey    = findKey('Reporting starts','date','data');
-    const spentKey   = findKey('Amount spent','Suma cheltuita','spent');
-    const convKey    = findKey('Results','Rezultate','conversions','purchases');
-    const cpaKey     = findKey('Cost per result','Cost per rezultat','CPA');
-    const reachKey   = findKey('Reach','Acoperire');
-    const impKey     = findKey('Impressions','Afisari');
-    const clickKey   = findKey('Link clicks','Clicuri');
-    const ctrKey     = findKey('CTR (link','CTR');
-    const cpmKey     = findKey('CPM');
-    const cpcKey     = findKey('CPC (cost per link');
+  /* ── Parse Meta CSV into structured stats ─────────────────────────────── */
+  const meta=useMemo(()=>{
+    if(!metaRows.length)return null;
+    const k=metaRows[0];const keys=Object.keys(k);
+    const fk=(...cands)=>keys.find(k2=>cands.some(c=>k2.toLowerCase().includes(c.toLowerCase())))||'';
+    const DATE=fk('Reporting starts','date');
+    const SPENT=fk('Amount spent','Suma cheltuita');
+    const CONV=fk('Results','Rezultate');
+    const REACH=fk('Reach','Acoperire');
+    const FREQ=fk('Frequency','Frecventa');
+    const IMPR=fk('Impressions','Afisari');
+    const CLICKS=fk('Link clicks','Clicuri link');
+    const CTR=fk('CTR (link','CTR');
+    const CPM=fk('CPM');
+    const CPC=fk('CPC (cost per link');
+    const LPV=fk('Landing page views');
+    const ATC=fk('Adds to cart');
+    const CATC=fk('Cost per add to cart');
+    const CAMP=fk('Campaign name','Campanie');
+    const AGE=fk('Age','Varsta');
+    const BUDGET=fk('Ad set budget');
+    const DELIVERY=fk('Campaign delivery');
 
-    // By month
-    const byMonth = {};
-    // By day of week
-    const byDow = {0:{day:'Duminică',spent:0,conv:0},1:{day:'Luni',spent:0,conv:0},2:{day:'Marți',spent:0,conv:0},3:{day:'Miercuri',spent:0,conv:0},4:{day:'Joi',spent:0,conv:0},5:{day:'Vineri',spent:0,conv:0},6:{day:'Sâmbătă',spent:0,conv:0}};
+    // Accumulators
+    const byMonth={};
+    const byDow=Object.fromEntries(Array.from({length:7},(_,i)=>[i,{dow:i,spent:0,conv:0,impr:0,clicks:0,atc:0,lpv:0}]));
+    const byAge={};
+    const byCamp={};
+    const byHour=Array.from({length:24},(_,i)=>({hour:i,spent:0,conv:0}));
+    let tot={spent:0,conv:0,impr:0,clicks:0,atc:0,lpv:0,reach:0};
 
-    let totalSpent=0, totalConv=0, totalImpr=0, totalClicks=0, totalReach=0;
+    metaRows.forEach(row=>{
+      const ds=row[DATE];if(!ds)return;
+      const d=new Date(ds+'T12:00:00');if(isNaN(d))return;
+      const spent=pn(row[SPENT]),conv=pn(row[CONV]),impr=pn(row[IMPR]),
+            clicks=pn(row[CLICKS]),atc=pn(row[ATC]),lpv=pn(row[LPV]),
+            reach=pn(row[REACH]),freq=pn(row[FREQ]),budget=pn(row[BUDGET]);
+      const mKey=`${d.getFullYear()}-${pad2(d.getMonth()+1)}`;
+      const dow=d.getDay();
+      const age=row[AGE]||'Unknown';
+      const camp=row[CAMP]||'Unknown';
 
-    metaRows.forEach(row => {
-      const dateStr = row[dateKey];
-      if (!dateStr) return;
-      const d = new Date(dateStr + 'T12:00:00');
-      if (isNaN(d)) return;
-      const spent = parseNum(row[spentKey]);
-      const conv  = parseNum(row[convKey]);
-      const impr  = parseNum(row[impKey]);
-      const clicks= parseNum(row[clickKey]);
-      const reach = parseNum(row[reachKey]);
-      const mKey  = `${d.getFullYear()}-${pad2(d.getMonth()+1)}`;
-      const dow   = d.getDay();
+      // by month
+      if(!byMonth[mKey])byMonth[mKey]={key:mKey,label:MONTHS_FULL[d.getMonth()]+' '+d.getFullYear(),
+        short:MONTHS_RO[d.getMonth()]+' '+d.getFullYear().toString().slice(2),
+        m:d.getMonth(),y:d.getFullYear(),spent:0,conv:0,impr:0,clicks:0,atc:0,lpv:0,reach:0,freqSum:0,freqCnt:0,budgetSum:0,budgetCnt:0};
+      byMonth[mKey].spent+=spent;byMonth[mKey].conv+=conv;byMonth[mKey].impr+=impr;
+      byMonth[mKey].clicks+=clicks;byMonth[mKey].atc+=atc;byMonth[mKey].lpv+=lpv;byMonth[mKey].reach+=reach;
+      if(freq>0){byMonth[mKey].freqSum+=freq;byMonth[mKey].freqCnt++;}
+      if(budget>0){byMonth[mKey].budgetSum+=budget;byMonth[mKey].budgetCnt++;}
 
-      if (!byMonth[mKey]) byMonth[mKey] = { month: mKey, spent:0, conv:0, impr:0, clicks:0, reach:0, label: MONTHS_FULL[d.getMonth()]+' '+d.getFullYear(), m: d.getMonth(), y: d.getFullYear() };
-      byMonth[mKey].spent  += spent;
-      byMonth[mKey].conv   += conv;
-      byMonth[mKey].impr   += impr;
-      byMonth[mKey].clicks += clicks;
-      byMonth[mKey].reach  += reach;
+      // by dow
+      byDow[dow].spent+=spent;byDow[dow].conv+=conv;byDow[dow].impr+=impr;byDow[dow].clicks+=clicks;byDow[dow].atc+=atc;byDow[dow].lpv+=lpv;
 
-      byDow[dow].spent += spent;
-      byDow[dow].conv  += conv;
+      // by age
+      if(!byAge[age])byAge[age]={age,spent:0,conv:0,impr:0,clicks:0};
+      byAge[age].spent+=spent;byAge[age].conv+=conv;byAge[age].impr+=impr;byAge[age].clicks+=clicks;
 
-      totalSpent  += spent;
-      totalConv   += conv;
-      totalImpr   += impr;
-      totalClicks += clicks;
-      totalReach  += reach;
+      // by campaign
+      if(!byCamp[camp])byCamp[camp]={camp,spent:0,conv:0,impr:0,clicks:0,atc:0,lpv:0,reach:0};
+      byCamp[camp].spent+=spent;byCamp[camp].conv+=conv;byCamp[camp].impr+=impr;
+      byCamp[camp].clicks+=clicks;byCamp[camp].atc+=atc;byCamp[camp].lpv+=lpv;byCamp[camp].reach+=reach;
+
+      tot.spent+=spent;tot.conv+=conv;tot.impr+=impr;tot.clicks+=clicks;tot.atc+=atc;tot.lpv+=lpv;tot.reach+=reach;
     });
 
-    const months = Object.values(byMonth).sort((a,b)=>a.month.localeCompare(b.month));
-    months.forEach(m => { m.cpa = m.conv ? m.spent/m.conv : 0; m.ctr = m.impr ? (m.clicks/m.impr)*100 : 0; m.cpm = m.impr ? (m.spent/m.impr)*1000 : 0; m.cpc = m.clicks ? m.spent/m.clicks : 0; });
+    // Compute derived metrics
+    const months=Object.values(byMonth).sort((a,b)=>a.key.localeCompare(b.key)).map(m=>({
+      ...m,
+      cpa:m.conv?m.spent/m.conv:0,
+      ctr:m.impr?m.clicks/m.impr*100:0,
+      cpm:m.impr?m.spent/m.impr*1000:0,
+      cpc:m.clicks?m.spent/m.clicks:0,
+      cvr:m.lpv?m.conv/m.lpv*100:0,
+      atcRate:m.lpv?m.atc/m.lpv*100:0,
+      lpvRate:m.clicks?m.lpv/m.clicks*100:0,
+      freq:m.freqCnt?m.freqSum/m.freqCnt:0,
+      avgBudget:m.budgetCnt?m.budgetSum/m.budgetCnt:0,
+    }));
+    const dowArr=Object.values(byDow).map(d=>({...d,
+      cpa:d.conv?d.spent/d.conv:0,ctr:d.impr?d.clicks/d.impr*100:0,
+      cvr:d.lpv?d.conv/d.lpv*100:0,atcRate:d.lpv?d.atc/d.lpv*100:0,
+    }));
+    const ageArr=Object.values(byAge).map(a=>({...a,
+      cpa:a.conv?a.spent/a.conv:0,ctr:a.impr?a.clicks/a.impr*100:0,
+      pct:tot.spent?a.spent/tot.spent*100:0,
+    })).sort((a,b)=>b.spent-a.spent);
+    const campArr=Object.values(byCamp).map(c=>({...c,
+      cpa:c.conv?c.spent/c.conv:0,ctr:c.impr?c.clicks/c.impr*100:0,
+      cvr:c.lpv?c.conv/c.lpv*100:0,atcRate:c.lpv?c.atc/c.lpv*100:0,
+      cpc:c.clicks?c.spent/c.clicks:0,cpm:c.impr?c.spent/c.impr*1000:0,
+      lpvRate:c.clicks?c.lpv/c.clicks*100:0,
+    })).filter(c=>c.spent>100).sort((a,b)=>a.cpa-b.cpa);
 
-    const dowArr = Object.values(byDow).map(d => ({ ...d, cpa: d.conv ? d.spent/d.conv : 0 }));
+    const avgCPA=tot.conv?tot.spent/tot.conv:0;
+    const avgCTR=tot.impr?tot.clicks/tot.impr*100:0;
+    const avgCPM=tot.impr?tot.spent/tot.impr*1000:0;
+    const avgCVR=tot.lpv?tot.conv/tot.lpv*100:0;
+    const avgCPC=tot.clicks?tot.spent/tot.clicks:0;
+    const avgATC=tot.lpv?tot.atc/tot.lpv*100:0;
 
-    return { months, dowArr, totalSpent, totalConv, totalImpr, totalClicks, totalReach,
-      avgCPA: totalConv ? totalSpent/totalConv : 0,
-      avgCTR: totalImpr ? (totalClicks/totalImpr)*100 : 0,
-      avgCPM: totalImpr ? (totalSpent/totalImpr)*1000 : 0,
+    return{months,dowArr,ageArr,campArr,tot,avgCPA,avgCTR,avgCPM,avgCVR,avgCPC,avgATC};
+  },[metaRows]);
+
+  /* ── Parse Orders ─────────────────────────────────────────────────────── */
+  const ord=useMemo(()=>{
+    if(!orders.length)return null;
+    const gls=getGlsMap(),sd=getSdMap();
+    const byMonth={},byDow=Object.fromEntries(Array.from({length:7},(_,i)=>[i,{dow:i,cnt:0,livrat:0,retur:0,refuz:0,rev:0}]));
+    const byHour=Array.from({length:24},(_,i)=>({hour:i,cnt:0,livrat:0}));
+    let tot={cnt:0,livrat:0,retur:0,refuz:0,rev:0};
+
+    orders.forEach(o=>{
+      const d=new Date(o.createdAt||o.created_at||'');if(isNaN(d))return;
+      const mKey=`${d.getFullYear()}-${pad2(d.getMonth()+1)}`;
+      const dow=d.getDay(),hour=d.getHours();
+      const st=getFinalStatus(o,gls,sd);
+      const rev=pn(o.total||o.totalPrice||o.total_price||0);
+      const isL=st==='livrat',isR=st==='retur',isF=['anulat','refuzat'].includes(st);
+
+      if(!byMonth[mKey])byMonth[mKey]={key:mKey,m:d.getMonth(),y:d.getFullYear(),cnt:0,livrat:0,retur:0,refuz:0,rev:0};
+      byMonth[mKey].cnt++;byMonth[mKey].rev+=rev;
+      if(isL)byMonth[mKey].livrat++;else if(isR)byMonth[mKey].retur++;else if(isF)byMonth[mKey].refuz++;
+
+      byDow[dow].cnt++;byDow[dow].rev+=rev;
+      if(isL)byDow[dow].livrat++;if(isR)byDow[dow].retur++;if(isF)byDow[dow].refuz++;
+
+      byHour[hour].cnt++;if(isL)byHour[hour].livrat++;
+
+      tot.cnt++;tot.rev+=rev;if(isL)tot.livrat++;else if(isR)tot.retur++;else if(isF)tot.refuz++;
+    });
+
+    const months=Object.values(byMonth).sort((a,b)=>a.key.localeCompare(b.key)).map(m=>({
+      ...m,livrareRate:m.cnt?(m.livrat/m.cnt*100):0,returRate:m.cnt?(m.retur/m.cnt*100):0,
+      refuzRate:m.cnt?(m.refuz/m.cnt*100):0,avgOrder:m.livrat?(m.rev/m.livrat):0,
+    }));
+    const dowArr=Object.values(byDow).map(d=>({...d,livrareRate:d.cnt?d.livrat/d.cnt*100:0,returRate:d.cnt?d.retur/d.cnt*100:0}));
+
+    return{months,dowArr,byHour,tot,
+      livrareRate:tot.cnt?tot.livrat/tot.cnt*100:0,
+      returRate:tot.cnt?tot.retur/tot.cnt*100:0,
     };
-  }, [metaRows]);
+  },[orders]);
 
-  /* ─── Compute Orders stats ────────────────────────────────────────────── */
-  const orderStats = useMemo(() => {
-    if (!orders.length) return null;
-    const glsMap = getGlsAwbMap();
-    const sdMap  = getSdAwbMap();
-
-    const byMonth = {};
-    const byDow   = {0:{day:'Duminică',cnt:0,livrat:0,retur:0,refuz:0,revenue:0},1:{day:'Luni',cnt:0,livrat:0,retur:0,refuz:0,revenue:0},2:{day:'Marți',cnt:0,livrat:0,retur:0,refuz:0,revenue:0},3:{day:'Miercuri',cnt:0,livrat:0,retur:0,refuz:0,revenue:0},4:{day:'Joi',cnt:0,livrat:0,retur:0,refuz:0,revenue:0},5:{day:'Vineri',cnt:0,livrat:0,retur:0,refuz:0,revenue:0},6:{day:'Sâmbătă',cnt:0,livrat:0,retur:0,refuz:0,revenue:0}};
-    const byHour  = Array.from({length:24},(_,i)=>({hour:i,cnt:0,livrat:0}));
-
-    orders.forEach(o => {
-      const d = new Date(o.createdAt||o.created_at||'');
-      if (isNaN(d)) return;
-      const mKey = `${d.getFullYear()}-${pad2(d.getMonth()+1)}`;
-      const dow  = d.getDay();
-      const hour = d.getHours();
-      const status = getFinalStatus(o, glsMap, sdMap);
-      const revenue = parseNum(o.total||o.totalPrice||o.total_price||0);
-      const isLivrat = status === 'livrat';
-      const isRetur  = status === 'retur';
-      const isRefuz  = status === 'anulat' || status === 'refuzat';
-
-      if (!byMonth[mKey]) byMonth[mKey] = { month: mKey, cnt:0, livrat:0, retur:0, refuz:0, incurs:0, revenue:0, label: MONTHS_FULL[d.getMonth()]+' '+d.getFullYear(), m: d.getMonth(), y: d.getFullYear() };
-      byMonth[mKey].cnt++;
-      byMonth[mKey].revenue += revenue;
-      if (isLivrat) byMonth[mKey].livrat++;
-      else if (isRetur) byMonth[mKey].retur++;
-      else if (isRefuz) byMonth[mKey].refuz++;
-      else byMonth[mKey].incurs++;
-
-      byDow[dow].cnt++;
-      byDow[dow].revenue += revenue;
-      if (isLivrat) byDow[dow].livrat++;
-      if (isRetur)  byDow[dow].retur++;
-      if (isRefuz)  byDow[dow].refuz++;
-
-      byHour[hour].cnt++;
-      if (isLivrat) byHour[hour].livrat++;
-    });
-
-    const months = Object.values(byMonth).sort((a,b)=>a.month.localeCompare(b.month));
-    months.forEach(m => {
-      m.livrareRate = m.cnt ? (m.cnt - m.retur - m.refuz)/m.cnt*100 : 0;
-      m.returRate   = m.cnt ? m.retur/m.cnt*100 : 0;
-      m.refuzRate   = m.cnt ? m.refuz/m.cnt*100 : 0;
-      m.avgOrder    = m.livrat ? m.revenue/m.livrat : 0;
-    });
-
-    const dowArr = Object.values(byDow).map(d=>({...d, livrareRate: d.cnt?(d.cnt-d.retur-d.refuz)/d.cnt*100:0, returRate: d.cnt?d.retur/d.cnt*100:0}));
-    const totalOrders  = orders.length;
-    const totalLivrat  = orders.filter(o=>getFinalStatus(o,glsMap,sdMap)==='livrat').length;
-    const totalRetur   = orders.filter(o=>getFinalStatus(o,glsMap,sdMap)==='retur').length;
-    const totalRefuz   = orders.filter(o=>['anulat','refuzat'].includes(getFinalStatus(o,glsMap,sdMap))).length;
-    const totalRevenue = orders.reduce((s,o)=>s+parseNum(o.total||o.totalPrice||o.total_price||0),0);
-
-    return { months, dowArr, byHour, totalOrders, totalLivrat, totalRetur, totalRefuz, totalRevenue,
-      livrareRate: totalOrders ? totalLivrat/totalOrders*100 : 0,
-      returRate:   totalOrders ? totalRetur/totalOrders*100 : 0,
-    };
-  }, [orders]);
-
-  /* ─── Combined monthly data ───────────────────────────────────────────── */
-  const combinedMonths = useMemo(() => {
-    const allKeys = new Set([
-      ...(metaStats?.months||[]).map(m=>m.month),
-      ...(orderStats?.months||[]).map(m=>m.month),
-    ]);
-    return Array.from(allKeys).sort().map(key => {
-      const meta  = metaStats?.months.find(m=>m.month===key)||{};
-      const ord   = orderStats?.months.find(m=>m.month===key)||{};
-      const label = meta.label || ord.label || key;
-      const spent  = meta.spent  || 0;
-      const conv   = meta.conv   || 0;
-      const cpa    = conv ? spent/conv : 0;
-      const orders = ord.cnt     || 0;
-      const livrat = ord.livrat  || 0;
-      const retur  = ord.retur   || 0;
-      const refuz  = ord.refuz   || 0;
-      const revenue= ord.revenue || 0;
-      const profit = revenue - spent - (livrat * 154.80); // approx COGS Delta Max
-      return { key, label, spent, conv, cpa, orders, livrat, retur, refuz, revenue, profit,
-        returRate: orders ? retur/orders*100 : 0,
-        livrareRate: orders ? (orders-retur-refuz)/orders*100 : 0,
-        m: meta.m ?? ord.m, y: meta.y ?? ord.y,
+  /* ── Combined monthly ─────────────────────────────────────────────────── */
+  const combined=useMemo(()=>{
+    const allKeys=new Set([...(meta?.months||[]).map(m=>m.key),...(ord?.months||[]).map(m=>m.key)]);
+    return Array.from(allKeys).sort().map(key=>{
+      const m=meta?.months.find(x=>x.key===key)||{};
+      const o=ord?.months.find(x=>x.key===key)||{};
+      const label=m.label||(o.m!==undefined?MONTHS_FULL[o.m]+' '+o.y:'');
+      const short=m.short||(o.m!==undefined?MONTHS_RO[o.m]+' '+String(o.y).slice(2):'');
+      const cpa=m.cpa||0;
+      const realCPA=(m.spent&&o.livrat)?m.spent/o.livrat:0;
+      return{key,label,short,m:m.m??o.m,y:m.y??o.y,
+        spent:m.spent||0,conv:m.conv||0,cpa,ctr:m.ctr||0,cpm:m.cpm||0,
+        cpc:m.cpc||0,cvr:m.cvr||0,atcRate:m.atcRate||0,freq:m.freq||0,
+        impr:m.impr||0,clicks:m.clicks||0,atc:m.atc||0,lpv:m.lpv||0,reach:m.reach||0,
+        orders:o.cnt||0,livrat:o.livrat||0,retur:o.retur||0,refuz:o.refuz||0,rev:o.rev||0,
+        livrareRate:o.livrareRate||0,returRate:o.returRate||0,avgOrder:o.avgOrder||0,
+        realCPA,
       };
     });
-  }, [metaStats, orderStats]);
+  },[meta,ord]);
 
-  const selectedMonth = useMemo(() => {
-    if (!activeMonth) return null;
-    return combinedMonths.find(m=>m.key===activeMonth);
-  }, [activeMonth, combinedMonths]);
+  const selMonthData=useMemo(()=>selMonth?combined.find(m=>m.key===selMonth):null,[selMonth,combined]);
 
-  /* ─── Best/Worst DOW analysis ────────────────────────────────────────── */
-  const dowAnalysis = useMemo(() => {
-    if (!metaStats && !orderStats) return [];
-    return Array.from({length:7},(_,i)=>({
-      day:   DAYS_FULL[i],
-      short: DAYS_RO[i],
-      metaSpent: metaStats?.dowArr[i]?.spent || 0,
-      metaConv:  metaStats?.dowArr[i]?.conv  || 0,
-      metaCPA:   metaStats?.dowArr[i]?.cpa   || 0,
-      ordCnt:    orderStats?.dowArr[i]?.cnt  || 0,
-      ordLivrat: orderStats?.dowArr[i]?.livrat || 0,
-      ordRetur:  orderStats?.dowArr[i]?.retur  || 0,
-      ordRevenue:orderStats?.dowArr[i]?.revenue || 0,
-      returRate: orderStats?.dowArr[i]?.returRate || 0,
-    }));
-  }, [metaStats, orderStats]);
+  /* ── Insights engine ─────────────────────────────────────────────────── */
+  const insights=useMemo(()=>{
+    const list=[];
+    if(!meta&&!ord)return list;
 
-  /* ─── Recommendations engine ─────────────────────────────────────────── */
-  const recommendations = useMemo(() => {
-    const recs = [];
-    if (metaStats) {
-      const bestDow = [...dowAnalysis].filter(d=>d.metaCPA>0).sort((a,b)=>a.metaCPA-b.metaCPA)[0];
-      const worstDow= [...dowAnalysis].filter(d=>d.metaCPA>0).sort((a,b)=>b.metaCPA-a.metaCPA)[0];
-      if (bestDow)  recs.push({ type:'win',  icon:'📈', title:`Mărește bugetul ${bestDow.day}`, body:`CPA ${fmt(bestDow.metaCPA,0)} RON — cea mai bună zi. Adaugă +25-30% buget.` });
-      if (worstDow) recs.push({ type:'stop', icon:'⚠️', title:`Reduce bugetul ${worstDow.day}`, body:`CPA ${fmt(worstDow.metaCPA,0)} RON — cea mai slabă zi. Scade cu 20-30%.` });
-      const bestMonth = [...(metaStats.months||[])].filter(m=>m.cpa>0&&m.conv>=5).sort((a,b)=>a.cpa-b.cpa)[0];
-      if (bestMonth) recs.push({ type:'win', icon:'🏆', title:`Model luna ${bestMonth.label.split(' ')[0]}`, body:`CPA ${fmt(bestMonth.cpa,0)} RON cu ${bestMonth.conv} conversii. Replicați structura campaniei.` });
-      if (metaStats.avgCPA > 70) recs.push({ type:'warn', icon:'💡', title:'CPA mediu prea mare', body:`${fmt(metaStats.avgCPA,0)} RON actual vs. 52-60 RON target. Focusați pe zilele cu CPA < 70 RON.` });
+    // Best/worst campaign
+    if(meta?.campArr.length){
+      const best=meta.campArr.filter(c=>c.conv>=5)[0];
+      const worst=[...meta.campArr].filter(c=>c.conv>=5).sort((a,b)=>b.cpa-a.cpa)[0];
+      if(best)list.push({type:'win',icon:'🏆',title:`Cea mai bună campanie: ${best.camp.replace('CBO ','').replace('cbo ','')}`,body:`CPA ${fmt(best.cpa,0)} RON · CTR ${fmt(best.ctr,2)}% · CVR ${fmt(best.cvr,2)}% · ${best.conv} conversii`});
+      if(worst&&worst.camp!==best?.camp)list.push({type:'stop',icon:'🔴',title:`Cea mai slabă: ${worst.camp.replace('CBO ','').replace('cbo ','')}`,body:`CPA ${fmt(worst.cpa,0)} RON · CVR ${fmt(worst.cvr,2)}% — Problema e pe landing page sau audiență greșită`});
     }
-    if (orderStats) {
-      if (orderStats.returRate > 20) recs.push({ type:'stop', icon:'📦', title:'Rata retur ridicată', body:`${fmt(orderStats.returRate,1)}% retururi. Verificați calitatea produsului și promisiunile din reclame.` });
-      const worstReturnDay = [...(orderStats.dowArr||[])].filter(d=>d.cnt>5).sort((a,b)=>b.returRate-a.returRate)[0];
-      if (worstReturnDay?.returRate > 25) recs.push({ type:'warn', icon:'🔍', title:`Retururi mari ${worstReturnDay.day}`, body:`${fmt(worstReturnDay.returRate,1)}% retur comenzile din ${worstReturnDay.day}. Analizați ce tip de client cumpără atunci.` });
-    }
-    return recs;
-  }, [metaStats, orderStats, dowAnalysis]);
 
-  /* ─── Styles ──────────────────────────────────────────────────────────── */
-  const S = {
-    page:    { padding: '16px', maxWidth: 1200, margin: '0 auto', paddingBottom: 100, fontFamily: 'inherit' },
-    header:  { marginBottom: 20 },
-    title:   { fontSize: 22, fontWeight: 800, color: 'var(--c-text)', letterSpacing: '-0.5px' },
-    sub:     { fontSize: 13, color: 'var(--c-text3)', marginTop: 3 },
-    tabs:    { display:'flex', gap:6, marginBottom:20, overflowX:'auto', paddingBottom:2 },
-    tab:     (active) => ({ padding:'8px 16px', borderRadius:8, fontSize:13, fontWeight:600, cursor:'pointer', border:'none', background: active?'var(--c-orange)':'var(--c-card2)', color: active?'#fff':'var(--c-text2)', whiteSpace:'nowrap', transition:'all 120ms' }),
-    grid:    (cols=2) => ({ display:'grid', gridTemplateColumns:`repeat(${cols},1fr)`, gap:12, marginBottom:16 }),
-    card:    { background:'var(--c-card)', border:'1px solid var(--c-border2)', borderRadius:12, padding:'16px' },
-    cardHdr: { fontSize:11, fontWeight:700, color:'var(--c-text4)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:12 },
-    kpi:     { background:'var(--c-card)', border:'1px solid var(--c-border2)', borderRadius:12, padding:'16px 18px' },
-    kpiLabel:{ fontSize:11, color:'var(--c-text4)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 },
-    kpiVal:  { fontSize:28, fontWeight:800, color:'var(--c-text)', lineHeight:1 },
-    kpiSub:  { fontSize:11, color:'var(--c-text3)', marginTop:4 },
-    badge:   (color) => ({ display:'inline-block', padding:'2px 8px', borderRadius:6, fontSize:11, fontWeight:700, background: color==='green'?'rgba(34,197,94,0.15)':color==='red'?'rgba(239,68,68,0.15)':color==='yellow'?'rgba(251,191,36,0.15)':'rgba(249,115,22,0.15)', color: color==='green'?'#22c55e':color==='red'?'#ef4444':color==='yellow'?'#fbbf24':'var(--c-orange)' }),
-    barRow:  { display:'flex', alignItems:'center', gap:10, marginBottom:10 },
-    barLabel:{ width:70, fontSize:12, color:'var(--c-text3)', textAlign:'right', flexShrink:0 },
-    barTrack:{ flex:1, height:28, background:'var(--c-card2)', borderRadius:4, overflow:'hidden', position:'relative' },
-    barFill: (pct, color) => ({ width:`${Math.min(pct,100)}%`, height:'100%', background:color, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:6, minWidth:2, transition:'width 0.6s ease' }),
-    barVal:  { fontSize:11, fontWeight:700, color:'#fff', whiteSpace:'nowrap' },
-    monthCard: (active) => ({ background: active?'rgba(249,115,22,0.1)':'var(--c-card2)', border:`1px solid ${active?'var(--c-orange)':'var(--c-border2)'}`, borderRadius:10, padding:'12px 14px', cursor:'pointer', transition:'all 120ms' }),
-    recCard: (type) => ({ background: type==='win'?'rgba(34,197,94,0.07)':type==='stop'?'rgba(239,68,68,0.07)':'rgba(251,191,36,0.07)', border:`1px solid ${type==='win'?'rgba(34,197,94,0.2)':type==='stop'?'rgba(239,68,68,0.2)':'rgba(251,191,36,0.2)'}`, borderRadius:10, padding:'14px' }),
-    uploadZone: { border:'2px dashed var(--c-border2)', borderRadius:12, padding:'32px', textAlign:'center', cursor:'pointer', transition:'border-color 120ms' },
-    table: { width:'100%', borderCollapse:'collapse', fontSize:13 },
-    th: { textAlign:'left', padding:'8px 10px', fontSize:10, fontWeight:700, color:'var(--c-text4)', textTransform:'uppercase', letterSpacing:'0.05em', borderBottom:'1px solid var(--c-border2)' },
-    td: { padding:'9px 10px', borderBottom:'1px solid var(--c-border2)', color:'var(--c-text2)', verticalAlign:'middle' },
+    // Age insight
+    if(meta?.ageArr.length){
+      const bestAge=meta.ageArr.filter(a=>a.conv>=5).sort((a,b)=>a.cpa-b.cpa)[0];
+      const worstAge=meta.ageArr.filter(a=>a.conv>=5).sort((a,b)=>b.cpa-a.cpa)[0];
+      if(bestAge)list.push({type:'win',icon:'👤',title:`Audiența câștigătoare: ${bestAge.age} ani`,body:`CPA ${fmt(bestAge.cpa,0)} RON · ${fmt(bestAge.pct,1)}% din buget · ${bestAge.conv} conversii. Mărește bugetul pe acest segment.`});
+      if(worstAge&&worstAge.age!==bestAge?.age)list.push({type:'warn',icon:'⚠️',title:`Audiența risipitoare: ${worstAge.age} ani`,body:`CPA ${fmt(worstAge.cpa,0)} RON — de ${fmt(worstAge.cpa/bestAge.cpa,1)}x mai scump decât ${bestAge.age} ani. Reduce sau exclude.`});
+    }
+
+    // CTR insight
+    if(meta){
+      if(meta.avgCTR<2.5)list.push({type:'stop',icon:'📉',title:'CTR prea mic — creativele nu opresc scroll-ul',body:`CTR mediu ${fmt(meta.avgCTR,2)}% vs. benchmark 3%+. Hook-ul primelor 3 secunde e problema. Testează 3-4 hooks noi.`});
+      else if(meta.avgCTR>=3)list.push({type:'win',icon:'✅',title:'CTR excelent — creativele performează',body:`CTR ${fmt(meta.avgCTR,2)}% — ești deasupra mediei Meta pentru e-commerce. Scalează bugetul.`});
+    }
+
+    // CVR insight
+    if(meta){
+      if(meta.avgCVR<1)list.push({type:'stop',icon:'🛒',title:'CVR sub 1% — problema e pe landing page',body:`Rata de conversie ${fmt(meta.avgCVR,2)}% — oamenii vin pe site dar nu cumpără. Optimizează pagina produsului: viteza, recenzii, CTA clar.`});
+      else if(meta.avgCVR>=1.3)list.push({type:'win',icon:'🛒',title:`CVR ${fmt(meta.avgCVR,2)}% — landing page convertește bine`,body:`Benchmark pentru smartwatch e-commerce: 1-1.5%. Ești în zona bună. Focusează pe CPA și creative.`});
+    }
+
+    // DOW insight
+    if(meta?.dowArr){
+      const best=meta.dowArr.filter(d=>d.conv>=3).sort((a,b)=>a.cpa-b.cpa)[0];
+      const worst=meta.dowArr.filter(d=>d.conv>=3).sort((a,b)=>b.cpa-a.cpa)[0];
+      if(best)list.push({type:'win',icon:'📅',title:`${DAYS_FULL[best.dow]} — ziua ta de aur`,body:`CPA ${fmt(best.cpa,0)} RON. Mărește bugetul cu +30% ${DAYS_FULL[best.dow]}. Nu opri niciodată campania în acea zi.`});
+      if(worst&&worst.dow!==best?.dow)list.push({type:'warn',icon:'📅',title:`${DAYS_FULL[worst.dow]} — ziua costisitoare`,body:`CPA ${fmt(worst.cpa,0)} RON. Reduce bugetul cu 20-30% dar nu opri total — algoritmul pierde date.`});
+    }
+
+    // Return rate
+    if(ord){
+      if(ord.returRate>20)list.push({type:'stop',icon:'📦',title:`Rată retur ${fmt(ord.returRate,1)}% — alarmant`,body:`Benchmark sănătos: sub 10%. Verifică calitatea produsului și concordanța cu promisiunile din reclame.`});
+      else if(ord.returRate<8)list.push({type:'win',icon:'📦',title:`Rată retur excelentă: ${fmt(ord.returRate,1)}%`,body:`Sub 8% e excelent pentru smartwatch COD România. Clienții sunt mulțumiți de ce primesc.`});
+    }
+
+    // Frecvency
+    if(meta){
+      const avgFreq=meta.months.reduce((s,m)=>s+(m.freq||0),0)/meta.months.filter(m=>m.freq>0).length;
+      if(avgFreq>2.5)list.push({type:'warn',icon:'🔁',title:`Frecvența ${fmt(avgFreq,2)} — audiență obosită`,body:`Peste 2.5 înseamnă că arăți reclamele aceleiași persoane de prea multe ori. Extinde audiența sau schimbă creativele.`});
+    }
+
+    return list;
+  },[meta,ord]);
+
+  /* ── Top vs Bottom campaign analysis ─────────────────────────────────── */
+  const campAnalysis=useMemo(()=>{
+    if(!meta?.campArr)return{top:[],bottom:[],avgCTR:0,avgCVR:0};
+    const withConv=meta.campArr.filter(c=>c.conv>=5);
+    const top=withConv.filter(c=>c.cpa<=65).sort((a,b)=>a.cpa-b.cpa);
+    const bottom=withConv.filter(c=>c.cpa>=100).sort((a,b)=>b.cpa-a.cpa);
+    const avgCTR=withConv.length?withConv.reduce((s,c)=>s+c.ctr,0)/withConv.length:0;
+    const avgCVR=withConv.length?withConv.reduce((s,c)=>s+c.cvr,0)/withConv.length:0;
+    return{top,bottom,all:meta.campArr,avgCTR,avgCVR};
+  },[meta]);
+
+  /* ── Styles ───────────────────────────────────────────────────────────── */
+  const c={
+    page:{padding:'12px',maxWidth:1100,margin:'0 auto',paddingBottom:100},
+    hdr:{fontSize:20,fontWeight:800,color:'var(--c-text)',letterSpacing:'-0.4px'},
+    sub:{fontSize:12,color:'var(--c-text3)',marginTop:3},
+    tabs:{display:'flex',gap:6,marginBottom:16,overflowX:'auto',paddingBottom:2,WebkitOverflowScrolling:'touch'},
+    tab:(a)=>({padding:'7px 14px',borderRadius:8,fontSize:12,fontWeight:700,cursor:'pointer',border:'none',
+      background:a?'var(--c-orange)':'var(--c-card2)',color:a?'#fff':'var(--c-text2)',whiteSpace:'nowrap',flexShrink:0}),
+    card:{background:'var(--c-card)',border:'1px solid var(--c-border2)',borderRadius:12,padding:'14px'},
+    cardHdr:{fontSize:10,fontWeight:800,color:'var(--c-text4)',letterSpacing:'0.07em',textTransform:'uppercase',marginBottom:12},
+    kpi:{background:'var(--c-card)',border:'1px solid var(--c-border2)',borderRadius:10,padding:'14px 16px'},
+    kL:{fontSize:10,color:'var(--c-text4)',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:5},
+    kV:{fontSize:26,fontWeight:800,color:'var(--c-text)',lineHeight:1},
+    kS:{fontSize:11,color:'var(--c-text3)',marginTop:4},
+    grid:(n)=>({display:'grid',gridTemplateColumns:`repeat(${n},1fr)`,gap:10,marginBottom:12}),
+    badge:(color)=>({display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:6,fontSize:11,fontWeight:700,
+      background:color==='green'?'rgba(34,197,94,0.15)':color==='red'?'rgba(239,68,68,0.15)':color==='yellow'?'rgba(251,191,36,0.15)':'rgba(249,115,22,0.15)',
+      color:color==='green'?'#22c55e':color==='red'?'#ef4444':color==='yellow'?'#fbbf24':'var(--c-orange)'}),
+    th:{textAlign:'left',padding:'7px 10px',fontSize:10,fontWeight:800,color:'var(--c-text4)',textTransform:'uppercase',letterSpacing:'0.05em',borderBottom:'1px solid var(--c-border2)',whiteSpace:'nowrap'},
+    td:(bold,color)=>({padding:'8px 10px',borderBottom:'1px solid var(--c-border2)',color:color||'var(--c-text2)',fontWeight:bold?700:400,fontSize:12,whiteSpace:'nowrap'}),
+    row:(active)=>({background:active?'rgba(249,115,22,0.05)':'transparent',cursor:'pointer'}),
+    insight:(t)=>({background:t==='win'?'rgba(34,197,94,0.07)':t==='stop'?'rgba(239,68,68,0.07)':'rgba(251,191,36,0.07)',
+      border:`1px solid ${t==='win'?'rgba(34,197,94,0.2)':t==='stop'?'rgba(239,68,68,0.2)':'rgba(251,191,36,0.2)'}`,
+      borderRadius:10,padding:'12px 14px',marginBottom:10}),
+    bar:{display:'flex',alignItems:'center',gap:8,marginBottom:10},
+    barLbl:{width:65,fontSize:11,color:'var(--c-text3)',textAlign:'right',flexShrink:0},
+    barTrk:{flex:1,height:26,background:'var(--c-card2)',borderRadius:4,overflow:'hidden',position:'relative'},
+    barFl:(pct,col)=>({width:`${Math.min(pct,100)}%`,height:'100%',background:col,borderRadius:4,display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:6,minWidth:2,transition:'width 0.7s ease'}),
+    barV:{fontSize:11,fontWeight:700,color:'#fff',whiteSpace:'nowrap'},
+    sep:{borderTop:'1px solid var(--c-border2)',margin:'12px 0'},
   };
 
-  const hasData = metaStats || orderStats;
+  const hasData=!!(meta||ord);
 
-  /* ─── Render ─────────────────────────────────────────────────────────── */
-  return (
-    <div style={S.page}>
+  /* ── Month card click ─────────────────────────────────────────────────── */
+  const toggleMonth=(key)=>setSelMonth(prev=>prev===key?null:key);
 
-      {/* ── Header ── */}
-      <div style={S.header}>
-        <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
-          <div>
-            <div style={S.title}>📊 Meta Intelligence</div>
-            <div style={S.sub}>Performanță completă · Meta Ads + Comenzi Shopify · Lunar & Zilnic</div>
-          </div>
-          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-            <label style={{ padding:'8px 14px', borderRadius:8, background:'var(--c-orange)', color:'#fff', border:'none', fontSize:13, fontWeight:700, cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}>
-              📥 Import CSV Meta
-              <input type="file" accept=".csv" style={{display:'none'}} onChange={handleMetaUpload} />
-            </label>
-            {metaFile && <span style={{ ...S.badge('green'), padding:'8px 12px', fontSize:12 }}>✓ {metaFile}</span>}
-          </div>
+  return(
+    <div style={c.page}>
+      {/* Header */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:10,marginBottom:16}}>
+        <div>
+          <div style={c.hdr}>🎯 Meta Intelligence</div>
+          <div style={c.sub}>Analiză completă · Funnel · Audiențe · Campanii · Comenzi · Insight-uri experte</div>
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          {metaFileName&&<span style={{...c.badge('green'),fontSize:11,padding:'6px 10px'}}>✓ {metaFileName}</span>}
+          <button onClick={openFilePicker} style={{padding:'8px 14px',borderRadius:8,background:'var(--c-orange)',color:'#fff',border:'none',fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
+            📥 Import CSV Meta
+          </button>
         </div>
       </div>
 
-      {/* ── No data state ── */}
-      {!hasData && !loading && (
-        <label style={{ ...S.uploadZone, maxWidth:500, margin:'40px auto', display:'block' }}>
-          <div style={{ fontSize:48, marginBottom:12 }}>📊</div>
-          <div style={{ fontSize:16, fontWeight:700, color:'var(--c-text)', marginBottom:8 }}>Importă datele Meta Ads</div>
-          <div style={{ fontSize:13, color:'var(--c-text3)', marginBottom:16 }}>Exportă CSV din Meta Ads Manager și încarcă-l aici. Datele din Shopify se încarcă automat.</div>
-          <div style={{ padding:'10px 20px', fontSize:13, borderRadius:8, background:'var(--c-orange)', color:'#fff', display:'inline-block', fontWeight:700 }}>Alege fișier CSV →</div>
-          <input type="file" accept=".csv" style={{display:'none'}} onChange={handleMetaUpload} />
-        </label>
+      {/* Empty state */}
+      {!hasData&&!loading&&(
+        <div style={{border:'2px dashed var(--c-border2)',borderRadius:12,padding:'40px 24px',textAlign:'center',maxWidth:480,margin:'40px auto'}}>
+          <div style={{fontSize:40,marginBottom:10}}>📊</div>
+          <div style={{fontSize:15,fontWeight:700,color:'var(--c-text)',marginBottom:8}}>Importă datele Meta Ads</div>
+          <div style={{fontSize:12,color:'var(--c-text3)',marginBottom:16,lineHeight:1.6}}>Exportă CSV din Ads Manager cu breakdown pe Age și zi. Datele Shopify se încarcă automat din cache.</div>
+          <button onClick={openFilePicker} style={{padding:'10px 24px',background:'var(--c-orange)',color:'#fff',borderRadius:8,display:'inline-block',fontWeight:700,fontSize:13,border:'none',cursor:'pointer'}}>Alege fișier CSV →</button>
+        </div>
       )}
 
-      {/* ── Tabs ── */}
-      {hasData && (
+      {hasData&&(
         <>
-          <div style={S.tabs}>
+          {/* Tabs */}
+          <div style={c.tabs}>
             {[
-              {id:'overview',  label:'📈 Overview'},
-              {id:'monthly',   label:'📅 Pe Luni'},
-              {id:'dow',       label:'📆 Pe Zile'},
-              {id:'hourly',    label:'⏰ Pe Ore'},
-              {id:'recs',      label:'🎯 Recomandări'},
-            ].map(t=>(
-              <button key={t.id} style={S.tab(activeTab===t.id)} onClick={()=>setActiveTab(t.id)}>{t.label}</button>
-            ))}
+              {id:'overview',label:'📈 Overview'},
+              {id:'funnel',label:'🔽 Funnel'},
+              {id:'monthly',label:'📅 Pe Luni'},
+              {id:'campaigns',label:'🏹 Campanii'},
+              {id:'audience',label:'👥 Audiențe'},
+              {id:'dow',label:'📆 Zile & Ore'},
+              {id:'insights',label:'💡 Insights'},
+            ].map(t=><button key={t.id} style={c.tab(tab===t.id)} onClick={()=>setTab(t.id)}>{t.label}</button>)}
           </div>
 
-          {/* ════════════════════════════════ OVERVIEW ═══════════════════════════ */}
-          {activeTab === 'overview' && (
+          {/* ══ OVERVIEW ══ */}
+          {tab==='overview'&&(
             <>
-              {/* KPIs Row 1 — Meta */}
-              {metaStats && (
+              {/* Meta KPIs */}
+              {meta&&(
                 <>
-                  <div style={{ ...S.cardHdr, marginBottom:8, fontSize:10 }}>META ADS · TOTAL PERIOADĂ</div>
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:10, marginBottom:16 }}>
-                    <div style={S.kpi}><div style={S.kpiLabel}>Cheltuit</div><div style={{...S.kpiVal, color:'var(--c-orange)'}}>{fmtK(metaStats.totalSpent)}</div><div style={S.kpiSub}>RON total</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>Conversii</div><div style={S.kpiVal}>{metaStats.totalConv}</div><div style={S.kpiSub}>achiziții</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>CPA Mediu</div><div style={{...S.kpiVal, color:cpaColor(metaStats.avgCPA)}}>{fmt(metaStats.avgCPA,0)}</div><div style={S.kpiSub}>RON / achiziție</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>CPM</div><div style={S.kpiVal}>{fmt(metaStats.avgCPM,0)}</div><div style={S.kpiSub}>RON / 1000 afișări</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>CTR</div><div style={S.kpiVal}>{fmt(metaStats.avgCTR,2)}%</div><div style={S.kpiSub}>click-through rate</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>Reach</div><div style={S.kpiVal}>{fmtK(metaStats.totalReach)}</div><div style={S.kpiSub}>persoane unice</div></div>
+                  <div style={{...c.cardHdr,marginBottom:8}}>META ADS · PERFORMANȚĂ TOTALĂ</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:8,marginBottom:12}}>
+                    <div style={c.kpi}><div style={c.kL}>Cheltuit</div><div style={{...c.kV,color:'var(--c-orange)'}}>{fmtK(meta.tot.spent)}</div><div style={c.kS}>RON total</div></div>
+                    <div style={c.kpi}><div style={c.kL}>Conversii Meta</div><div style={c.kV}>{meta.tot.conv}</div><div style={c.kS}>pixel purchases</div></div>
+                    <div style={c.kpi}><div style={c.kL}>CPA Meta</div><div style={{...c.kV,color:cpaColor(meta.avgCPA)}}>{fmt(meta.avgCPA,0)}</div><div style={c.kS}>RON / conv</div></div>
+                    <div style={c.kpi}><div style={c.kL}>CTR</div><div style={{...c.kV,color:ctrColor(meta.avgCTR)}}>{fmt(meta.avgCTR,2)}%</div><div style={c.kS}>click-through</div></div>
+                    <div style={c.kpi}><div style={c.kL}>CVR</div><div style={{...c.kV,color:cvrColor(meta.avgCVR)}}>{fmt(meta.avgCVR,2)}%</div><div style={c.kS}>conv rate</div></div>
+                    <div style={c.kpi}><div style={c.kL}>CPM</div><div style={c.kV}>{fmt(meta.avgCPM,0)}</div><div style={c.kS}>RON / 1K imp</div></div>
+                    <div style={c.kpi}><div style={c.kL}>CPC</div><div style={c.kV}>{fmt(meta.avgCPC,2)}</div><div style={c.kS}>RON / click</div></div>
+                    <div style={c.kpi}><div style={c.kL}>Reach</div><div style={c.kV}>{fmtK(meta.tot.reach)}</div><div style={c.kS}>persoane unice</div></div>
+                    <div style={c.kpi}><div style={c.kL}>Add to Cart</div><div style={c.kV}>{meta.tot.atc}</div><div style={c.kS}>{fmt(meta.avgATC,2)}% din LPV</div></div>
                   </div>
                 </>
               )}
 
-              {/* KPIs Row 2 — Orders */}
-              {orderStats && (
+              {/* Orders KPIs */}
+              {ord&&(
                 <>
-                  <div style={{ ...S.cardHdr, marginBottom:8, fontSize:10 }}>COMENZI SHOPIFY · TOTAL PERIOADĂ</div>
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:10, marginBottom:16 }}>
-                    <div style={S.kpi}><div style={S.kpiLabel}>Total comenzi</div><div style={S.kpiVal}>{orderStats.totalOrders}</div><div style={S.kpiSub}>plasate</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>Livrate</div><div style={{...S.kpiVal, color:'#22c55e'}}>{orderStats.totalLivrat}</div><div style={S.kpiSub}>{fmt(orderStats.livrareRate,1)}% rată</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>Retururi</div><div style={{...S.kpiVal, color:'#ef4444'}}>{orderStats.totalRetur}</div><div style={S.kpiSub}>{fmt(orderStats.returRate,1)}% rată</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>Refuzate</div><div style={{...S.kpiVal, color:'#f97316'}}>{orderStats.totalRefuz}</div><div style={S.kpiSub}>neprimite</div></div>
-                    <div style={S.kpi}><div style={S.kpiLabel}>Venituri brute</div><div style={S.kpiVal}>{fmtK(orderStats.totalRevenue)}</div><div style={S.kpiSub}>RON total</div></div>
+                  <div style={{...c.cardHdr,marginBottom:8}}>SHOPIFY · REALITATEA</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:8,marginBottom:12}}>
+                    <div style={c.kpi}><div style={c.kL}>Total comenzi</div><div style={c.kV}>{ord.tot.cnt}</div><div style={c.kS}>plasate</div></div>
+                    <div style={c.kpi}><div style={c.kL}>Livrate real</div><div style={{...c.kV,color:'#22c55e'}}>{ord.tot.livrat}</div><div style={c.kS}>{fmt(ord.livrareRate,1)}% rată</div></div>
+                    <div style={c.kpi}><div style={c.kL}>Retururi</div><div style={{...c.kV,color:'#ef4444'}}>{ord.tot.retur}</div><div style={c.kS}>{fmt(ord.returRate,1)}% rată</div></div>
+                    <div style={c.kpi}><div style={c.kL}>Refuzate</div><div style={{...c.kV,color:'#f97316'}}>{ord.tot.refuz}</div><div style={c.kS}>neprimite</div></div>
+                    <div style={c.kpi}><div style={c.kL}>Venituri brute</div><div style={c.kV}>{fmtK(ord.tot.rev)}</div><div style={c.kS}>RON</div></div>
                   </div>
                 </>
               )}
 
-              {/* CPA chart by month */}
-              {metaStats && metaStats.months.length > 0 && (
-                <div style={{ ...S.card, marginBottom:16 }}>
-                  <div style={S.cardHdr}>CPA pe lună — Evoluție</div>
-                  <div>
-                    {metaStats.months.map(m => {
-                      const maxCPA = Math.max(...metaStats.months.map(x=>x.cpa));
-                      const pct = maxCPA ? m.cpa/maxCPA*100 : 0;
-                      return (
-                        <div key={m.month} style={S.barRow}>
-                          <div style={{...S.barLabel, width:90, fontSize:11}}>{MONTHS_RO[m.m]} {m.y}</div>
-                          <div style={S.barTrack}>
-                            <div style={S.barFill(pct, cpaColor(m.cpa))}>
-                              {pct > 20 && <span style={S.barVal}>{fmt(m.cpa,0)} RON</span>}
-                            </div>
-                          </div>
-                          {pct <= 20 && <span style={{fontSize:12, color:cpaColor(m.cpa), fontWeight:700, minWidth:70}}>{fmt(m.cpa,0)} RON</span>}
-                          <div style={{ minWidth:60, textAlign:'right' }}>
-                            <span style={S.badge(m.cpa<=60?'green':m.cpa<=80?'yellow':'red')}>{m.conv} conv</span>
-                          </div>
-                        </div>
-                      );
-                    })}
+              {/* CPA real vs Meta */}
+              {meta&&ord&&(
+                <div style={{...c.card,marginBottom:12}}>
+                  <div style={c.cardHdr}>CPA META vs. CPA REAL (bazat pe livrări)</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+                    <div style={{textAlign:'center',padding:'16px 8px'}}>
+                      <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:6}}>CPA RAPORTAT META</div>
+                      <div style={{fontSize:36,fontWeight:800,color:'#f97316'}}>{fmt(meta.avgCPA,0)}</div>
+                      <div style={{fontSize:11,color:'var(--c-text3)'}}>RON (pixel)</div>
+                    </div>
+                    <div style={{textAlign:'center',padding:'16px 8px',borderLeft:'1px solid var(--c-border2)',borderRight:'1px solid var(--c-border2)'}}>
+                      <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:6}}>CPA REAL (livrate)</div>
+                      <div style={{fontSize:36,fontWeight:800,color:cpaColor(meta.tot.spent/ord.tot.livrat)}}>{fmt(meta.tot.spent/ord.tot.livrat,0)}</div>
+                      <div style={{fontSize:11,color:'var(--c-text3)'}}>RON (Shopify)</div>
+                    </div>
+                    <div style={{textAlign:'center',padding:'16px 8px'}}>
+                      <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:6}}>DIFERENȚĂ</div>
+                      <div style={{fontSize:36,fontWeight:800,color:'#ef4444'}}>+{fmt((meta.tot.spent/ord.tot.livrat)-meta.avgCPA,0)}</div>
+                      <div style={{fontSize:11,color:'var(--c-text3)'}}>RON neatribuite</div>
+                    </div>
+                  </div>
+                  <div style={{marginTop:10,padding:'10px 12px',background:'rgba(249,115,22,0.07)',borderRadius:8,fontSize:12,color:'var(--c-text3)',lineHeight:1.6}}>
+                    ⚠️ <strong style={{color:'var(--c-text)'}}>Meta raportează {meta.tot.conv} conversii</strong>, dar Shopify arată {ord.tot.livrat} livrate reale. Diferența de {meta.tot.conv-ord.tot.livrat} e formată din: retururi, refuzuri, comenzi false și atribuire dublă a pixelului. <strong style={{color:'var(--c-text)'}}>CPA real este {fmt(meta.tot.spent/ord.tot.livrat,0)} RON</strong>, nu {fmt(meta.avgCPA,0)} RON.
                   </div>
                 </div>
               )}
 
-              {/* Return rate by month */}
-              {orderStats && orderStats.months.length > 0 && (
-                <div style={{ ...S.card, marginBottom:16 }}>
-                  <div style={S.cardHdr}>Rată livrare vs. retur pe lună</div>
-                  {orderStats.months.map(m => (
-                    <div key={m.month} style={{ marginBottom:10 }}>
-                      <div style={{ display:'flex', justifyContent:'space-between', fontSize:12, color:'var(--c-text3)', marginBottom:4 }}>
-                        <span style={{fontWeight:600, color:'var(--c-text)'}}>{MONTHS_RO[m.m]} {m.y}</span>
-                        <span>{m.cnt} comenzi · <span style={{color:'#22c55e'}}>{m.livrat} livrate</span> · <span style={{color:'#ef4444'}}>{m.retur} retururi</span></span>
+              {/* Monthly CPA chart */}
+              {combined.length>0&&(
+                <div style={{...c.card,marginBottom:12}}>
+                  <div style={c.cardHdr}>CPA pe lună — evoluție comparată</div>
+                  {combined.map(m=>{
+                    const maxCPA=Math.max(...combined.filter(x=>x.cpa>0).map(x=>x.cpa),1);
+                    const pct=m.cpa?m.cpa/maxCPA*100:0;
+                    const g=grade(m.cpa);
+                    return(
+                      <div key={m.key} style={{...c.bar,cursor:'pointer'}} onClick={()=>{toggleMonth(m.key);setTab('monthly');}}>
+                        <div style={{...c.barLbl,width:55}}>{m.short}</div>
+                        <div style={c.barTrk}>
+                          <div style={c.barFl(pct,cpaColor(m.cpa))}>
+                            {pct>22&&<span style={c.barV}>{fmt(m.cpa,0)} RON</span>}
+                          </div>
+                        </div>
+                        {pct<=22&&<span style={{fontSize:11,color:cpaColor(m.cpa),fontWeight:700,minWidth:60}}>{m.cpa>0?fmt(m.cpa,0)+' RON':'—'}</span>}
+                        <span style={{fontSize:16,fontWeight:900,color:g.color,minWidth:28,textAlign:'right'}}>{g.label}</span>
                       </div>
-                      <div style={{ display:'flex', height:14, borderRadius:4, overflow:'hidden', background:'var(--c-card2)' }}>
-                        <div style={{ width:`${m.livrareRate}%`, background:'#22c55e', transition:'width 0.6s ease' }} title={`Livrate: ${fmt(m.livrareRate,1)}%`} />
-                        <div style={{ width:`${m.returRate}%`, background:'#ef4444', transition:'width 0.6s ease' }} title={`Retururi: ${fmt(m.returRate,1)}%`} />
-                        <div style={{ width:`${m.refuzRate}%`, background:'#f97316', transition:'width 0.6s ease' }} title={`Refuzate: ${fmt(m.refuzRate,1)}%`} />
-                      </div>
-                    </div>
-                  ))}
-                  <div style={{ display:'flex', gap:16, marginTop:12, fontSize:11, color:'var(--c-text4)' }}>
-                    <span><span style={{color:'#22c55e'}}>■</span> Livrate</span>
-                    <span><span style={{color:'#ef4444'}}>■</span> Retururi</span>
-                    <span><span style={{color:'#f97316'}}>■</span> Refuzate</span>
-                  </div>
+                    );
+                  })}
                 </div>
               )}
             </>
           )}
 
-          {/* ════════════════════════════════ MONTHLY ════════════════════════════ */}
-          {activeTab === 'monthly' && (
+          {/* ══ FUNNEL ══ */}
+          {tab==='funnel'&&meta&&(
             <>
-              <div style={{ ...S.grid(2), gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))' }}>
-                {combinedMonths.map(m => (
-                  <div key={m.key} style={S.monthCard(activeMonth===m.key)} onClick={()=>setActiveMonth(activeMonth===m.key?null:m.key)}>
-                    <div style={{ fontSize:13, fontWeight:700, color: activeMonth===m.key?'var(--c-orange)':'var(--c-text)', marginBottom:6 }}>{MONTHS_RO[m.m]} {m.y}</div>
-                    {m.cpa > 0 && <div style={{ fontSize:20, fontWeight:800, color:cpaColor(m.cpa), marginBottom:2 }}>{fmt(m.cpa,0)} RON</div>}
-                    {m.cpa > 0 && <div style={{ fontSize:10, color:'var(--c-text4)' }}>CPA · {m.conv} conv</div>}
-                    {m.orders > 0 && <div style={{ fontSize:11, color:'var(--c-text3)', marginTop:4 }}>{m.orders} comenzi · <span style={{color:'#22c55e'}}>{fmt(m.livrareRate,0)}%</span> livrate</div>}
+              <div style={{...c.card,marginBottom:12}}>
+                <div style={c.cardHdr}>FUNNEL COMPLET · Impression → Conversie</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8,marginBottom:16}}>
+                  {[
+                    {label:'Impressions',val:fmtK(meta.tot.impr),sub:'afișări totale',color:'var(--c-text)'},
+                    {label:'Reach',val:fmtK(meta.tot.reach),sub:'persoane unice',color:'var(--c-text)'},
+                    {label:'Link Clicks',val:fmtK(meta.tot.clicks),sub:`CTR ${fmt(meta.avgCTR,2)}%`,color:ctrColor(meta.avgCTR)},
+                    {label:'Landing Page',val:fmtK(meta.tot.lpv),sub:`${fmt(meta.tot.lpv/meta.tot.clicks*100,1)}% din clicks`,color:'var(--c-text)'},
+                    {label:'Add to Cart',val:meta.tot.atc,sub:`${fmt(meta.avgATC,2)}% din LPV`,color:'#fbbf24'},
+                    {label:'Conversii',val:meta.tot.conv,sub:`CVR ${fmt(meta.avgCVR,2)}%`,color:cvrColor(meta.avgCVR)},
+                  ].map((f,i)=>(
+                    <div key={i} style={c.kpi}>
+                      <div style={c.kL}>{f.label}</div>
+                      <div style={{...c.kV,fontSize:22,color:f.color}}>{f.val}</div>
+                      <div style={c.kS}>{f.sub}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Funnel visual */}
+                <div style={c.cardHdr}>PIERDERI PE FUNNEL</div>
+                {[
+                  {label:'Impr → Clicks',drop:meta.tot.impr>0?(1-meta.tot.clicks/meta.tot.impr)*100:0,note:'CTR scăzut = creativ slab sau audiență greșită'},
+                  {label:'Clicks → LPV',drop:meta.tot.clicks>0?(1-meta.tot.lpv/meta.tot.clicks)*100:0,note:'Drop mare = pagina se încarcă greu sau bounce rapid'},
+                  {label:'LPV → ATC',drop:meta.tot.lpv>0?(1-meta.tot.atc/meta.tot.lpv)*100:0,note:'Drop mare = prețul e prea mare sau descrierea convinge prost'},
+                  {label:'ATC → Conversie',drop:meta.tot.atc>0?(1-meta.tot.conv/meta.tot.atc)*100:0,note:'Drop mare = checkout complicat sau lipsă încredere'},
+                ].map((f,i)=>(
+                  <div key={i} style={{marginBottom:12}}>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
+                      <span style={{fontWeight:700,color:'var(--c-text)'}}>{f.label}</span>
+                      <span style={{color:f.drop>70?'#ef4444':f.drop>50?'#f97316':'#22c55e',fontWeight:700}}>{fmt(f.drop,1)}% pierdere</span>
+                    </div>
+                    <div style={{height:10,background:'var(--c-card2)',borderRadius:5,overflow:'hidden'}}>
+                      <div style={{width:`${100-f.drop}%`,height:'100%',background:f.drop>70?'#ef4444':f.drop>50?'#f97316':'#22c55e',transition:'width 0.7s ease'}}/>
+                    </div>
+                    <div style={{fontSize:11,color:'var(--c-text4)',marginTop:3}}>{f.note}</div>
                   </div>
                 ))}
               </div>
 
-              {selectedMonth && (
-                <div style={{ ...S.card, marginTop:8 }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
-                    <div style={{ fontSize:18, fontWeight:800, color:'var(--c-text)' }}>{selectedMonth.label}</div>
-                    <button onClick={()=>setActiveMonth(null)} style={{ background:'transparent', border:'1px solid var(--c-border2)', borderRadius:6, padding:'4px 10px', color:'var(--c-text3)', cursor:'pointer', fontSize:12 }}>✕ Închide</button>
-                  </div>
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:10, marginBottom:16 }}>
-                    {selectedMonth.spent>0 && <div style={S.kpi}><div style={S.kpiLabel}>Cheltuit Meta</div><div style={{...S.kpiVal,fontSize:22,color:'var(--c-orange)'}}>{fmt(selectedMonth.spent,0)}</div><div style={S.kpiSub}>RON</div></div>}
-                    {selectedMonth.cpa>0 && <div style={S.kpi}><div style={S.kpiLabel}>CPA</div><div style={{...S.kpiVal,fontSize:22,color:cpaColor(selectedMonth.cpa)}}>{fmt(selectedMonth.cpa,0)}</div><div style={S.kpiSub}>RON/conversie</div></div>}
-                    {selectedMonth.conv>0 && <div style={S.kpi}><div style={S.kpiLabel}>Conversii Meta</div><div style={{...S.kpiVal,fontSize:22}}>{selectedMonth.conv}</div><div style={S.kpiSub}>achiziții</div></div>}
-                    {selectedMonth.orders>0 && <div style={S.kpi}><div style={S.kpiLabel}>Comenzi Shopify</div><div style={{...S.kpiVal,fontSize:22}}>{selectedMonth.orders}</div><div style={S.kpiSub}>plasate</div></div>}
-                    {selectedMonth.livrat>0 && <div style={S.kpi}><div style={S.kpiLabel}>Livrate</div><div style={{...S.kpiVal,fontSize:22,color:'#22c55e'}}>{selectedMonth.livrat}</div><div style={S.kpiSub}>{fmt(selectedMonth.livrareRate,1)}%</div></div>}
-                    {selectedMonth.retur>0 && <div style={S.kpi}><div style={S.kpiLabel}>Retururi</div><div style={{...S.kpiVal,fontSize:22,color:'#ef4444'}}>{selectedMonth.retur}</div><div style={S.kpiSub}>{fmt(selectedMonth.returRate,1)}%</div></div>}
-                    {selectedMonth.revenue>0 && <div style={S.kpi}><div style={S.kpiLabel}>Venituri</div><div style={{...S.kpiVal,fontSize:22}}>{fmtK(selectedMonth.revenue)}</div><div style={S.kpiSub}>RON brut</div></div>}
-                  </div>
-                  {/* Performance verdict */}
-                  <div style={{ padding:'12px 16px', borderRadius:10, background: selectedMonth.cpa>0&&selectedMonth.cpa<=65?'rgba(34,197,94,0.08)':selectedMonth.cpa>100?'rgba(239,68,68,0.08)':'rgba(251,191,36,0.08)', border:`1px solid ${selectedMonth.cpa>0&&selectedMonth.cpa<=65?'rgba(34,197,94,0.2)':selectedMonth.cpa>100?'rgba(239,68,68,0.2)':'rgba(251,191,36,0.2)'}` }}>
-                    <div style={{ fontSize:13, fontWeight:700, color:'var(--c-text)', marginBottom:4 }}>
-                      {selectedMonth.cpa<=0 ? '⚪ Fără date Meta' : selectedMonth.cpa<=55 ? '🏆 Lună excelentă — sub targetul de 55 RON CPA' : selectedMonth.cpa<=70 ? '✅ Lună bună — aproape de target' : selectedMonth.cpa<=85 ? '⚠️ Lună mediocră — CPA de optimizat' : '❌ Lună slabă — analizați ce a mers greșit'}
+              {/* Monthly funnel table */}
+              <div style={{...c.card,overflowX:'auto'}}>
+                <div style={c.cardHdr}>FUNNEL PE LUNI</div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead>
+                    <tr>{['Lună','Cheltuit','Conv','CPA','CTR','CVR','ATC%','CPC','CPM','Frecv','LPV'].map(h=><th key={h} style={c.th}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {meta.months.map(m=>(
+                      <tr key={m.key}>
+                        <td style={c.td(true,'var(--c-text)')}>{m.short}</td>
+                        <td style={c.td(false,'var(--c-orange)')}>{fmt(m.spent,0)}</td>
+                        <td style={c.td()}>{m.conv}</td>
+                        <td style={c.td(true,cpaColor(m.cpa))}>{m.cpa>0?fmt(m.cpa,0):'-'}</td>
+                        <td style={c.td(false,ctrColor(m.ctr))}>{fmt(m.ctr,2)}%</td>
+                        <td style={c.td(false,cvrColor(m.cvr))}>{fmt(m.cvr,2)}%</td>
+                        <td style={c.td()}>{fmt(m.atcRate,2)}%</td>
+                        <td style={c.td()}>{fmt(m.cpc,2)}</td>
+                        <td style={c.td()}>{fmt(m.cpm,0)}</td>
+                        <td style={c.td(false,m.freq>2.5?'#ef4444':m.freq>1.8?'#fbbf24':'#22c55e')}>{fmt(m.freq,2)}</td>
+                        <td style={c.td()}>{fmtK(m.lpv)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {/* ══ MONTHLY ══ */}
+          {tab==='monthly'&&(
+            <>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:8,marginBottom:12}}>
+                {combined.map(m=>{
+                  const g=grade(m.cpa);
+                  return(
+                    <div key={m.key} onClick={()=>toggleMonth(m.key)}
+                      style={{background:selMonth===m.key?'rgba(249,115,22,0.1)':'var(--c-card2)',
+                        border:`1px solid ${selMonth===m.key?'var(--c-orange)':'var(--c-border2)'}`,
+                        borderRadius:10,padding:'12px',cursor:'pointer',transition:'all 120ms'}}>
+                      <div style={{fontSize:12,fontWeight:700,color:selMonth===m.key?'var(--c-orange)':'var(--c-text)',marginBottom:4}}>{m.short}</div>
+                      <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:2}}>
+                        <span style={{fontSize:22,fontWeight:800,color:m.cpa>0?cpaColor(m.cpa):'var(--c-text4)'}}>{m.cpa>0?fmt(m.cpa,0):'—'}</span>
+                        {m.cpa>0&&<span style={{fontSize:10,color:'var(--c-text4)'}}>RON CPA</span>}
+                      </div>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <span style={{fontSize:10,color:'var(--c-text4)'}}>{m.conv} conv · {m.orders} ord</span>
+                        <span style={{fontSize:18,fontWeight:900,color:g.color}}>{g.label}</span>
+                      </div>
+                      {m.orders>0&&(
+                        <div style={{marginTop:6,height:6,borderRadius:3,overflow:'hidden',background:'var(--c-border2)',display:'flex'}}>
+                          <div style={{width:`${m.livrareRate}%`,background:'#22c55e'}}/>
+                          <div style={{width:`${m.returRate}%`,background:'#ef4444'}}/>
+                          <div style={{width:`${m.refuzRate}%`,background:'#f97316'}}/>
+                        </div>
+                      )}
                     </div>
-                    <div style={{ fontSize:12, color:'var(--c-text3)' }}>
-                      {selectedMonth.retur>0 && `${selectedMonth.retur} retururi (${fmt(selectedMonth.returRate,1)}%) · `}
-                      {selectedMonth.refuz>0 && `${selectedMonth.refuz} refuzuri · `}
-                      {selectedMonth.spent>0 && `${fmt(selectedMonth.spent,0)} RON cheltuiți pe Meta`}
+                  );
+                })}
+              </div>
+
+              {selMonthData&&(
+                <div style={{...c.card,marginBottom:12}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:8}}>
+                    <div style={{fontSize:17,fontWeight:800,color:'var(--c-text)'}}>{selMonthData.label}</div>
+                    <button onClick={()=>setSelMonth(null)} style={{background:'transparent',border:'1px solid var(--c-border2)',borderRadius:6,padding:'4px 10px',color:'var(--c-text3)',cursor:'pointer',fontSize:12}}>✕</button>
+                  </div>
+
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(100px,1fr))',gap:8,marginBottom:14}}>
+                    {selMonthData.spent>0&&<div style={c.kpi}><div style={c.kL}>Cheltuit Meta</div><div style={{...c.kV,fontSize:20,color:'var(--c-orange)'}}>{fmt(selMonthData.spent,0)}</div><div style={c.kS}>RON</div></div>}
+                    {selMonthData.cpa>0&&<div style={c.kpi}><div style={c.kL}>CPA Meta</div><div style={{...c.kV,fontSize:20,color:cpaColor(selMonthData.cpa)}}>{fmt(selMonthData.cpa,0)}</div><div style={c.kS}>RON/conv</div></div>}
+                    {selMonthData.realCPA>0&&<div style={c.kpi}><div style={c.kL}>CPA Real</div><div style={{...c.kV,fontSize:20,color:cpaColor(selMonthData.realCPA)}}>{fmt(selMonthData.realCPA,0)}</div><div style={c.kS}>RON/livrat</div></div>}
+                    {selMonthData.ctr>0&&<div style={c.kpi}><div style={c.kL}>CTR</div><div style={{...c.kV,fontSize:20,color:ctrColor(selMonthData.ctr)}}>{fmt(selMonthData.ctr,2)}%</div><div style={c.kS}>click-through</div></div>}
+                    {selMonthData.cvr>0&&<div style={c.kpi}><div style={c.kL}>CVR</div><div style={{...c.kV,fontSize:20,color:cvrColor(selMonthData.cvr)}}>{fmt(selMonthData.cvr,2)}%</div><div style={c.kS}>conv rate</div></div>}
+                    {selMonthData.cpm>0&&<div style={c.kpi}><div style={c.kL}>CPM</div><div style={{...c.kV,fontSize:20}}>{fmt(selMonthData.cpm,0)}</div><div style={c.kS}>RON/1K</div></div>}
+                    {selMonthData.orders>0&&<div style={c.kpi}><div style={c.kL}>Comenzi</div><div style={{...c.kV,fontSize:20}}>{selMonthData.orders}</div><div style={c.kS}>Shopify</div></div>}
+                    {selMonthData.livrat>0&&<div style={c.kpi}><div style={c.kL}>Livrate</div><div style={{...c.kV,fontSize:20,color:'#22c55e'}}>{selMonthData.livrat}</div><div style={c.kS}>{fmt(selMonthData.livrareRate,1)}%</div></div>}
+                    {selMonthData.retur>0&&<div style={c.kpi}><div style={c.kL}>Retururi</div><div style={{...c.kV,fontSize:20,color:'#ef4444'}}>{selMonthData.retur}</div><div style={c.kS}>{fmt(selMonthData.returRate,1)}%</div></div>}
+                  </div>
+
+                  {/* Concluzia lunii */}
+                  <div style={{padding:'12px 14px',borderRadius:10,background:cpaBg(selMonthData.cpa),border:`1px solid ${selMonthData.cpa<=65?'rgba(34,197,94,0.2)':selMonthData.cpa<=85?'rgba(251,191,36,0.2)':'rgba(239,68,68,0.2)'}`,marginBottom:10}}>
+                    <div style={{fontSize:13,fontWeight:700,color:'var(--c-text)',marginBottom:6}}>
+                      {selMonthData.cpa<=0?'📊 Date Meta indisponibile pentru această lună':
+                       selMonthData.cpa<=52?'🏆 Lună excepțională — sub recordul de 52 RON CPA':
+                       selMonthData.cpa<=65?'✅ Lună foarte bună — aproape de target optim':
+                       selMonthData.cpa<=80?'⚠️ Lună medie — potențial de optimizare':
+                       '❌ Lună slabă — analizați ce a mers greșit'}
+                    </div>
+                    <div style={{fontSize:12,color:'var(--c-text3)',lineHeight:1.7}}>
+                      {selMonthData.ctr>0&&`CTR: ${fmt(selMonthData.ctr,2)}% ${selMonthData.ctr>=3?'✓ bun':'✗ sub 3% benchmark'} · `}
+                      {selMonthData.cvr>0&&`CVR: ${fmt(selMonthData.cvr,2)}% ${selMonthData.cvr>=1.2?'✓':'✗ sub 1.2%'} · `}
+                      {selMonthData.freq>0&&`Frecvență: ${fmt(selMonthData.freq,2)} ${selMonthData.freq>2.5?'⚠️ audiență obosită':''} · `}
+                      {selMonthData.returRate>0&&`Retur: ${fmt(selMonthData.returRate,1)}% ${selMonthData.returRate>20?'🔴 ridicat':'✓'}`}
                     </div>
                   </div>
+
+                  {/* Ce să faci diferit */}
+                  {selMonthData.cpa>65&&(
+                    <div style={{fontSize:12,color:'var(--c-text3)',lineHeight:1.8}}>
+                      <div style={{fontWeight:700,color:'var(--c-text)',marginBottom:6}}>📋 Ce să faci diferit:</div>
+                      {selMonthData.ctr<2.5&&<div>• CTR {fmt(selMonthData.ctr,2)}% → Schimbă hook-ul video. Primele 3 secunde nu opresc scroll-ul.</div>}
+                      {selMonthData.cvr<1&&<div>• CVR {fmt(selMonthData.cvr,2)}% → Problema e pe landing page. Verifică viteza, recenzii, CTA.</div>}
+                      {selMonthData.freq>2.5&&<div>• Frecvență {fmt(selMonthData.freq,2)} → Audiența e obosită. Extinde sau schimbă creativele.</div>}
+                      {selMonthData.cpm>22&&<div>• CPM {fmt(selMonthData.cpm,0)} RON → Competiție mare. Testează audiențe mai largi sau broad.</div>}
+                      {selMonthData.returRate>20&&<div>• Retur {fmt(selMonthData.returRate,1)}% → Verifică concordanța reclame vs. produs real.</div>}
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Full monthly table */}
-              {combinedMonths.length > 0 && (
-                <div style={{ ...S.card, marginTop:16, overflowX:'auto' }}>
-                  <div style={S.cardHdr}>Tabel complet lunar</div>
-                  <table style={S.table}>
-                    <thead>
-                      <tr>
-                        {['Lună','Cheltuit Meta','Conv Meta','CPA','Comenzi','Livrate','Retururi','Refuzate','% Livrare','% Retur','Venituri'].map(h=>(
-                          <th key={h} style={S.th}>{h}</th>
-                        ))}
+              {/* Full table */}
+              <div style={{...c.card,overflowX:'auto'}}>
+                <div style={c.cardHdr}>TABEL COMPLET</div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead><tr>{['Lună','Cheltuit','Conv','CPA Meta','CPA Real','CTR','CVR','Comenzi','Livrate','Retururi','% Livr','% Retur','Venituri','Grade'].map(h=><th key={h} style={c.th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {combined.map(m=>{
+                      const g=grade(m.cpa);
+                      return(
+                        <tr key={m.key} style={c.row(selMonth===m.key)} onClick={()=>toggleMonth(m.key)}>
+                          <td style={c.td(true,'var(--c-text)')}>{m.short}</td>
+                          <td style={c.td(false,'var(--c-orange)')}>{m.spent>0?fmt(m.spent,0):'-'}</td>
+                          <td style={c.td()}>{m.conv||'-'}</td>
+                          <td style={c.td(true,m.cpa>0?cpaColor(m.cpa):'var(--c-text4)')}>{m.cpa>0?fmt(m.cpa,0)+' RON':'-'}</td>
+                          <td style={c.td(true,m.realCPA>0?cpaColor(m.realCPA):'var(--c-text4)')}>{m.realCPA>0?fmt(m.realCPA,0)+' RON':'-'}</td>
+                          <td style={c.td(false,m.ctr>0?ctrColor(m.ctr):'var(--c-text4)')}>{m.ctr>0?fmt(m.ctr,2)+'%':'-'}</td>
+                          <td style={c.td(false,m.cvr>0?cvrColor(m.cvr):'var(--c-text4)')}>{m.cvr>0?fmt(m.cvr,2)+'%':'-'}</td>
+                          <td style={c.td()}>{m.orders||'-'}</td>
+                          <td style={c.td(false,'#22c55e')}>{m.livrat||'-'}</td>
+                          <td style={c.td(false,'#ef4444')}>{m.retur||'-'}</td>
+                          <td style={c.td(false,m.livrareRate>=80?'#22c55e':m.livrareRate>=60?'#fbbf24':'#ef4444')}>{m.orders>0?fmt(m.livrareRate,1)+'%':'-'}</td>
+                          <td style={c.td(false,m.returRate>20?'#ef4444':m.returRate>10?'#fbbf24':'#22c55e')}>{m.orders>0?fmt(m.returRate,1)+'%':'-'}</td>
+                          <td style={c.td()}>{m.rev>0?fmtK(m.rev)+' RON':'-'}</td>
+                          <td style={{...c.td(true,g.color),fontSize:14}}>{g.label}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {/* ══ CAMPAIGNS ══ */}
+          {tab==='campaigns'&&meta&&(
+            <>
+              {/* Top vs Bottom */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                <div style={c.card}>
+                  <div style={c.cardHdr}>🏆 TOP campanii (CPA ≤ 65 RON)</div>
+                  <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:10}}>Ce au în comun: CTR ~3%+ și CVR ~1.3%+</div>
+                  {campAnalysis.top.slice(0,6).map((camp,i)=>(
+                    <div key={i} style={{marginBottom:12,paddingBottom:12,borderBottom:'1px solid var(--c-border2)'}}>
+                      <div style={{fontSize:11,fontWeight:700,color:'var(--c-text)',marginBottom:4,wordBreak:'break-word'}}>{camp.camp.replace(/CBO |cbo /gi,'')}</div>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                        <span style={{...c.badge('green'),fontSize:10}}>CPA {fmt(camp.cpa,0)} RON</span>
+                        <span style={{...c.badge(camp.ctr>=3?'green':'yellow'),fontSize:10}}>CTR {fmt(camp.ctr,2)}%</span>
+                        <span style={{...c.badge(camp.cvr>=1.2?'green':'yellow'),fontSize:10}}>CVR {fmt(camp.cvr,2)}%</span>
+                        <span style={{fontSize:10,color:'var(--c-text4)'}}>{camp.conv} conv · {fmt(camp.spent,0)} RON</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={c.card}>
+                  <div style={c.cardHdr}>❌ CAMPANII SLABE (CPA ≥ 100 RON)</div>
+                  <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:10}}>Problema comună: CVR sub 0.8% — landing page sau audiență</div>
+                  {campAnalysis.bottom.slice(0,6).map((camp,i)=>(
+                    <div key={i} style={{marginBottom:12,paddingBottom:12,borderBottom:'1px solid var(--c-border2)'}}>
+                      <div style={{fontSize:11,fontWeight:700,color:'var(--c-text)',marginBottom:4,wordBreak:'break-word'}}>{camp.camp.replace(/CBO |cbo /gi,'')}</div>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                        <span style={{...c.badge('red'),fontSize:10}}>CPA {fmt(camp.cpa,0)} RON</span>
+                        <span style={{...c.badge(camp.ctr>=3?'green':'yellow'),fontSize:10}}>CTR {fmt(camp.ctr,2)}%</span>
+                        <span style={{...c.badge('red'),fontSize:10}}>CVR {fmt(camp.cvr,2)}%</span>
+                        <span style={{fontSize:10,color:'var(--c-text4)'}}>{camp.conv} conv · {fmt(camp.spent,0)} RON</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Pattern insight */}
+              <div style={{...c.card,marginBottom:12,background:'rgba(249,115,22,0.05)',border:'1px solid rgba(249,115,22,0.2)'}}>
+                <div style={c.cardHdr}>🔍 PATTERN — Ce diferențiază TOP de BOTTOM</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                  {[
+                    {metric:'CTR mediu TOP',val:`${fmt(campAnalysis.top.reduce((s,c)=>s+c.ctr,0)/(campAnalysis.top.length||1),2)}%`,
+                     vs:`${fmt(campAnalysis.bottom.reduce((s,c)=>s+c.ctr,0)/(campAnalysis.bottom.length||1),2)}%`,label:'BOTTOM'},
+                    {metric:'CVR mediu TOP',val:`${fmt(campAnalysis.top.reduce((s,c)=>s+c.cvr,0)/(campAnalysis.top.length||1),2)}%`,
+                     vs:`${fmt(campAnalysis.bottom.reduce((s,c)=>s+c.cvr,0)/(campAnalysis.bottom.length||1),2)}%`,label:'BOTTOM'},
+                    {metric:'CPM mediu TOP',val:`${fmt(campAnalysis.top.reduce((s,c)=>s+c.cpm,0)/(campAnalysis.top.length||1),0)} RON`,
+                     vs:`${fmt(campAnalysis.bottom.reduce((s,c)=>s+c.cpm,0)/(campAnalysis.bottom.length||1),0)} RON`,label:'BOTTOM'},
+                    {metric:'CPC mediu TOP',val:`${fmt(campAnalysis.top.reduce((s,c)=>s+c.cpc,0)/(campAnalysis.top.length||1),2)} RON`,
+                     vs:`${fmt(campAnalysis.bottom.reduce((s,c)=>s+c.cpc,0)/(campAnalysis.bottom.length||1),2)} RON`,label:'BOTTOM'},
+                  ].map((p,i)=>(
+                    <div key={i}>
+                      <div style={{fontSize:10,color:'var(--c-text4)',marginBottom:4}}>{p.metric}</div>
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <span style={{fontSize:16,fontWeight:800,color:'#22c55e'}}>{p.val}</span>
+                        <span style={{fontSize:11,color:'var(--c-text4)'}}>vs.</span>
+                        <span style={{fontSize:16,fontWeight:800,color:'#ef4444'}}>{p.vs}</span>
+                        <span style={{fontSize:10,color:'var(--c-text4)'}}>{p.label}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Full campaign table */}
+              <div style={{...c.card,overflowX:'auto'}}>
+                <div style={c.cardHdr}>TOATE CAMPANIILE</div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead><tr>{['Campanie','Cheltuit','Conv','CPA','CTR','CVR','ATC%','CPC','CPM','Reach'].map(h=><th key={h} style={c.th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {campAnalysis.all.map((camp,i)=>(
+                      <tr key={i}>
+                        <td style={{...c.td(false,'var(--c-text)'),maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',fontWeight:600}}>{camp.camp.replace(/CBO |cbo /gi,'')}</td>
+                        <td style={c.td(false,'var(--c-orange)')}>{fmt(camp.spent,0)}</td>
+                        <td style={c.td()}>{camp.conv}</td>
+                        <td style={c.td(true,cpaColor(camp.cpa))}>{camp.cpa>0?fmt(camp.cpa,0):'-'}</td>
+                        <td style={c.td(false,ctrColor(camp.ctr))}>{fmt(camp.ctr,2)}%</td>
+                        <td style={c.td(false,cvrColor(camp.cvr))}>{fmt(camp.cvr,2)}%</td>
+                        <td style={c.td()}>{fmt(camp.atcRate,2)}%</td>
+                        <td style={c.td()}>{fmt(camp.cpc,2)}</td>
+                        <td style={c.td()}>{fmt(camp.cpm,0)}</td>
+                        <td style={c.td()}>{fmtK(camp.reach)}</td>
                       </tr>
-                    </thead>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {/* ══ AUDIENCE ══ */}
+          {tab==='audience'&&meta&&(
+            <>
+              <div style={{...c.card,marginBottom:12}}>
+                <div style={c.cardHdr}>BREAKDOWN PE VÂRSTĂ — Cine cumpără și la ce cost</div>
+                {meta.ageArr.filter(a=>a.spent>50).map((a,i)=>{
+                  const maxSpent=Math.max(...meta.ageArr.map(x=>x.spent));
+                  const pct=a.spent/maxSpent*100;
+                  return(
+                    <div key={i} style={{marginBottom:16}}>
+                      <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:5}}>
+                        <span style={{fontWeight:700,color:'var(--c-text)',fontSize:14}}>{a.age} ani</span>
+                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                          <span style={{...c.badge(a.cpa<=70?'green':a.cpa<=90?'yellow':'red'),fontSize:11}}>CPA {a.cpa>0?fmt(a.cpa,0)+' RON':'—'}</span>
+                          <span style={{...c.badge(''),fontSize:10,color:'var(--c-text4)'}}>{fmt(a.pct,1)}% din buget</span>
+                        </div>
+                      </div>
+                      <div style={c.barTrk}>
+                        <div style={c.barFl(pct,a.cpa<=65?'#22c55e':a.cpa<=80?'#fbbf24':'#ef4444')}>
+                          {pct>30&&<span style={c.barV}>{fmt(a.spent,0)} RON · {a.conv} conv</span>}
+                        </div>
+                      </div>
+                      {pct<=30&&<div style={{fontSize:11,color:'var(--c-text3)',marginTop:3}}>{fmt(a.spent,0)} RON · {a.conv} conversii · CTR {fmt(a.ctr,2)}%</div>}
+                    </div>
+                  );
+                })}
+
+                <div style={{marginTop:12,padding:'12px 14px',background:'rgba(249,115,22,0.07)',borderRadius:8}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'var(--c-text)',marginBottom:8}}>📊 Concluzie audiențe</div>
+                  <div style={{fontSize:12,color:'var(--c-text3)',lineHeight:1.8}}>
+                    {(() => {
+                      const best=meta.ageArr.filter(a=>a.conv>=5).sort((a,b)=>a.cpa-b.cpa)[0];
+                      const worst=meta.ageArr.filter(a=>a.conv>=5).sort((a,b)=>b.cpa-a.cpa)[0];
+                      const biggest=meta.ageArr.sort((a,b)=>b.spent-a.spent)[0];
+                      return(<>
+                        <div>✅ <strong style={{color:'var(--c-text)'}}>{best?.age} ani</strong> — cel mai ieftin CPA ({best?fmt(best.cpa,0):'-'} RON). Mărește bugetul pe acest segment.</div>
+                        <div>⚠️ <strong style={{color:'var(--c-text)'}}>{worst?.age} ani</strong> — cel mai scump CPA ({worst?fmt(worst.cpa,0):'-'} RON). Reduce-l sau exclude-l.</div>
+                        <div>💰 <strong style={{color:'var(--c-text)'}}>{biggest?.age} ani</strong> — {fmt(biggest?.pct||0,1)}% din bugetul total cheltuit pe ei. Verifică dacă e proporțional cu performanța.</div>
+                      </>);
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Age per month */}
+              <div style={{...c.card,overflowX:'auto'}}>
+                <div style={c.cardHdr}>STRATEGIA DE BUGET PE AUDIENȚE — Recomandată</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:8}}>
+                  {[
+                    {age:'25-34',rec:'5-8% buget',why:'CPA variabil. Potential viitor.',action:'Menții',color:'var(--c-text4)'},
+                    {age:'35-44',rec:'15-20% buget',why:'CPA mediu, volum bun.',action:'Stabil',color:'#fbbf24'},
+                    {age:'45-54',rec:'35-40% buget',why:'Cel mai mare volum + CPA decent.',action:'Scalează',color:'#22c55e'},
+                    {age:'55-64',rec:'25-30% buget',why:'Al doilea ca volum.',action:'Optimizează',color:'#fbbf24'},
+                    {age:'65+',rec:'10-12% buget',why:'CPA variabil, volum mic.',action:'Testează',color:'var(--c-text4)'},
+                  ].map((a,i)=>(
+                    <div key={i} style={{...c.kpi,borderColor:a.color==='#22c55e'?'rgba(34,197,94,0.3)':'var(--c-border2)'}}>
+                      <div style={{fontSize:16,fontWeight:800,color:'var(--c-text)',marginBottom:4}}>{a.age} ani</div>
+                      <div style={{fontSize:13,fontWeight:700,color:a.color,marginBottom:4}}>{a.rec}</div>
+                      <div style={{fontSize:11,color:'var(--c-text4)',marginBottom:6}}>{a.why}</div>
+                      <span style={{...c.badge(a.color==='#22c55e'?'green':a.color==='#ef4444'?'red':'yellow'),fontSize:10}}>{a.action}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ══ DOW & HOURLY ══ */}
+          {tab==='dow'&&(
+            <>
+              {/* Meta CPA by DOW */}
+              {meta&&(
+                <div style={{...c.card,marginBottom:12}}>
+                  <div style={c.cardHdr}>CPA META PE ZI — unde câștigi vs. unde pierzi bani</div>
+                  {meta.dowArr.map((d,i)=>{
+                    const maxCPA=Math.max(...meta.dowArr.filter(x=>x.cpa>0).map(x=>x.cpa),1);
+                    const pct=d.cpa?d.cpa/maxCPA*100:0;
+                    return(
+                      <div key={i} style={c.bar}>
+                        <div style={{...c.barLbl,width:58}}>{DAYS_SHORT[i]}</div>
+                        <div style={c.barTrk}>
+                          <div style={c.barFl(pct,cpaColor(d.cpa))}>
+                            {pct>28&&<span style={c.barV}>{fmt(d.cpa,0)} RON</span>}
+                          </div>
+                        </div>
+                        {pct<=28&&<span style={{fontSize:11,color:d.cpa>0?cpaColor(d.cpa):'var(--c-text4)',fontWeight:700,minWidth:60}}>{d.cpa>0?fmt(d.cpa,0)+' RON':'—'}</span>}
+                        <div style={{display:'flex',gap:6,minWidth:90,justifyContent:'flex-end'}}>
+                          <span style={{fontSize:10,color:'var(--c-text4)'}}>{d.conv} conv</span>
+                          <span style={{...c.badge(d.cpa<=65?'green':d.cpa<=85?'yellow':'red'),fontSize:10}}>{fmt(d.ctr,2)}% CTR</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Orders by DOW */}
+              {ord&&(
+                <div style={{...c.card,marginBottom:12,overflowX:'auto'}}>
+                  <div style={c.cardHdr}>COMENZI SHOPIFY PE ZI</div>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead><tr>{['Zi','Comenzi','Livrate','Retururi','% Livr','% Retur','Venituri'].map(h=><th key={h} style={c.th}>{h}</th>)}</tr></thead>
                     <tbody>
-                      {combinedMonths.map(m=>(
-                        <tr key={m.key} style={{ background: activeMonth===m.key?cpaBg(m.cpa):'transparent' }} onClick={()=>setActiveMonth(activeMonth===m.key?null:m.key)}>
-                          <td style={{...S.td, fontWeight:700, color:'var(--c-text)', cursor:'pointer'}}>{MONTHS_RO[m.m]} {m.y}</td>
-                          <td style={{...S.td, color:'var(--c-orange)'}}>{m.spent>0?fmt(m.spent,0)+' RON':'—'}</td>
-                          <td style={S.td}>{m.conv>0?m.conv:'—'}</td>
-                          <td style={{...S.td, fontWeight:700, color:m.cpa>0?cpaColor(m.cpa):'var(--c-text4)'}}>{m.cpa>0?fmt(m.cpa,0)+' RON':'—'}</td>
-                          <td style={S.td}>{m.orders>0?m.orders:'—'}</td>
-                          <td style={{...S.td, color:'#22c55e'}}>{m.livrat>0?m.livrat:'—'}</td>
-                          <td style={{...S.td, color:'#ef4444'}}>{m.retur>0?m.retur:'—'}</td>
-                          <td style={{...S.td, color:'#f97316'}}>{m.refuz>0?m.refuz:'—'}</td>
-                          <td style={{...S.td, color:m.livrareRate>=80?'#22c55e':m.livrareRate>=60?'#fbbf24':'#ef4444'}}>{m.orders>0?fmt(m.livrareRate,1)+'%':'—'}</td>
-                          <td style={{...S.td, color:m.returRate>25?'#ef4444':m.returRate>15?'#fbbf24':'#22c55e'}}>{m.orders>0?fmt(m.returRate,1)+'%':'—'}</td>
-                          <td style={S.td}>{m.revenue>0?fmtK(m.revenue)+' RON':'—'}</td>
+                      {ord.dowArr.map((d,i)=>(
+                        <tr key={i}>
+                          <td style={c.td(true,'var(--c-text)')}>{DAYS_FULL[i]}</td>
+                          <td style={c.td()}>{d.cnt||'-'}</td>
+                          <td style={c.td(false,'#22c55e')}>{d.livrat||'-'}</td>
+                          <td style={c.td(false,'#ef4444')}>{d.retur||'-'}</td>
+                          <td style={c.td(false,d.livrareRate>=80?'#22c55e':'#fbbf24')}>{d.cnt?fmt(d.livrareRate,1)+'%':'-'}</td>
+                          <td style={c.td(false,d.returRate>20?'#ef4444':d.returRate>10?'#fbbf24':'#22c55e')}>{d.cnt?fmt(d.returRate,1)+'%':'-'}</td>
+                          <td style={c.td()}>{d.rev>0?fmtK(d.rev)+' RON':'-'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               )}
-            </>
-          )}
 
-          {/* ════════════════════════════════ DAY OF WEEK ════════════════════════ */}
-          {activeTab === 'dow' && (
-            <>
-              {/* Meta CPA by DOW */}
-              {metaStats && (
-                <div style={{ ...S.card, marginBottom:16 }}>
-                  <div style={S.cardHdr}>CPA Meta Ads pe zi a săptămânii</div>
-                  {dowAnalysis.map((d,i) => {
-                    const maxCPA = Math.max(...dowAnalysis.filter(x=>x.metaCPA>0).map(x=>x.metaCPA));
-                    const pct = maxCPA && d.metaCPA ? d.metaCPA/maxCPA*100 : 0;
-                    return (
-                      <div key={i} style={S.barRow}>
-                        <div style={{...S.barLabel, width:75}}>{d.short}</div>
-                        <div style={S.barTrack}>
-                          <div style={S.barFill(pct, cpaColor(d.metaCPA))}>
-                            {pct > 25 && <span style={S.barVal}>{fmt(d.metaCPA,0)} RON</span>}
-                          </div>
+              {/* Hourly */}
+              {ord&&(
+                <div style={c.card}>
+                  <div style={c.cardHdr}>CÂND CUMPĂRĂ CLIENȚII TĂI — pe oră</div>
+                  <div style={{display:'flex',alignItems:'flex-end',gap:3,height:120,marginBottom:8,overflowX:'auto'}}>
+                    {ord.byHour.map(h=>{
+                      const maxCnt=Math.max(...ord.byHour.map(x=>x.cnt),1);
+                      const pct=h.cnt/maxCnt;
+                      return(
+                        <div key={h.hour} style={{flex:1,minWidth:14,display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                          {h.cnt>0&&<div style={{fontSize:8,color:'var(--c-text4)',fontWeight:600}}>{h.cnt}</div>}
+                          <div style={{width:'100%',height:`${Math.max(pct*100,2)}px`,background:pct>0.6?'var(--c-orange)':pct>0.3?'rgba(249,115,22,0.5)':'var(--c-card2)',borderRadius:'2px 2px 0 0',minHeight:2}}/>
+                          <div style={{fontSize:8,color:'var(--c-text4)'}}>{pad2(h.hour)}</div>
                         </div>
-                        {pct <= 25 && <span style={{fontSize:12,color:cpaColor(d.metaCPA),fontWeight:700,minWidth:65}}>{d.metaCPA>0?fmt(d.metaCPA,0)+' RON':'—'}</span>}
-                        <div style={{ minWidth:55, textAlign:'right' }}>
-                          {d.metaCPA > 0 && <span style={S.badge(d.metaCPA<=65?'green':d.metaCPA<=80?'yellow':'red')}>{d.metaCPA<=65?'✓ BUN':d.metaCPA<=80?'OK':'↑ SLAB'}</span>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div style={{ marginTop:16, padding:'12px', background:'var(--c-card2)', borderRadius:8, fontSize:12, color:'var(--c-text3)' }}>
-                    💡 <strong style={{color:'var(--c-text)'}}>Regula de aur:</strong> Mărește bugetul în zilele cu CPA mic. Reduce (dar nu opri) în zilele cu CPA mare.
+                      );
+                    })}
                   </div>
-                </div>
-              )}
-
-              {/* Orders by DOW */}
-              {orderStats && (
-                <div style={{ ...S.card, marginBottom:16 }}>
-                  <div style={S.cardHdr}>Comenzi & retururi pe zi a săptămânii</div>
-                  <div style={{ overflowX:'auto' }}>
-                    <table style={S.table}>
-                      <thead>
-                        <tr>
-                          {['Zi','Comenzi','Livrate','Retururi','Refuzate','% Livrare','% Retur','Venituri'].map(h=><th key={h} style={S.th}>{h}</th>)}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {dowAnalysis.map((d,i)=>(
-                          <tr key={i}>
-                            <td style={{...S.td,fontWeight:700,color:'var(--c-text)'}}>{d.day}</td>
-                            <td style={S.td}>{d.ordCnt||'—'}</td>
-                            <td style={{...S.td,color:'#22c55e'}}>{d.ordLivrat||'—'}</td>
-                            <td style={{...S.td,color:'#ef4444'}}>{d.ordRetur||'—'}</td>
-                            <td style={{...S.td,color:'#f97316'}}>{d.ordCnt-d.ordLivrat-d.ordRetur>0?d.ordCnt-d.ordLivrat-d.ordRetur:'—'}</td>
-                            <td style={{...S.td,color:d.ordCnt&&(d.ordCnt-d.ordRetur)/d.ordCnt*100>=80?'#22c55e':'#fbbf24'}}>{d.ordCnt?fmt((d.ordCnt-d.ordRetur)/d.ordCnt*100,1)+'%':'—'}</td>
-                            <td style={{...S.td,color:d.returRate>25?'#ef4444':d.returRate>15?'#fbbf24':'#22c55e'}}>{d.ordCnt?fmt(d.returRate,1)+'%':'—'}</td>
-                            <td style={S.td}>{d.ordRevenue>0?fmtK(d.ordRevenue)+' RON':'—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  {(() => {
+                    const sorted=[...ord.byHour].sort((a,b)=>b.cnt-a.cnt);
+                    const top3=sorted.slice(0,3).map(h=>`${pad2(h.hour)}:00`).join(' · ');
+                    return <div style={{fontSize:12,color:'var(--c-text3)'}}>🕐 Ore de vârf: <strong style={{color:'var(--c-text)'}}>{top3}</strong> — programează reclamele activ în aceste intervale</div>;
+                  })()}
                 </div>
               )}
 
               {/* Budget strategy */}
-              <div style={{ ...S.card }}>
-                <div style={S.cardHdr}>📋 Strategie buget săptămânal recomandată</div>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:8 }}>
+              <div style={{...c.card,marginTop:10}}>
+                <div style={c.cardHdr}>📋 CALENDARUL OPTIM DE BUGET</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:6}}>
                   {[
-                    {day:'Lun', action:'-20%', color:'#fbbf24', note:'Monitorizezi'},
-                    {day:'Mar', action:'STD',  color:'var(--c-text3)', note:'Normal'},
-                    {day:'Mie', action:'+30%', color:'#22c55e', note:'CEL MAI BUN'},
-                    {day:'Joi', action:'+20%', color:'#22c55e', note:'Momentum'},
-                    {day:'Vin', action:'-30%', color:'#f97316', note:'Reduci'},
-                    {day:'Sâm', action:'MIN',  color:'var(--c-text4)', note:'Menții viu'},
-                    {day:'Dum', action:'+25%', color:'#22c55e', note:'Start CBO'},
-                  ].map(d=>(
-                    <div key={d.day} style={{ textAlign:'center', padding:'12px 8px', background:'var(--c-card2)', borderRadius:8, border:`1px solid var(--c-border2)` }}>
-                      <div style={{ fontSize:11, color:'var(--c-text4)', marginBottom:6 }}>{d.day}</div>
-                      <div style={{ fontSize:18, fontWeight:800, color:d.color, marginBottom:4 }}>{d.action}</div>
-                      <div style={{ fontSize:9, color:'var(--c-text4)', lineHeight:1.3 }}>{d.note}</div>
+                    {d:'Lun',b:'-20%',c:'#fbbf24',n:'Monitorizezi'},
+                    {d:'Mar',b:'STD', c:'var(--c-text3)',n:'Normal'},
+                    {d:'Mie',b:'+30%',c:'#22c55e',n:'MAXIM'},
+                    {d:'Joi',b:'+20%',c:'#22c55e',n:'Momentum'},
+                    {d:'Vin',b:'-30%',c:'#f97316',n:'Reduci'},
+                    {d:'Sâm',b:'MIN', c:'var(--c-text4)',n:'Menții'},
+                    {d:'Dum',b:'+25%',c:'#22c55e',n:'Start CBO'},
+                  ].map((x,i)=>(
+                    <div key={i} style={{textAlign:'center',padding:'10px 4px',background:'var(--c-card2)',borderRadius:8,border:'1px solid var(--c-border2)'}}>
+                      <div style={{fontSize:10,color:'var(--c-text4)',marginBottom:4}}>{x.d}</div>
+                      <div style={{fontSize:15,fontWeight:800,color:x.c,marginBottom:3}}>{x.b}</div>
+                      <div style={{fontSize:8,color:'var(--c-text4)',lineHeight:1.3}}>{x.n}</div>
                     </div>
                   ))}
                 </div>
@@ -642,99 +959,45 @@ export default function MetaIntelligencePage() {
             </>
           )}
 
-          {/* ════════════════════════════════ HOURLY ═════════════════════════════ */}
-          {activeTab === 'hourly' && orderStats && (
-            <div style={{ ...S.card }}>
-              <div style={S.cardHdr}>Comenzi pe oră din zi — când cumpără clienții tăi</div>
-              <div style={{ display:'flex', alignItems:'flex-end', gap:4, height:140, marginBottom:12, overflowX:'auto' }}>
-                {orderStats.byHour.map(h => {
-                  const maxCnt = Math.max(...orderStats.byHour.map(x=>x.cnt));
-                  const pct = maxCnt ? h.cnt/maxCnt : 0;
-                  const isHot = pct > 0.6;
-                  const isMed = pct > 0.3;
-                  return (
-                    <div key={h.hour} style={{ flex:1, minWidth:18, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
-                      <div style={{ fontSize:9, color:'var(--c-text4)', fontWeight:600 }}>{h.cnt>0?h.cnt:''}</div>
-                      <div style={{ width:'100%', height:`${Math.max(pct*110,2)}px`, background: isHot?'var(--c-orange)':isMed?'rgba(249,115,22,0.5)':'var(--c-card2)', borderRadius:'3px 3px 0 0', transition:'height 0.5s ease', minHeight:2 }} title={`${h.hour}:00 — ${h.cnt} comenzi`} />
-                      <div style={{ fontSize:9, color:'var(--c-text4)' }}>{pad2(h.hour)}</div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize:12, color:'var(--c-text3)', marginBottom:16 }}>
-                <span style={{color:'var(--c-orange)'}}>■</span> Ore de vârf &nbsp;
-                <span style={{color:'rgba(249,115,22,0.5)'}}>■</span> Ore medii &nbsp;
-                <span style={{color:'var(--c-text4)'}}>■</span> Ore slabe
-              </div>
-              {/* Insights */}
-              {(() => {
-                const sorted = [...orderStats.byHour].sort((a,b)=>b.cnt-a.cnt);
-                const top3 = sorted.slice(0,3).map(h=>`${pad2(h.hour)}:00`).join(', ');
-                const worst3 = sorted.filter(h=>h.cnt>0).slice(-3).map(h=>`${pad2(h.hour)}:00`).join(', ');
-                return (
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-                    <div style={{ padding:'12px', background:'rgba(34,197,94,0.07)', borderRadius:8, border:'1px solid rgba(34,197,94,0.2)' }}>
-                      <div style={{ fontSize:11, fontWeight:700, color:'#22c55e', marginBottom:4 }}>🕐 Ore de vârf</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:'var(--c-text)' }}>{top3}</div>
-                      <div style={{ fontSize:11, color:'var(--c-text3)', marginTop:2 }}>Programează reclamele activ în aceste ore</div>
-                    </div>
-                    <div style={{ padding:'12px', background:'rgba(239,68,68,0.07)', borderRadius:8, border:'1px solid rgba(239,68,68,0.2)' }}>
-                      <div style={{ fontSize:11, fontWeight:700, color:'#ef4444', marginBottom:4 }}>🕐 Ore slabe</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:'var(--c-text)' }}>{worst3}</div>
-                      <div style={{ fontSize:11, color:'var(--c-text3)', marginTop:2 }}>Reduceri posibile pe dayparting</div>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
-
-          {activeTab === 'hourly' && !orderStats && (
-            <div style={{ ...S.card, textAlign:'center', padding:40 }}>
-              <div style={{ fontSize:32, marginBottom:12 }}>📦</div>
-              <div style={{ color:'var(--c-text3)' }}>Nicio comandă Shopify găsită. Asigură-te că ești logat și comenzile sunt sincronizate.</div>
-            </div>
-          )}
-
-          {/* ════════════════════════════════ RECOMMENDATIONS ════════════════════ */}
-          {activeTab === 'recs' && (
+          {/* ══ INSIGHTS ══ */}
+          {tab==='insights'&&(
             <>
-              <div style={{ marginBottom:16 }}>
-                {recommendations.length === 0 && (
-                  <div style={{ ...S.card, textAlign:'center', padding:40 }}>
-                    <div style={{ fontSize:32, marginBottom:12 }}>🎯</div>
-                    <div style={{ color:'var(--c-text3)' }}>Importați date Meta CSV pentru a genera recomandări personalizate.</div>
-                  </div>
-                )}
-                {recommendations.map((r,i)=>(
-                  <div key={i} style={{ ...S.recCard(r.type), marginBottom:12 }}>
-                    <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
-                      <span style={{ fontSize:20 }}>{r.icon}</span>
-                      <div>
-                        <div style={{ fontSize:14, fontWeight:700, color:'var(--c-text)', marginBottom:4 }}>{r.title}</div>
-                        <div style={{ fontSize:13, color:'var(--c-text3)', lineHeight:1.5 }}>{r.body}</div>
-                      </div>
+              {insights.length===0&&(
+                <div style={{...c.card,textAlign:'center',padding:40}}>
+                  <div style={{fontSize:32,marginBottom:10}}>💡</div>
+                  <div style={{color:'var(--c-text3)'}}>Importează CSV Meta pentru insight-uri personalizate.</div>
+                </div>
+              )}
+              {insights.map((ins,i)=>(
+                <div key={i} style={c.insight(ins.type)}>
+                  <div style={{display:'flex',gap:10}}>
+                    <span style={{fontSize:18,flexShrink:0}}>{ins.icon}</span>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:'var(--c-text)',marginBottom:3}}>{ins.title}</div>
+                      <div style={{fontSize:12,color:'var(--c-text3)',lineHeight:1.6}}>{ins.body}</div>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
 
-              {/* 7-Figure playbook */}
-              <div style={S.card}>
-                <div style={S.cardHdr}>🏆 7-Figure Playbook — Regulile de aur</div>
+              {/* Playbook */}
+              <div style={c.card}>
+                <div style={c.cardHdr}>🏆 PLAYBOOK EXPERT — Top 10% Meta Advertisers</div>
                 {[
-                  { icon:'🚫', title:'Nu opri campania joi', body:'Joi pare slab dar e tranziția spre weekend. Reduce bugetul cu 20% dar nu opri. Campaniile tale mor joi pentru că le omori tu.' },
-                  { icon:'📊', title:'Judecă doar după 7 zile', body:'Learning phase = 3-4 zile. Orice decizie luată înainte de ziua 7 e o decizie luată pe zgomot, nu pe semnal.' },
-                  { icon:'🔄', title:'Un singur element modificat per test', body:'Dacă schimbi video + copy + audiență simultan, nu știi ce a funcționat. Schimbă doar copyul pe duplicat — nimic altceva.' },
-                  { icon:'📈', title:'Mărire buget max 20% o dată', body:'Creșteri mai mari de 20% resetează algoritmul în learning phase. Măriri la 5-7 zile, nu zilnic.' },
-                  { icon:'🎯', title:'CBO separat per model', body:'Nu mixa produse în același CBO. Meta nu știe cui să arate ce și arde bugetul pe audiența greșită.' },
-                  { icon:'💡', title:'Miercuri e ziua ta de aur', body:'CPA 67.69 RON — cel mai mic din săptămână. Mărește bugetul miercuri, nu duminica. Datele reale o confirmă.' },
-                ].map((r,i)=>(
-                  <div key={i} style={{ display:'flex', gap:12, padding:'12px 0', borderBottom: i<5?'1px solid var(--c-border2)':'none' }}>
-                    <span style={{ fontSize:20, flexShrink:0 }}>{r.icon}</span>
+                  {t:'Structura campaniei corecte',b:'1 CBO per produs. 1 Ad Set broad (fără interese). 3-5 aduri cu creative diferite. Lași Meta să decidă. Nu forța audiențe manuale.'},
+                  {t:'Regula celor 50 de conversii',b:'Meta are nevoie de minim 50 conversii per ad set per săptămână ca să iasă din learning. Sub 50 = nu optimizezi, arunci bani.'},
+                  {t:'CTR benchmark pentru smartwatch',b:'CTR sub 2.5% = hook slab. 2.5-3.5% = decent. Peste 3.5% = excelent. Dacă CTR e mare dar CVR e mic, problema e pe landing page, nu pe reclame.'},
+                  {t:'CVR benchmark pentru COD România',b:'1%+ e decent. 1.3%+ e bun. 1.5%+ e excelent. Sub 0.8% = ceva nu funcționează pe pagina produsului sau există discrepanță produs-reclame.'},
+                  {t:'Frecvența ideală',b:'1.5-2.0 e zona optimă. Sub 1.5 = audiență prea mare sau reach limitat. Peste 2.5 = audiență obosită, schimbă creativele sau extinde audiența.'},
+                  {t:'Când să scalezi',b:'CPA stabil sub 70 RON timp de 7 zile consecutive. Mărire buget max 20% odată. Aștepți 3-5 zile între măriri. Nu mărești și nu editezi simultan.'},
+                  {t:'Semnalul că o campanie trebuie oprită',b:'CPA de 2x+ față de target după 7 zile și minim 3000 RON cheltuit. Înainte de asta, nu tragi concluzii — algoritmul e în learning.'},
+                  {t:'Testarea creativelor ca un expert',b:'Testezi un element odată: hook diferit, nu video nou complet. Rezultat valid după minim 5 conversii per variantă. Câștigătorul se scalează, losserul se oprește.'},
+                ].map((p,i)=>(
+                  <div key={i} style={{display:'flex',gap:10,padding:'11px 0',borderBottom:i<7?'1px solid var(--c-border2)':'none'}}>
+                    <div style={{width:20,height:20,borderRadius:'50%',background:'var(--c-orange)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:800,flexShrink:0,marginTop:1}}>{i+1}</div>
                     <div>
-                      <div style={{ fontSize:13, fontWeight:700, color:'var(--c-text)', marginBottom:3 }}>{r.title}</div>
-                      <div style={{ fontSize:12, color:'var(--c-text3)', lineHeight:1.5 }}>{r.body}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:'var(--c-text)',marginBottom:3}}>{p.t}</div>
+                      <div style={{fontSize:11,color:'var(--c-text3)',lineHeight:1.6}}>{p.b}</div>
                     </div>
                   </div>
                 ))}
