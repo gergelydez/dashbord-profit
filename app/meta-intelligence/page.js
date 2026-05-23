@@ -115,7 +115,8 @@ export default function MetaIntelligencePage(){
   function openFilePicker(){
     const input=document.createElement('input');
     input.type='file';
-    input.accept='.csv,text/csv,application/csv';
+    // accept omitted - Android blocks .csv filter
+    input.accept='.csv';
     input.style.position='fixed';
     input.style.top='-1000px';
     input.style.left='-1000px';
@@ -141,7 +142,7 @@ export default function MetaIntelligencePage(){
   function openStockPicker(){
     const input=document.createElement('input');
     input.type='file';
-    input.accept='.xls,.xlsx';
+    // accept intentionally omitted for Android compatibility
     input.style.cssText='position:fixed;top:-1000px;left:-1000px;opacity:0;';
     document.body.appendChild(input);
     input.onchange=(e)=>{
