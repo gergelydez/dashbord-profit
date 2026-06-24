@@ -259,11 +259,11 @@ export default function ImportCalc() {
       tvaProd = (seg.tvaRON || 0) / segQty * qty;
     } else {
       // Fallback: calcul din procente
+      // Transportul NU intră în baza vamală, se împarte egal per bucată
       const tvPerc = p.taxaVamala !== '' ? parseFloat(p.taxaVamala)||0 : parseFloat(taxaVamalaGlobal)||0;
       const prop = totalUSD > 0 ? valUSD / totalUSD : 0;
-      const transportAl = tRON * prop;
-      taxaVProd = (valRON + transportAl) * tvPerc / 100;
-      tvaProd = (valRON + transportAl + taxaVProd + comRON * prop) * tvaPPerc / 100;
+      taxaVProd = valRON * tvPerc / 100;
+      tvaProd = (valRON + taxaVProd) * tvaPPerc / 100;
     }
 
     // Transport și comision per bucată × cantitate
