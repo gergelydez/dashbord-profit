@@ -8,6 +8,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Providers } from '@/components/providers';
+import { RegisterSW } from '@/components/RegisterSW';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { BottomNav } from '@/components/layout/BottomNav';
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body>
+        <RegisterSW />
         <Providers>
           <div className="root-layout">
             {/* Desktop sidebar — hidden on mobile via CSS */}
