@@ -221,31 +221,43 @@ export default function ImportCalc() {
   const transportPerBuc = totalQty > 0 ? tRON / totalQty : 0;
   const comisionPerBuc  = totalQty > 0 ? comRON / totalQty : 0;
 
+  // Mapăm fiecare produs la segmentul DVI corect (fiecare segment = un tip de marfă din DVI).
+  // Nu ne bazăm pe cuvinte hardcodate ("printer"/"server") — folosim semnale reale din date:
+  const normalize = s => (s||'').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  const matchDviSegment = (p, idx) => {
+    if (dviSegmente.length === 0) return null;
+    if (dviSegmente.length === 1) return dviSegmente[0];
+
+    const qty = parseFloat(p.qty) || 0;
+
+    // 1) Cantitatea declarată la vamă pentru acel segment = cantitatea comandată din produs.
+    //    E cel mai fiabil semnal, independent de limbă (RO în DVI vs EN în numele produsului).
+    const byQty = dviSegmente.filter(s => qty > 0 && (s.cantitate || 0) === qty);
+    if (byQty.length === 1) return byQty[0];
+
+    // 2) Suprapunere de cuvinte-cheie între numele produsului și descrierea din DVI.
+    const nameWords = normalize(p.name).split(/[^a-z0-9]+/).filter(w => w.length > 2);
+    const scored = dviSegmente
+      .map(s => ({ s, score: nameWords.reduce((acc, w) => acc + (normalize(s.descriere).includes(w) ? 1 : 0), 0) }))
+      .sort((a, b) => b.score - a.score);
+    if (scored[0]?.score > 0 && scored[0].score > (scored[1]?.score || 0)) return scored[0].s;
+
+    // 3) Potrivire poziională — dacă avem exact atâtea produse câte segmente DVI,
+    //    ordinea introducerii produselor urmează de obicei ordinea din factură/DVI.
+    if (products.length === dviSegmente.length) return dviSegmente[idx];
+
+    // 4) Fallback: segmentul cu cantitatea cea mai mare (articolul principal al importului).
+    return dviSegmente.reduce((a, b) => (b.cantitate || 0) > (a.cantitate || 0) ? b : a);
+  };
+
   const prods = products.map((p, idx) => {
     const qty = parseFloat(p.qty) || 0;
     const unitUSD = parseFloat(p.unitPriceUSD) || 0;
     const valUSD = qty * unitUSD;
     const valRON = valUSD * curs;
 
-    // Mapăm fiecare produs la segmentul DVI corect:
-    // - Produsele cu taxă vamală setată explicit la 0 → segmentul cu taxă 0% (printer)
-    // - Restul → segmentul principal (ceasuri)
-    let seg = null;
-    if (dviSegmente.length > 0) {
-      const isPrinter = p.taxaVamala === '0' || 
-        (p.name||'').toLowerCase().includes('printer') || 
-        (p.name||'').toLowerCase().includes('server') ||
-        (p.sku||'').toLowerCase().includes('server');
-      if (isPrinter) {
-        // Caută segmentul cu taxă vamală 0
-        seg = dviSegmente.find(s => (s.taxaVamalaPercent||0) === 0 || (s.taxaVamalaRON||0) === 0)
-           || dviSegmente[dviSegmente.length - 1];
-      } else {
-        // Caută primul segment cu taxă vamală > 0 (ceasurile)
-        seg = dviSegmente.find(s => (s.taxaVamalaRON||0) > 0)
-           || dviSegmente[0];
-      }
-    }
+    const seg = matchDviSegment(p, idx);
 
     const tvaPPerc = parseFloat(p.tvaPercent) || 21;
 
