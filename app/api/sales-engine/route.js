@@ -17,7 +17,7 @@ export async function POST(request) {
         'x-api-key': apiKey,
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-5',
         max_tokens: max_tokens || 4000,
         system,
         messages,

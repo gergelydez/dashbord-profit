@@ -10,40 +10,52 @@ export async function POST(request) {
     }
 
     const system = type === 'dvi'
-      ? `Ești expert în declarații vamale românești (DVI). Analizează documentul DVI și extrage datele pentru FIECARE segment de mărfuri separat.
+      ? `Ești expert în declarații vamale românești (DVI/MRN). Documentul are un SEGMENT GENERAL (pagina 1) și câte un SEGMENT MĂRFURI ("Nr. art. 1", "Nr. art. 2", ... "Nr. art. N") pentru fiecare tip de produs din import.
 
-Structura unui DVI are:
-- SEGMENT GENERAL: cursul de schimb (Cursul de schimb - [14 09])
-- SEGMENT MARFURI Nr. 1, Nr. 2 etc.: fiecare cu descriere, cantitate, taxe
+IMPORTANT: un DVI poate conține 1, 2, 3 sau mai multe segmente de mărfuri (câte unul pentru fiecare tip de produs diferit). Caută în tot documentul toate secțiunile "SEGMENT MARFURI" / "Nr. art." și extrage-le pe TOATE, nu doar prima.
 
-Răspunde DOAR cu JSON valid, fără alt text:
+Pentru fiecare câmp, folosește exact aceste surse din document:
+- cursSchimb: câmpul "Cursul de schimb - [14 09]" din SEGMENT GENERAL (ex: 4.5101)
+- Pentru fiecare segment "Nr. art. N":
+  - descriere: textul din "Descrierea mărfurilor" (ex: "80 BUC CEAS INTELIGENT" sau "1 Set aparat electric pentru tuns părul și barbă, cu accesorii")
+  - cantitate: numărul de la începutul câmpului "Descrierea mărfurilor" dacă există (ex: 80); dacă nu există un număr clar acolo, folosește "Cantitatea în unități suplimentare - [18 02]"
+  - taxaVamalaPercent și taxaVamalaRON: din linia "Tip taxă: A00" — Cota de impozitare = procent, Cuantumul taxelor de plătit = valoarea în RON
+  - tvaPercent și tvaRON: din linia "Tip taxă: B00" — Cota de impozitare = procent (de obicei 21), Cuantumul taxelor de plătit = valoarea în RON
+  - valoareVamaRON: din "Valoarea statistică - [99 06]"
+- totalTaxaVamalaRON: suma tuturor valorilor A00 (taxaVamalaRON) de pe toate segmentele
+- totalTvaRON: suma tuturor valorilor B00 (tvaRON) de pe toate segmentele
+- totalCantitate: suma tuturor cantităților de pe toate segmentele (poate diferi de "Total colete")
+
+Fii foarte precis cu cifrele — copiază exact valorile numerice din document, nu le rotunji și nu le aproxima.
+
+Răspunde DOAR cu JSON valid, fără alt text, în acest format (numărul de elemente din "segmente" trebuie să corespundă exact numărului de segmente găsite în document):
 {
-  "cursSchimb": 4.3046,
+  "cursSchimb": 4.5101,
   "segmente": [
     {
       "nr": 1,
-      "descriere": "95 BUC CEASURI INTELIGENTE",
-      "cantitate": 95,
-      "taxaVamalaRON": 419,
+      "descriere": "80 BUC CEAS INTELIGENT",
+      "cantitate": 80,
+      "taxaVamalaRON": 381,
       "taxaVamalaPercent": 3.7,
-      "tvaRON": 2464,
+      "tvaRON": 2240,
       "tvaPercent": 21,
-      "valoareVamaRON": 11315.49
+      "valoareVamaRON": 10286.19
     },
     {
       "nr": 2,
-      "descriere": "1 BUC DISPOZITIV TRANSMITERE COMENZI IMPRIMANTA",
+      "descriere": "1 Set aparat electric pentru tuns părul și barbă, cu accesorii",
       "cantitate": 1,
-      "taxaVamalaRON": 0,
-      "taxaVamalaPercent": 0,
-      "tvaRON": 24,
+      "taxaVamalaRON": 3,
+      "taxaVamalaPercent": 2.2,
+      "tvaRON": 31,
       "tvaPercent": 21,
-      "valoareVamaRON": 116.23
+      "valoareVamaRON": 145.95
     }
   ],
-  "totalTaxaVamalaRON": 419,
-  "totalTvaRON": 2488,
-  "totalCantitate": 96
+  "totalTaxaVamalaRON": 384,
+  "totalTvaRON": 2271,
+  "totalCantitate": 81
 }`
       : `Ești expert în facturi DHL România. Răspunde DOAR cu JSON valid:
 {"comisionProcessare":59,"comisionTVA":12.39,"totalDePlata":2978.39}`;
@@ -56,8 +68,8 @@ Răspunde DOAR cu JSON valid, fără alt text:
         'x-api-key': apiKey,
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 800,
+        model: 'claude-sonnet-5',
+        max_tokens: 3000,
         system,
         messages: [{
           role: 'user',

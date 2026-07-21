@@ -166,8 +166,8 @@ export default function ImportCalc() {
       if (type === 'dvi') {
         if (parsed.cursSchimb) setCursValutar(String(parsed.cursSchimb));
         if (parsed.totalTaxaVamalaRON) setTaxaVamalaRON(String(parsed.totalTaxaVamalaRON));
-        if (parsed.totalTVARON) setTvaRON_dvi(String(parsed.totalTVARON));
-        if (parsed.totalProduse) setTotalProduseImport(parsed.totalProduse);
+        if (parsed.totalTvaRON) setTvaRON_dvi(String(parsed.totalTvaRON));
+        if (parsed.totalCantitate) setTotalProduseImport(parsed.totalCantitate);
         if (parsed.segmente?.length) {
           setDviSegmente(parsed.segmente);
           // Taxa vamală globală = de la primul segment cu taxă > 0
