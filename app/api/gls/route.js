@@ -117,7 +117,7 @@ async function fetchLabelByParcelId(baseReq, parcelId) {
       body: JSON.stringify({
         ...baseReq,
         ParcelIdList:    [parseInt(parcelId)],   // ← CORRECT: ParcelIdList per API docs
-        TypeOfPrinter:   'A4_2x2',
+        TypeOfPrinter:   'Thermo', // etichetă pe toată pagina (100x150mm), nu A4 împărțit în 4
         PrintPosition:   1,
         ShowPrintDialog: false,
       }),
@@ -386,7 +386,7 @@ export async function POST(req) {
       body: JSON.stringify({
         ...baseReq,
         ParcelList:      [parcelPayload],
-        TypeOfPrinter:   'A4_2x2',
+        TypeOfPrinter:   'Thermo', // etichetă pe toată pagina (100x150mm), nu A4 împărțit în 4
         PrintPosition:   1,
         ShowPrintDialog: false,
       }),
