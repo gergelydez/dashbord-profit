@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 
 /* ══════════════════════════════════════════════════════════════
    GLS AWB Manager — GLAMX Dashboard
@@ -429,6 +429,21 @@ export default function GLSPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // ── Manual AWB (Etichetă nouă — client telefonic/WhatsApp, fără comandă Shopify) ──
+  const [manualClientSearch, setManualClientSearch] = useState('');
+  const [manualSelectedClient, setManualSelectedClient] = useState(null);
+  const [manualAddr, setManualAddr] = useState({ name: '', phone: '', email: '', address: '', city: '', county: '', zip: '' });
+  const [manualProducts, setManualProducts] = useState([]);
+  const [manualProductsLoading, setManualProductsLoading] = useState(false);
+  const [manualProductsErr, setManualProductsErr] = useState('');
+  const [manualProductSearch, setManualProductSearch] = useState('');
+  const [manualSelectedProduct, setManualSelectedProduct] = useState(null);
+  const [manualQty, setManualQty] = useState('1');
+  const [manualDiscount, setManualDiscount] = useState('0');
+  const [manualIsCOD, setManualIsCOD] = useState(true);
+  const [manualCodAmount, setManualCodAmount] = useState('');
+  const [manualRef, setManualRef] = useState('');
+
   // ── Parcel History (from GLS API) ──
   const [glsParcels, setGlsParcels] = useState([]);
   const [glsParcelsLoading, setGlsParcelsLoading] = useState(false);
@@ -452,6 +467,17 @@ export default function GLSPage() {
     finally { setGlsParcelsLoading(false); }
   };
 
+  // ── Manual AWB: load product catalog from Shopify (server-side, no token on client) ──
+  const loadManualProducts = async () => {
+    setManualProductsLoading(true); setManualProductsErr('');
+    try {
+      const res = await fetch(`/api/gls/products?shop=${getShopKey()}`);
+      const data = await res.json();
+      if (data.ok) setManualProducts(data.products || []);
+      else setManualProductsErr(data.error || 'Eroare la încărcarea produselor');
+    } catch (e) { setManualProductsErr(e.message); }
+    finally { setManualProductsLoading(false); }
+  };
 
   // ── Bulk ──
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -488,8 +514,102 @@ export default function GLSPage() {
     setAwbMap(awbStore.get());
   }, []);
 
+  // Lazy-load catalogul de produse Shopify prima dată când se deschide tab-ul „Etichetă nouă”
+  useEffect(() => {
+    if (tab === 'manual' && manualProducts.length === 0 && !manualProductsLoading && !manualProductsErr) {
+      loadManualProducts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   // ── Derived ───────────────────────────────────────────────────────────────
   const savedAwbs = Object.values(awbMap);
+
+  // Clienți unici din comenzile deja plasate — pentru reutilizare rapidă a adresei la comenzi telefonice/WhatsApp
+  const knownClients = useMemo(() => {
+    const map = new Map();
+    const sorted = [...orders].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    for (const o of sorted) {
+      const key = (o.phone || '').replace(/\D/g, '') || (o.client || '').toLowerCase().trim();
+      if (!key) continue;
+      if (!map.has(key)) {
+        map.set(key, {
+          name: o.client, phone: o.phone, email: o.email,
+          address: o.address, city: o.city, county: o.county, zip: o.zip,
+          ordersCount: 0, lastOrder: o.name,
+        });
+      }
+      map.get(key).ordersCount++;
+    }
+    return [...map.values()];
+  }, [orders]);
+
+  const filteredClients = useMemo(() => {
+    if (!manualClientSearch.trim()) return knownClients.slice(0, 20);
+    const s = manualClientSearch.toLowerCase();
+    return knownClients.filter(c =>
+      (c.name || '').toLowerCase().includes(s) ||
+      (c.phone || '').includes(s) ||
+      (c.city || '').toLowerCase().includes(s)
+    ).slice(0, 20);
+  }, [knownClients, manualClientSearch]);
+
+  const filteredManualProducts = useMemo(() => {
+    if (!manualProductSearch.trim()) return manualProducts.slice(0, 20);
+    const s = manualProductSearch.toLowerCase();
+    return manualProducts.filter(p =>
+      (p.title || '').toLowerCase().includes(s) || (p.sku || '').toLowerCase().includes(s)
+    ).slice(0, 20);
+  }, [manualProducts, manualProductSearch]);
+
+  const manualQtyNum = parseFloat(manualQty) || 1;
+  const manualSuggestedTotal = Math.max(0, (manualSelectedProduct?.price || 0) * manualQtyNum - (parseFloat(manualDiscount) || 0));
+
+  const pickManualClient = (c) => {
+    setManualSelectedClient(c);
+    setManualAddr({ name: c.name || '', phone: c.phone || '', email: c.email || '', address: c.address || '', city: c.city || '', county: c.county || '', zip: c.zip || '' });
+    setManualClientSearch('');
+  };
+
+  const clearManualClient = () => {
+    setManualSelectedClient(null);
+    setManualAddr({ name: '', phone: '', email: '', address: '', city: '', county: '', zip: '' });
+  };
+
+  const pickManualProduct = (p) => {
+    setManualSelectedProduct(p);
+    setManualProductSearch('');
+    if (!manualRef) setManualRef(p.title);
+  };
+
+  // Construiește o "comandă" sintetică și deschide exact același modal de generare AWB
+  const startManualAwb = () => {
+    const issues = validateAddr(manualAddr);
+    const qty = manualQtyNum;
+    const suggested = manualSuggestedTotal;
+    const total = manualCodAmount !== '' ? (parseFloat(manualCodAmount) || 0) : suggested;
+    const prodLabel = manualSelectedProduct
+      ? `${manualSelectedProduct.title}${qty > 1 ? ` ×${qty}` : ''}`
+      : (manualRef || 'Colet');
+
+    openAwbModal({
+      id: `manual-${Date.now()}`,
+      name: manualRef?.trim() || `Telefonic ${fmtD(new Date().toISOString())}`,
+      client: manualAddr.name,
+      phone: manualAddr.phone,
+      email: manualAddr.email,
+      address: manualAddr.address,
+      city: manualAddr.city,
+      county: manualAddr.county,
+      zip: manualAddr.zip,
+      total,
+      currency: 'RON',
+      isCOD: manualIsCOD,
+      prods: prodLabel,
+      isManual: true,
+      addrIssues: issues,
+    });
+  };
   const ordersWithStatus = orders.map(o => {
     const awbData = awbMap[o.id] || null;
     // hasAwb: check trackingNo from Shopify fulfillment, local awbMap, OR isFulfilled with GLS
@@ -629,9 +749,17 @@ export default function GLSPage() {
       const data = await createAWB(awbModal);
       setAwbResult(data);
       if (data.ok) {
-        awbStore.save(awbModal.id, data);
+        // Salvăm și datele comenzii pe AWB — necesar pentru afișare în tabul „AWBuri”
+        // când AWB-ul e creat manual și nu există o comandă Shopify de găsit.
+        awbStore.save(awbModal.id, {
+          ...data,
+          client: awbModal.client, city: awbModal.city, county: awbModal.county, zip: awbModal.zip,
+          total: awbModal.total, currency: awbModal.currency, isCOD: awbModal.isCOD,
+          orderName: awbModal.name, isManual: !!awbModal.isManual,
+        });
         setAwbMap(awbStore.get());
         toast(`✅ AWB GLS ${data.awb} generat!`, 'success');
+        if (awbModal.isManual) { clearManualClient(); setManualSelectedProduct(null); setManualRef(''); setManualCodAmount(''); setManualDiscount('0'); setManualQty('1'); }
       } else {
         toast('Eroare: ' + data.error, 'error');
       }
@@ -888,6 +1016,7 @@ export default function GLSPage() {
         <div className="gls-tabs">
           {[
             { id: 'orders', label: '📦 Comenzi' },
+            { id: 'manual', label: '🆕 Etichetă nouă' },
             { id: 'awbs', label: '🏷️ AWBuri' },
             { id: 'istoric', label: '📡 Istoric GLS' },
             { id: 'settings', label: '⚙️ Setări' },
@@ -1105,6 +1234,168 @@ export default function GLSPage() {
         )}
 
         {/* ══════════════════════════════════════
+            TAB: MANUAL — Etichetă nouă (telefonic/WhatsApp)
+        ══════════════════════════════════════ */}
+        {tab === 'manual' && (
+          <div className="gls-fadein">
+            <div className="gls-panel">
+              <div className="gls-panel-hdr">
+                <div>
+                  <div className="gls-panel-title">🆕 Etichetă nouă</div>
+                  <div className="gls-panel-sub">Comenzi telefonice / WhatsApp — client existent sau nou, produs de pe site sau colet generic (ex: înlocuire)</div>
+                </div>
+              </div>
+
+              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                {/* ── Client ── */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 8 }}>👤 Client</div>
+                  {manualSelectedClient ? (
+                    <div className="gls-awb-card" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, color: '#e2e8f0' }}>{manualSelectedClient.name || 'Fără nume'}</div>
+                        <div style={{ fontSize: 11, color: '#64748b' }}>{manualSelectedClient.phone} • {manualSelectedClient.city} • {manualSelectedClient.ordersCount} comenzi anterioare</div>
+                      </div>
+                      <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={clearManualClient}>✕ Schimbă</button>
+                    </div>
+                  ) : (
+                    <>
+                      <input className="gls-search" style={{ width: '100%' }}
+                        placeholder="🔍 Caută client existent după nume, telefon sau oraș..."
+                        value={manualClientSearch} onChange={e => setManualClientSearch(e.target.value)} />
+                      {filteredClients.length > 0 && (
+                        <div style={{ marginTop: 6, border: '1px solid rgba(255,255,255,.06)', borderRadius: 8, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
+                          {filteredClients.map((c, i) => (
+                            <div key={i} onClick={() => pickManualClient(c)}
+                              style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.04)', fontSize: 12 }}>
+                              <span style={{ fontWeight: 700, color: '#e2e8f0' }}>{c.name || 'Fără nume'}</span>
+                              <span style={{ color: '#475569' }}> · {c.phone} · {c.city}</span>
+                              <span style={{ float: 'right', color: '#334155', fontSize: 10 }}>{c.ordersCount}×</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 10, color: '#334155', marginTop: 6 }}>Sau completează direct datele mai jos pentru un client nou.</div>
+                    </>
+                  )}
+                </div>
+
+                {/* ── Adresă ── */}
+                <div className="gls-grid2">
+                  {[
+                    { key: 'name', label: 'Nume complet', placeholder: 'Ion Popescu' },
+                    { key: 'phone', label: 'Telefon', placeholder: '07xx xxx xxx' },
+                    { key: 'email', label: 'Email', placeholder: 'email@exemplu.ro (opțional)' },
+                    { key: 'city', label: 'Oraș', placeholder: 'Bucuresti' },
+                    { key: 'county', label: 'Județ', placeholder: 'Ilfov' },
+                    { key: 'zip', label: 'Cod poștal', placeholder: '123456', maxLength: 6 },
+                  ].map(f => (
+                    <div key={f.key} className="gls-field">
+                      <label className="gls-lbl">{f.label}</label>
+                      <input className="gls-inp" value={manualAddr[f.key] || ''} maxLength={f.maxLength} placeholder={f.placeholder}
+                        onChange={e => { const v = e.target.value; setManualAddr(p => ({ ...p, [f.key]: v })); setManualSelectedClient(null); }} />
+                    </div>
+                  ))}
+                  <div className="gls-field" style={{ gridColumn: '1/-1' }}>
+                    <label className="gls-lbl">Adresă stradală</label>
+                    <input className="gls-inp" value={manualAddr.address || ''} placeholder="Str. Exemplu nr. 10"
+                      onChange={e => { const v = e.target.value; setManualAddr(p => ({ ...p, address: v })); setManualSelectedClient(null); }} />
+                  </div>
+                </div>
+
+                <div className="gls-divider" />
+
+                {/* ── Produs ── */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 8 }}>📦 Produs (opțional)</div>
+                  {manualSelectedProduct ? (
+                    <div className="gls-awb-card" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, color: '#e2e8f0' }}>{manualSelectedProduct.title}</div>
+                        <div style={{ fontSize: 11, color: '#64748b' }}>{manualSelectedProduct.sku || '—'} • {fmt(manualSelectedProduct.price)} RON/buc</div>
+                      </div>
+                      <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={() => setManualSelectedProduct(null)}>✕ Schimbă</button>
+                    </div>
+                  ) : (
+                    <>
+                      <input className="gls-search" style={{ width: '100%' }}
+                        placeholder="🔍 Caută produs de pe site (nume sau SKU)..."
+                        value={manualProductSearch} onChange={e => setManualProductSearch(e.target.value)} />
+                      {manualProductsLoading && (
+                        <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}><span className="gls-spin">↻</span> Se încarcă produsele din Shopify...</div>
+                      )}
+                      {manualProductsErr && (
+                        <div className="gls-errbox" style={{ marginTop: 6 }}>
+                          ❌ {manualProductsErr}
+                          <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={loadManualProducts} style={{ marginLeft: 8 }}>Reîncearcă</button>
+                        </div>
+                      )}
+                      {!manualProductsLoading && filteredManualProducts.length > 0 && (
+                        <div style={{ marginTop: 6, border: '1px solid rgba(255,255,255,.06)', borderRadius: 8, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
+                          {filteredManualProducts.map(p => (
+                            <div key={p.id} onClick={() => pickManualProduct(p)}
+                              style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.04)', fontSize: 12 }}>
+                              <span style={{ fontWeight: 700, color: '#e2e8f0' }}>{p.title}</span>
+                              <span style={{ float: 'right', color: '#f97316', fontWeight: 700 }}>{fmt(p.price)} RON</span>
+                              {p.sku && <div style={{ fontSize: 9, color: '#475569' }}>SKU: {p.sku}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 10, color: '#334155', marginTop: 6 }}>Fără produs selectat = colet generic (ex: înlocuire produs la client).</div>
+                    </>
+                  )}
+                </div>
+
+                {/* ── Cantitate / discount / referință ── */}
+                <div className="gls-grid2">
+                  <div className="gls-field">
+                    <label className="gls-lbl">Cantitate</label>
+                    <input className="gls-inp" type="number" min="1" value={manualQty} onChange={e => setManualQty(e.target.value)} />
+                  </div>
+                  <div className="gls-field">
+                    <label className="gls-lbl">Discount (RON)</label>
+                    <input className="gls-inp" type="number" min="0" value={manualDiscount} onChange={e => setManualDiscount(e.target.value)} />
+                  </div>
+                  <div className="gls-field" style={{ gridColumn: '1/-1' }}>
+                    <label className="gls-lbl">Referință comandă</label>
+                    <input className="gls-inp" value={manualRef} maxLength={40} placeholder="ex: Comandă telefonică Ion Popescu"
+                      onChange={e => setManualRef(e.target.value)} />
+                  </div>
+                </div>
+
+                {/* ── Ramburs ── */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <button type="button" className={`gls-toggle${manualIsCOD ? ' on' : ''}`} onClick={() => setManualIsCOD(v => !v)} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: manualIsCOD ? '#f59e0b' : '#64748b' }}>
+                    {manualIsCOD ? '💵 Ramburs la livrare' : '💳 Plătit deja / fără ramburs'}
+                  </span>
+                </div>
+
+                {manualIsCOD && (
+                  <div className="gls-field">
+                    <label className="gls-lbl">
+                      Sumă ramburs (RON){manualSelectedProduct ? ` — sugerat: ${fmt(manualSuggestedTotal)} RON` : ''}
+                    </label>
+                    <input className="gls-inp" type="number" min="0" step="0.01"
+                      value={manualCodAmount} placeholder={fmt(manualSuggestedTotal)}
+                      onChange={e => setManualCodAmount(e.target.value)} />
+                    <div className="gls-hint">Introdu manual suma — util după un discount telefonic sau când nu e legată de un produs.</div>
+                  </div>
+                )}
+
+                <button className="gls-btn gls-btn-primary" style={{ alignSelf: 'flex-start' }}
+                  disabled={!manualAddr.name || !manualAddr.phone}
+                  onClick={startManualAwb}>
+                  🚚 Continuă → Generează AWB
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════
             TAB: AWBs SAVED
         ══════════════════════════════════════ */}
         {tab === 'awbs' && (
@@ -1132,24 +1423,29 @@ export default function GLSPage() {
                 <div style={{ padding: 14, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(300px,1fr))' }}>
                   {savedAwbs.map((a, idx) => {
                     const order = ordersWithStatus.find(o => o.id === a.orderId);
+                    // Fallback pe datele salvate direct pe AWB — pentru etichete create manual (fără comandă Shopify)
+                    const info = order || a;
+                    const infoName = order?.name || a.orderName;
                     return (
                       <div key={a.awb || idx} className="gls-awb-card gls-fadein">
                         <div className="gls-awb-card-row">
                           <div>
                             <div className="gls-awbn" style={{ fontSize: 22 }}>{a.awb}</div>
-                            <div style={{ fontSize: 10, color: '#334155', marginTop: 2 }}>{order?.name} • {fmtD(a.savedAt)}</div>
+                            <div style={{ fontSize: 10, color: '#334155', marginTop: 2 }}>
+                              {infoName} • {fmtD(a.savedAt)}{a.isManual && <span className="gls-badge gls-badge-purple" style={{ fontSize: 8, marginLeft: 6 }}>📞 Manual</span>}
+                            </div>
                           </div>
                           <span className="gls-badge gls-badge-ok">✓ Activ</span>
                         </div>
-                        {order && (
+                        {(info.client || info.city) && (
                           <div style={{ fontSize: 11, color: '#64748b' }}>
-                            <strong style={{ color: '#94a3b8' }}>{order.client}</strong> — {order.city} {order.zip}
+                            <strong style={{ color: '#94a3b8' }}>{info.client}</strong> — {info.city} {info.zip}
                           </div>
                         )}
-                        {order && (
+                        {info && (
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                            <span className={`gls-badge ${order.isCOD ? 'gls-badge-warn' : 'gls-badge-blue'}`} style={{ fontSize: 9 }}>
-                              {order.isCOD ? `💵 Ramburs ${fmt(order.total)} RON` : `💳 ${fmt(order.total)} RON`}
+                            <span className={`gls-badge ${info.isCOD ? 'gls-badge-warn' : 'gls-badge-blue'}`} style={{ fontSize: 9 }}>
+                              {info.isCOD ? `💵 Ramburs ${fmt(info.total)} RON` : `💳 ${fmt(info.total)} RON`}
                             </span>
                             {(a.servicesApplied || []).map(s => (
                               <span key={s} className="gls-badge gls-badge-purple" style={{ fontSize: 9 }}>{s}</span>
@@ -1162,7 +1458,7 @@ export default function GLSPage() {
                             className="gls-btn gls-btn-green gls-btn-sm"
                             style={{fontWeight:800}}
                             disabled={downloadingAwb === a.awb}
-                            onClick={() => downloadLabel(a, order?.name, a.awb)}
+                            onClick={() => downloadLabel(a, infoName, a.awb)}
                           >
                             {downloadingAwb === a.awb
                               ? <><span className="gls-spin">↻</span> ...</>
