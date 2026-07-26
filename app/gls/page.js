@@ -64,14 +64,20 @@ function procOrder(o) {
     const isGLS = tc.includes('gls') || tc.includes('mygls') ||
       (o.trackingNo && !tc) || // has tracking but courier unknown = likely GLS
       false;
+    // Dashboard-ul principal salvează orașul ca `oras` și emailul ca `clientEmail` —
+    // le normalizăm aici la `city`/`email` ca să funcționeze restul paginii GLS.
+    const city = o.city || o.oras || '';
+    const email = o.email || o.clientEmail || '';
     return {
       ...o,
       id: String(o.id || ''),
       trackingNo,
       isGLS,
+      city,
+      email,
       addrIssues: validateAddr({
         name: o.client, address: o.address,
-        city: o.city, zip: o.zip, phone: o.phone,
+        city, zip: o.zip, phone: o.phone,
       }),
     };
   }
