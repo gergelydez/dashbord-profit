@@ -1498,7 +1498,7 @@ function SyncButton({ shop, onDone }: { shop: string; onDone: (msg: string) => v
 }
 
 /* MAIN PAGE */
-const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺' };
+const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺', GLATO: '🛍️' };
 type AwbResultMap = Record<string, { awb: string; courier: string; labelBase64?: string | null; trackUrl?: string; myglsUrl?: string; labelUrl?: string | null; }>;
 
 
