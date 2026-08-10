@@ -10,6 +10,7 @@ import { db } from '@/lib/db';
 import { storePdf } from '@/lib/storage/s3';
 import { buildShippingLabelUrl } from '@/lib/security/tokens';
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 import { upsertOrderFromWebhook, type WebhookOrderPayload } from '@/lib/services/order-processor';
 
 async function fetchShopifyOrder(shopifyId: string, domain: string, token: string) {
@@ -48,7 +49,8 @@ export async function POST(request: Request) {
     try { shopCfg = getShopConfig(shopKey); }
     catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
-    const { domain, accessToken } = shopCfg;
+    const { domain } = shopCfg;
+    const accessToken = await getAccessToken(shopCfg);
 
     // Ensure shop in DB
     let shop = await db.shop.findFirst({ where: { domain } });

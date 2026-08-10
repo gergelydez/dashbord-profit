@@ -36,6 +36,7 @@ import {
   type WebhookOrderPayload,
 } from '@/lib/services/order-processor';
 import { SHOP_CONFIGS } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 // Citeste autoInvoice din Redis — cheie globala, se aplica la toate shop-urile
 async function isAutoInvoiceEnabled(shopDomain: string): Promise<boolean> {
@@ -201,6 +202,7 @@ async function generateInvoiceAsync(orderId: string, shopDomain: string): Promis
 
   const shopCfg = SHOP_CONFIGS.find(s => s.domain === shopDomain);
   if (!shopCfg) throw new Error(`Shop config not found for domain ${shopDomain}`);
+  const shopToken = await getAccessToken(shopCfg);
 
   // Tipul de plată vine direct din Shopify (paymentGateway salvat la webhook)
   // payment_gateway examples: 'bogus', 'stripe', 'paypal', 'manual', 'cash_on_delivery', 'gift_card'
@@ -258,7 +260,7 @@ async function generateInvoiceAsync(orderId: string, shopDomain: string): Promis
 
   const result = await ensureInvoice(
     order,
-    shopCfg.accessToken,
+    shopToken,
     shopDomain,
     withCollection,
     useStock,
@@ -281,8 +283,11 @@ async function resolveShopId(domain: string): Promise<string> {
 
   const shopCfg = SHOP_CONFIGS.find(s => s.domain === domain);
   if (shopCfg) {
+    // Stored only for visibility/debugging — shops using client_id/client_secret (e.g. glato)
+    // always resolve a fresh token at call time via getAccessToken(), never trust this column.
+    const initialToken = await getAccessToken(shopCfg);
     const shop = await db.shop.create({
-      data: { domain, accessToken: shopCfg.accessToken, active: true },
+      data: { domain, accessToken: initialToken, active: true },
     });
     log.info('Auto-created shop from multi-shop config', { domain, shopId: shop.id });
     return shop.id;

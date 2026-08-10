@@ -21,6 +21,7 @@ import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { ensureInvoice } from './invoice-service';
 import { ensureShipment } from './shipment-service';
+import { getAccessTokenForDomain } from '@/lib/shopify/ccg-token';
 import type { Order } from '@prisma/client';
 
 export interface ProcessOrderOptions {
@@ -212,10 +213,15 @@ export async function processOrder(
 async function resolveShopifyCredentials(
   order: Order,
 ): Promise<{ shopifyDomain: string; shopifyAccessToken: string }> {
-  // Multi-shop: look up the shop record first (ensures HU orders use HU credentials)
+  // Multi-shop: look up the shop record first (ensures HU/glato orders use their own credentials).
+  // The access token is always resolved fresh here (not read from the DB row) — shops using
+  // client_id/client_secret (e.g. glato) only have a 24h token, and this function can run a
+  // while after the order was first seen (BullMQ retries, delayed jobs), so a token cached at
+  // order-creation time could easily have expired by the time this runs.
   const shop = await db.shop.findUnique({ where: { id: order.shopId } });
   if (shop) {
-    return { shopifyDomain: shop.domain, shopifyAccessToken: shop.accessToken };
+    const shopifyAccessToken = await getAccessTokenForDomain(shop.domain);
+    return { shopifyDomain: shop.domain, shopifyAccessToken };
   }
 
   // Fallback: single-shop env vars

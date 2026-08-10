@@ -10,6 +10,7 @@ import { ensureInvoice } from '@/lib/services/invoice-service';
 import { upsertOrderFromWebhook, type WebhookOrderPayload } from '@/lib/services/order-processor';
 import { buildInvoiceUrl } from '@/lib/security/tokens';
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 async function fetchShopifyOrder(shopifyId: string, domain: string, token: string) {
   const res = await fetch(
@@ -43,7 +44,8 @@ export async function POST(request: Request) {
   try { shopCfg = getShopConfig(shopKey); }
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
-  const { domain: SHOPIFY_DOMAIN, accessToken: SHOPIFY_TOKEN } = shopCfg;
+  const SHOPIFY_DOMAIN = shopCfg.domain;
+  const SHOPIFY_TOKEN  = await getAccessToken(shopCfg);
 
   try {
     // Ensure shop exists

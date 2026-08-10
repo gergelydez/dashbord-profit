@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 import { db } from '@/lib/db';
 import { buildInvoiceUrl, buildShippingLabelUrl } from '@/lib/security/tokens';
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 const API_VERSION = '2026-07';
 
@@ -223,9 +224,10 @@ export async function GET(request: Request) {
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
   try {
+    const token = await getAccessToken(shopCfg);
     const result = await fetchShopifyOrders(
       shopCfg.domain,
-      shopCfg.accessToken,
+      token,
       cursor,
       { search, createdMin: dateFrom, financialStatus: finStatus },
     );

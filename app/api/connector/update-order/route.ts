@@ -23,6 +23,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 interface UpdateOrderBody {
   shopifyOrderId: string;
@@ -84,7 +85,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 });
   }
 
-  const { domain, accessToken: token } = shopCfg;
+  const { domain } = shopCfg;
+  const token = await getAccessToken(shopCfg);
 
   // ── Build Shopify order update payload ─────────────────────────────────────
   const orderPatch: Record<string, unknown> = { id: shopifyOrderId };

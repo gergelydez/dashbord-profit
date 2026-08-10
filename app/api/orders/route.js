@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { SHOP_CONFIGS } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 const serverCache = new Map();
 const CACHE_TTL = 60 * 1000;
@@ -150,7 +151,7 @@ export async function GET(request) {
     const shopConfig = SHOP_CONFIGS.find(s => s.key === shopKey);
     if (shopConfig) {
       domain = shopConfig.domain;
-      token = shopConfig.accessToken;
+      token = await getAccessToken(shopConfig);
     }
   }
 
@@ -268,7 +269,8 @@ export async function PUT(req) {
 }
 
 // POST — returnează shop-urile configurate server-side (pentru getServerConfiguredShops)
+// SHOP_CONFIGS e deja filtrat în lib/shops.ts (domain + credențiale valide, token sau client_id/secret)
 export async function POST() {
-  const shops = SHOP_CONFIGS.filter(s => s.domain && s.accessToken).map(s => ({ key: s.key, label: s.label }));
+  const shops = SHOP_CONFIGS.map(s => ({ key: s.key, label: s.label }));
   return NextResponse.json({ shops });
 }

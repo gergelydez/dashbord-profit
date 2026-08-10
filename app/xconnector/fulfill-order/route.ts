@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic';
 
 import { db } from '@/lib/db';
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 import { createFulfillment } from '@/lib/shopify/fulfillment';
 
 export async function POST(request: Request) {
@@ -35,7 +36,8 @@ export async function POST(request: Request) {
     try { shopCfg = getShopConfig(shopKey); }
     catch { return NextResponse.json({ error: `Shop "${shopKey}" nu e configurat` }, { status: 400 }); }
 
-    const { domain, accessToken } = shopCfg;
+    const { domain } = shopCfg;
+    const accessToken = await getAccessToken(shopCfg);
     const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
 
     // Creează fulfillment în Shopify cu AWB

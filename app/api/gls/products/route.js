@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 // ── Flattened product/variant catalog for the manual "Etichetă nouă" picker ──
 // Server-side only: the Shopify access token never reaches the browser.
@@ -15,7 +16,8 @@ export async function GET(request) {
   }
 
   try {
-    const headers = { 'X-Shopify-Access-Token': shop.accessToken, 'Content-Type': 'application/json' };
+    const token = await getAccessToken(shop);
+    const headers = { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' };
     const products = [];
     let url = `https://${shop.domain}/admin/api/2024-01/products.json?limit=250&status=active&fields=id,title,image,variants`;
 

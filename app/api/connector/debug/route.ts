@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 import { db } from '@/lib/db';
 import { SHOP_CONFIGS } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -40,9 +41,10 @@ export async function GET(request: Request) {
   let shopifyWebhooks: unknown[] = [];
   if (shopCfg) {
     try {
+      const token = await getAccessToken(shopCfg);
       const res = await fetch(
         `https://${domain}/admin/api/2026-07/webhooks.json`,
-        { headers: { 'X-Shopify-Access-Token': shopCfg.accessToken }, cache: 'no-store' }
+        { headers: { 'X-Shopify-Access-Token': token }, cache: 'no-store' }
       );
       const data = await res.json();
       shopifyWebhooks = (data.webhooks || []).map((w: {topic:string;address:string}) => ({

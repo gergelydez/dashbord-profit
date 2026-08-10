@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 import { db } from '@/lib/db';
 
 const API_VERSION = '2026-07';
@@ -22,7 +23,8 @@ export async function POST(request: Request) {
   try { shopCfg = getShopConfig(shopKey); }
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
-  const { domain, accessToken } = shopCfg;
+  const { domain } = shopCfg;
+  const accessToken = await getAccessToken(shopCfg);
 
   try {
     // 1. Fetch orders that are NOT yet in DB (no customer data stored)

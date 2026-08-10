@@ -6,6 +6,7 @@
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 const REQUIRED_TOPICS = ['orders/create', 'orders/paid', 'orders/updated', 'orders/cancelled', 'orders/fulfilled'];
 
@@ -17,7 +18,8 @@ export async function GET(request: Request) {
   try { shopCfg = getShopConfig(shopKey); }
   catch { return NextResponse.json({ error: `Shop "${shopKey}" neconfigurat` }, { status: 400 }); }
 
-  const { domain, accessToken } = shopCfg;
+  const { domain } = shopCfg;
+  const accessToken = await getAccessToken(shopCfg);
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
   if (!appUrl) return NextResponse.json({ error: 'NEXT_PUBLIC_APP_URL not set' }, { status: 500 });
 

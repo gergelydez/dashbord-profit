@@ -22,6 +22,7 @@ import { processOrder } from '@/lib/services/order-processor';
 import { ensureInvoice } from '@/lib/services/invoice-service';
 import { ensureShipment } from '@/lib/services/shipment-service';
 import { db } from '@/lib/db';
+import { getAccessTokenForDomain } from '@/lib/shopify/ccg-token';
 import {
   QUEUE_ORDER_PROCESSING,
   QUEUE_INVOICE_GENERATION,
@@ -96,8 +97,11 @@ export function createInvoiceGenerationWorker(): Worker {
 
       const order = await db.order.findUniqueOrThrow({ where: { id: job.data.orderId } });
       const shop  = await db.shop.findUniqueOrThrow({ where: { id: job.data.shopId } });
+      // Resolved fresh, not read from the DB row — a queued job can run well after the
+      // shop's 24h client-credentials token (glato) was first cached.
+      const accessToken = await getAccessTokenForDomain(shop.domain);
 
-      const result = await ensureInvoice(order, shop.accessToken, shop.domain);
+      const result = await ensureInvoice(order, accessToken, shop.domain);
 
       log.info('Invoice job complete', {
         jobId:    job.id,
@@ -126,10 +130,11 @@ export function createShipmentGenerationWorker(): Worker {
 
       const order = await db.order.findUniqueOrThrow({ where: { id: job.data.orderId } });
       const shop  = await db.shop.findUniqueOrThrow({ where: { id: job.data.shopId } });
+      const accessToken = await getAccessTokenForDomain(shop.domain);
 
       const result = await ensureShipment(
         order,
-        shop.accessToken,
+        accessToken,
         shop.domain,
         job.data.courier,
         job.data.courierOptions,

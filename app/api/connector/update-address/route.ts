@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 import { getShopConfig, getDefaultShopKey } from '@/lib/shops';
+import { getAccessToken } from '@/lib/shopify/ccg-token';
 
 export async function POST(request: Request) {
   const {
@@ -22,12 +23,13 @@ export async function POST(request: Request) {
   try { shopCfg = getShopConfig(shopKey); }
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
+  const token = await getAccessToken(shopCfg);
   const res = await fetch(
     `https://${shopCfg.domain}/admin/api/2026-07/orders/${shopifyOrderId}.json`,
     {
       method: 'PUT',
       headers: {
-        'X-Shopify-Access-Token': shopCfg.accessToken,
+        'X-Shopify-Access-Token': token,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ order: { id: shopifyOrderId, shipping_address: { zip } } }),
