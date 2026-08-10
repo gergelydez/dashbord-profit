@@ -9,11 +9,16 @@
  */
 
 import { createHmac, timingSafeEqual } from 'crypto';
+import { SHOP_CONFIGS } from '@/lib/shops';
 
 /**
  * Returns all configured webhook secrets (one per shop).
  * Tries shop-specific secrets first (SHOPIFY_WEBHOOK_SECRET_RO / _HU),
  * then falls back to the generic SHOPIFY_WEBHOOK_SECRET.
+ *
+ * Shops created via Shopify's Dev Dashboard (e.g. glato) don't have a
+ * separate "webhook secret" to configure — Shopify always signs webhooks
+ * with the app's Client Secret, so we also try each shop's clientSecret.
  */
 function getWebhookSecrets(): string[] {
   const secrets: string[] = [];
@@ -23,6 +28,9 @@ function getWebhookSecrets(): string[] {
   if (ro)      secrets.push(ro);
   if (hu)      secrets.push(hu);
   if (generic) secrets.push(generic);
+  for (const shop of SHOP_CONFIGS) {
+    if (shop.clientSecret) secrets.push(shop.clientSecret);
+  }
   // deduplicate
   return Array.from(new Set(secrets));
 }
