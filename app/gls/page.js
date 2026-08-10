@@ -450,6 +450,13 @@ export default function GLSPage() {
   const [manualCodAmount, setManualCodAmount] = useState('');
   const [manualRef, setManualRef] = useState('');
 
+  // ── Facturare din modalul AWB (comandă reală sau manuală) ──
+  const [invLoading, setInvLoading] = useState(false);
+  const [invResult, setInvResult] = useState(null);
+  const [invWithCollection, setInvWithCollection] = useState(true);
+  const [invUseStock, setInvUseStock] = useState(true);
+  const [invPaymentType, setInvPaymentType] = useState('Card');
+
   // ── Parcel History (from GLS API) ──
   const [glsParcels, setGlsParcels] = useState([]);
   const [glsParcelsLoading, setGlsParcelsLoading] = useState(false);
@@ -538,12 +545,21 @@ export default function GLSPage() {
     for (const o of sorted) {
       const key = (o.phone || '').replace(/\D/g, '') || (o.client || '').toLowerCase().trim();
       if (!key) continue;
-      if (!map.has(key)) {
+      const existing = map.get(key);
+      if (!existing) {
         map.set(key, {
-          name: o.client, phone: o.phone, email: o.email,
+          name: o.client, phone: o.phone, email: o.email || '',
           address: o.address, city: o.city, county: o.county, zip: o.zip,
           ordersCount: 0, lastOrder: o.name,
         });
+      } else {
+        // Completăm din comenzi mai vechi ale aceluiași client câmpurile care lipsesc
+        // din cea mai recentă (ex: emailul poate lipsi dintr-o comandă, dar exista în alta)
+        if (!existing.email)   existing.email   = o.email   || '';
+        if (!existing.address) existing.address = o.address || '';
+        if (!existing.city)    existing.city    = o.city    || '';
+        if (!existing.county)  existing.county  = o.county  || '';
+        if (!existing.zip)     existing.zip     = o.zip     || '';
       }
       map.get(key).ordersCount++;
     }
@@ -598,6 +614,12 @@ export default function GLSPage() {
       ? `${manualSelectedProduct.title}${qty > 1 ? ` ×${qty}` : ''}`
       : (manualRef || 'Colet');
 
+    // Linia de produs pentru factură — doar dacă a fost ales un produs real din catalog
+    // (are SKU + preț; un colet generic/înlocuire nu poate fi facturat fără ele)
+    const lineItems = manualSelectedProduct
+      ? [{ name: manualSelectedProduct.title, sku: manualSelectedProduct.sku || '', qty, price: manualSelectedProduct.price }]
+      : null;
+
     openAwbModal({
       id: `manual-${Date.now()}`,
       name: manualRef?.trim() || `Telefonic ${fmtD(new Date().toISOString())}`,
@@ -613,6 +635,7 @@ export default function GLSPage() {
       isCOD: manualIsCOD,
       prods: prodLabel,
       isManual: true,
+      lineItems,
       addrIssues: issues,
     });
   };
@@ -704,6 +727,11 @@ export default function GLSPage() {
       name: order.client, phone: order.phone, email: order.email,
       address: order.address, city: order.city, county: order.county, zip: order.zip,
     });
+    // Facturare — implicit "cu încasare" doar dacă NU e ramburs (la fel ca auto-facturarea din xConnector)
+    setInvResult(null);
+    setInvWithCollection(!order.isCOD);
+    setInvUseStock(true);
+    setInvPaymentType(order.isCOD ? 'Ramburs' : 'Card');
   };
 
   // ── Create AWB ─────────────────────────────────────────────────────────────
@@ -774,6 +802,63 @@ export default function GLSPage() {
       toast('Eroare rețea: ' + e.message, 'error');
     } finally {
       setAwbLoading(false);
+    }
+  };
+
+  // ── Generare factură (comandă reală Shopify SAU comandă manuală telefonică) ──
+  // Reutilizează exact logica din xConnector: gestiune (scade stoc SmartBill) + încasare.
+  const generateInvoice = async () => {
+    if (!awbModal) return;
+    setInvLoading(true);
+    setInvResult(null);
+    try {
+      const isManual = !!awbModal.isManual;
+      const url = isManual ? '/api/gls/manual-invoice' : '/api/connector/invoice';
+      const payload = isManual ? {
+        shop: getShopKey(),
+        reference: awbModal.name,
+        client: {
+          name:  editAddr?.name  || awbModal.client,
+          email: editAddr?.email || awbModal.email,
+          phone: editAddr?.phone || awbModal.phone,
+        },
+        address: {
+          address1: editAddr?.address || awbModal.address,
+          city:     editAddr?.city    || awbModal.city,
+          county:   editAddr?.county  || awbModal.county,
+          zip:      editAddr?.zip     || awbModal.zip,
+        },
+        lineItems:      awbModal.lineItems || [],
+        isPaid:         !awbModal.isCOD,
+        withCollection: invWithCollection,
+        useStock:       invUseStock,
+        paymentType:    invPaymentType,
+      } : {
+        shopifyOrderId: awbModal.id,
+        shop:           getShopKey(),
+        withCollection: invWithCollection,
+        useStock:       invUseStock,
+        paymentType:    invPaymentType,
+      };
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && !data.error) {
+        setInvResult(data);
+        toast(`✅ Factură ${data.series}${data.number} generată!`, 'success');
+      } else {
+        setInvResult({ error: data.error || 'Eroare necunoscută' });
+        toast('Eroare factură: ' + (data.error || '?'), 'error');
+      }
+    } catch (e) {
+      setInvResult({ error: e.message });
+      toast('Eroare rețea: ' + e.message, 'error');
+    } finally {
+      setInvLoading(false);
     }
   };
 
@@ -1915,6 +2000,70 @@ export default function GLSPage() {
                   </div>
                 </>
               )}
+
+              {/* Facturare — comandă reală Shopify sau comandă manuală telefonică.
+                  Vizibilă indiferent dacă AWB-ul a fost deja generat sau nu. */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 8 }}>🧾 Facturare</div>
+
+                {awbModal.isManual && !(awbModal.lineItems?.length) ? (
+                  <div className="gls-infobox">Pentru facturare, întoarce-te la „Etichetă nouă” și selectează un produs din catalog — coletele generice/înlocuiri fără produs nu pot fi facturate.</div>
+                ) : invResult?.series ? (
+                  <div className="gls-okbox">
+                    <div style={{ fontSize: 12, color: '#10b981', marginBottom: 4 }}>✅ Factură generată</div>
+                    <div className="gls-okbox-awb" style={{ fontSize: 22 }}>{invResult.series}{invResult.number}</div>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                      {invResult.downloadUrl && (
+                        <a href={invResult.downloadUrl} target="_blank" rel="noopener noreferrer" className="gls-btn gls-btn-green" style={{ textDecoration: 'none' }}>⬇ Descarcă PDF</a>
+                      )}
+                      {invResult.smartbillUrl && (
+                        <a href={invResult.smartbillUrl} target="_blank" rel="noopener noreferrer" className="gls-btn gls-btn-ghost" style={{ textDecoration: 'none' }}>🌐 SmartBill</a>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {invResult?.error && <div className="gls-errbox">❌ {invResult.error}</div>}
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: invWithCollection ? '#f59e0b' : '#94a3b8' }}>💰 Adaugă încasare</div>
+                        <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                          {awbModal.isCOD ? 'Comandă ramburs — activează dacă e cazul' : '✓ Auto-activat — comandă plătită online'}
+                        </div>
+                      </div>
+                      <button type="button" className={`gls-toggle${invWithCollection ? ' on' : ''}`} onClick={() => setInvWithCollection(v => !v)} />
+                    </div>
+
+                    {invWithCollection && (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        {['Card', 'Ramburs', 'Chitanta', 'Ordin plata'].map(t => (
+                          <button key={t} type="button" onClick={() => setInvPaymentType(t)}
+                            style={{
+                              flex: 1, padding: '7px 4px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: 'none',
+                              background: invPaymentType === t ? '#f59e0b' : 'rgba(255,255,255,.06)',
+                              color: invPaymentType === t ? '#000' : '#94a3b8',
+                            }}>
+                            {t === 'Card' ? '💳' : t === 'Ramburs' ? '💵' : t === 'Chitanta' ? '🧾' : '🏦'} {t}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: invUseStock ? '#60a5fa' : '#94a3b8' }}>🏬 Utilizează Gestiunea mărfuri</div>
+                        <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>Scade din stoc SmartBill la generare</div>
+                      </div>
+                      <button type="button" className={`gls-toggle${invUseStock ? ' on' : ''}`} onClick={() => setInvUseStock(v => !v)} />
+                    </div>
+
+                    <button className="gls-btn gls-btn-primary" style={{ alignSelf: 'flex-start' }} onClick={generateInvoice} disabled={invLoading}>
+                      {invLoading ? <><span className="gls-spin">↻</span> Se generează...</> : `🧾 Generează${invWithCollection ? ' + Încasează' : ''}`}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="gls-modal-ftr">
