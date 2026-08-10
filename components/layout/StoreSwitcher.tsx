@@ -13,6 +13,7 @@ import { useShopStore, type ShopInfo } from '@/lib/store/shop-store';
 const FLAG: Record<string, string> = {
   RO: '🇷🇴',
   HU: '🇭🇺',
+  GLATO: '🛍️',
 };
 
 function flag(f: string) {

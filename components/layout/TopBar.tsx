@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useShopStore } from '@/lib/store/shop-store';
 
-const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺' };
+const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺', GLATO: '🛍️' };
 
 export function TopBar() {
   const { currentShop, shops, setCurrentShop } = useShopStore();

@@ -10,7 +10,7 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { useShopStore } from '@/lib/store/shop-store';
 
-const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺' };
+const FLAG: Record<string, string> = { RO: '🇷🇴', HU: '🇭🇺', GLATO: '🛍️' };
 
 /* ─── SVG Icons ─────────────────────────────────────────────── */
 const Ico = {

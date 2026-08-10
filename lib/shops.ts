@@ -1,11 +1,12 @@
 /**
  * lib/shops.ts
  * Multi-shop registry — reads from env vars.
- * RO: SHOPIFY_DOMAIN / SHOPIFY_ACCESS_TOKEN (backwards-compatible)
- * HU: SHOPIFY_DOMAIN_HU / SHOPIFY_ACCESS_TOKEN_HU
+ * RO:    SHOPIFY_DOMAIN / SHOPIFY_ACCESS_TOKEN (backwards-compatible)
+ * HU:    SHOPIFY_DOMAIN_HU / SHOPIFY_ACCESS_TOKEN_HU
+ * GLATO: SHOPIFY_DOMAIN_GLATO / SHOPIFY_ACCESS_TOKEN_GLATO
  */
 
-export type ShopKey = 'ro' | 'hu';
+export type ShopKey = 'ro' | 'hu' | 'glato';
 
 export interface ShopConfig {
   key:         ShopKey;
@@ -29,6 +30,13 @@ export const SHOP_CONFIGS: ShopConfig[] = [
     flag:        'HU',
     domain:      process.env.SHOPIFY_DOMAIN_HU       || '',
     accessToken: process.env.SHOPIFY_ACCESS_TOKEN_HU || '',
+  },
+  {
+    key:         'glato',
+    label:       'Glato',
+    flag:        'GLATO',
+    domain:      process.env.SHOPIFY_DOMAIN_GLATO       || '',
+    accessToken: process.env.SHOPIFY_ACCESS_TOKEN_GLATO || '',
   },
 ].filter(s => s.domain && s.accessToken) as ShopConfig[];
 
