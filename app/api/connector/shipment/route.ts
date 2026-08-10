@@ -65,9 +65,10 @@ export async function POST(request: Request) {
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
   const SHOPIFY_DOMAIN = shopCfg.domain;
-  const SHOPIFY_TOKEN  = await getAccessToken(shopCfg);
 
   try {
+    const SHOPIFY_TOKEN = await getAccessToken(shopCfg);
+
     let shop = await db.shop.findFirst({ where: { domain: SHOPIFY_DOMAIN } });
     if (!shop) {
       shop = await db.shop.create({ data: { domain: SHOPIFY_DOMAIN, accessToken: SHOPIFY_TOKEN } });

@@ -86,7 +86,12 @@ export async function POST(request: Request) {
   }
 
   const { domain } = shopCfg;
-  const token = await getAccessToken(shopCfg);
+  let token: string;
+  try {
+    token = await getAccessToken(shopCfg);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  }
 
   // ── Build Shopify order update payload ─────────────────────────────────────
   const orderPatch: Record<string, unknown> = { id: shopifyOrderId };

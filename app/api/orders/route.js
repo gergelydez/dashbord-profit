@@ -151,7 +151,11 @@ export async function GET(request) {
     const shopConfig = SHOP_CONFIGS.find(s => s.key === shopKey);
     if (shopConfig) {
       domain = shopConfig.domain;
-      token = await getAccessToken(shopConfig);
+      try {
+        token = await getAccessToken(shopConfig);
+      } catch (e) {
+        return NextResponse.json({ error: e.message }, { status: 500 });
+      }
     }
   }
 

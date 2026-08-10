@@ -24,9 +24,10 @@ export async function POST(request: Request) {
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
   const { domain } = shopCfg;
-  const accessToken = await getAccessToken(shopCfg);
 
   try {
+    const accessToken = await getAccessToken(shopCfg);
+
     // 1. Fetch orders that are NOT yet in DB (no customer data stored)
     const shop = await db.shop.findFirst({ where: { domain } });
     const existingIds = shop

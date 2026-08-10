@@ -112,7 +112,13 @@ export async function POST(request: Request) {
   }
 
   // ── 5. Resolve or create Shop row ────────────────────────────────────────
-  const shopId = await resolveShopId(shopDomain);
+  let shopId: string;
+  try {
+    shopId = await resolveShopId(shopDomain);
+  } catch (err) {
+    log.error('resolveShopId failed', { shopDomain, error: (err as Error).message });
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  }
 
   // ── 6. Persist WebhookEvent ──────────────────────────────────────────────
   const webhookEvent = await db.webhookEvent.upsert({

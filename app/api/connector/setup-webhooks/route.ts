@@ -19,64 +19,69 @@ export async function GET(request: Request) {
   catch { return NextResponse.json({ error: `Shop "${shopKey}" neconfigurat` }, { status: 400 }); }
 
   const { domain } = shopCfg;
-  const accessToken = await getAccessToken(shopCfg);
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
-  if (!appUrl) return NextResponse.json({ error: 'NEXT_PUBLIC_APP_URL not set' }, { status: 500 });
 
-  const webhookUrl = `${appUrl}/api/webhooks/shopify`;
+  try {
+    const accessToken = await getAccessToken(shopCfg);
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+    if (!appUrl) return NextResponse.json({ error: 'NEXT_PUBLIC_APP_URL not set' }, { status: 500 });
 
-  // Get existing webhooks
-  const listRes = await fetch(`https://${domain}/admin/api/2026-07/webhooks.json`, {
-    headers: { 'X-Shopify-Access-Token': accessToken },
-    cache: 'no-store',
-  });
-  const { webhooks: existing = [] } = await listRes.json();
+    const webhookUrl = `${appUrl}/api/webhooks/shopify`;
 
-  // Șterge webhook-urile care pointează spre un URL diferit (URL vechi după rename/redeploy)
-  for (const w of existing as Array<{id: number; topic: string; address: string}>) {
-    if (REQUIRED_TOPICS.includes(w.topic) && w.address !== webhookUrl) {
-      await fetch(`https://${domain}/admin/api/2026-07/webhooks/${w.id}.json`, {
-        method: 'DELETE',
-        headers: { 'X-Shopify-Access-Token': accessToken },
-        cache: 'no-store',
-      });
-    }
-  }
-
-  // Re-fetch după ștergere
-  const listRes2 = await fetch(`https://${domain}/admin/api/2026-07/webhooks.json`, {
-    headers: { 'X-Shopify-Access-Token': accessToken },
-    cache: 'no-store',
-  });
-  const { webhooks: existing2 = [] } = await listRes2.json();
-  const existingTopics = new Set(
-    (existing2 as Array<{topic: string; address: string}>)
-      .filter(w => w.address === webhookUrl)
-      .map(w => w.topic)
-  );
-
-  const results: Record<string, string> = {};
-
-  for (const topic of REQUIRED_TOPICS) {
-    if (existingTopics.has(topic)) {
-      results[topic] = '✓ already registered';
-      continue;
-    }
-
-    const res = await fetch(`https://${domain}/admin/api/2026-07/webhooks.json`, {
-      method: 'POST',
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        webhook: { topic, address: webhookUrl, format: 'json' },
-      }),
+    // Get existing webhooks
+    const listRes = await fetch(`https://${domain}/admin/api/2026-07/webhooks.json`, {
+      headers: { 'X-Shopify-Access-Token': accessToken },
       cache: 'no-store',
     });
+    const { webhooks: existing = [] } = await listRes.json();
 
-    results[topic] = res.ok ? '✓ registered' : `✗ error ${res.status}`;
+    // Șterge webhook-urile care pointează spre un URL diferit (URL vechi după rename/redeploy)
+    for (const w of existing as Array<{id: number; topic: string; address: string}>) {
+      if (REQUIRED_TOPICS.includes(w.topic) && w.address !== webhookUrl) {
+        await fetch(`https://${domain}/admin/api/2026-07/webhooks/${w.id}.json`, {
+          method: 'DELETE',
+          headers: { 'X-Shopify-Access-Token': accessToken },
+          cache: 'no-store',
+        });
+      }
+    }
+
+    // Re-fetch după ștergere
+    const listRes2 = await fetch(`https://${domain}/admin/api/2026-07/webhooks.json`, {
+      headers: { 'X-Shopify-Access-Token': accessToken },
+      cache: 'no-store',
+    });
+    const { webhooks: existing2 = [] } = await listRes2.json();
+    const existingTopics = new Set(
+      (existing2 as Array<{topic: string; address: string}>)
+        .filter(w => w.address === webhookUrl)
+        .map(w => w.topic)
+    );
+
+    const results: Record<string, string> = {};
+
+    for (const topic of REQUIRED_TOPICS) {
+      if (existingTopics.has(topic)) {
+        results[topic] = '✓ already registered';
+        continue;
+      }
+
+      const res = await fetch(`https://${domain}/admin/api/2026-07/webhooks.json`, {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          webhook: { topic, address: webhookUrl, format: 'json' },
+        }),
+        cache: 'no-store',
+      });
+
+      results[topic] = res.ok ? '✓ registered' : `✗ error ${res.status}`;
+    }
+
+    return NextResponse.json({ ok: true, shop: shopKey, domain, webhookUrl, results });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
-
-  return NextResponse.json({ ok: true, shop: shopKey, domain, webhookUrl, results });
 }

@@ -23,7 +23,13 @@ export async function POST(request: Request) {
   try { shopCfg = getShopConfig(shopKey); }
   catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
-  const token = await getAccessToken(shopCfg);
+  let token: string;
+  try {
+    token = await getAccessToken(shopCfg);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  }
+
   const res = await fetch(
     `https://${shopCfg.domain}/admin/api/2026-07/orders/${shopifyOrderId}.json`,
     {
