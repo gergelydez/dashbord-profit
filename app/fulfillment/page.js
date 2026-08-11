@@ -13,7 +13,7 @@
  *
  * NU mai folosește /api/smartbill-invoice sau statusul din note Shopify/localStorage.
  */
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useShopStore } from '@/lib/store/shop-store';
 import { AwbModal } from './awb-flow';
 import { InvoiceModal } from './invoice-flow';
@@ -282,6 +282,32 @@ export default function FulfillmentPage() {
   }, [currentShop]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Un AWB GLS creat din pagina GLS/xConnector înainte de acest fix nu avea
+  // rând Shipment în DB-ul nostru (vezi shipmentDbId), deci nu era urmărit
+  // de sincronizarea automată de status — arăta mereu "de procesat" chiar
+  // dacă era demult la curier. Îl "adoptăm" automat în DB și forțăm o
+  // sincronizare imediată, ca utilizatorul să nu trebuiască să facă nimic.
+  const adoptAttempted = useRef(new Set());
+  useEffect(() => {
+    if (!orders.length) return;
+    const orphans = orders.filter(o =>
+      o.courier === 'gls' && o.trackingNo && !o.shipmentDbId && !adoptAttempted.current.has(o.id)
+    );
+    if (!orphans.length) return;
+    orphans.forEach(o => adoptAttempted.current.add(o.id));
+
+    (async () => {
+      await Promise.all(orphans.map(o =>
+        fetch('/api/connector/save-awb', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shopifyOrderId: o.id, shop: currentShop, courier: 'gls', trackingNumber: o.trackingNo }),
+        }).catch(() => {})
+      ));
+      await fetch('/api/connector/gls-sync').catch(() => {});
+      load();
+    })();
+  }, [orders, currentShop, load]);
 
   // Coletele deja predate curierului (în tranzit/livrate/etc., confirmate prin
   // tracking-ul real sincronizat în DB) nu mai au ce căuta aici — nu mai e

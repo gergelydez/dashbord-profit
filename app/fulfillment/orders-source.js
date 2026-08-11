@@ -45,6 +45,10 @@ export function mapConnectorOrder(o) {
   // trebuie să revină la "de procesat" până se creează unul nou.
   const shipmentStatus = o.shipment?.status || null;
   const shipmentCancelled = shipmentStatus === 'CANCELLED';
+  // /api/connector/orders întoarce id:null pentru un AWB văzut doar prin
+  // fulfillment-ul Shopify (fallback, fără rând Shipment în DB-ul nostru) —
+  // acelea nu sunt urmărite de sincronizarea automată de status GLS.
+  const shipmentDbId = o.shipment?.id || null;
 
   return {
     id: o.id,
@@ -52,6 +56,7 @@ export function mapConnectorOrder(o) {
     fin,
     cancelled: !!o.cancelled,
     shipmentStatus,
+    shipmentDbId,
     trackingNo: shipmentCancelled ? '' : (o.shipment?.tracking || ''),
     courier: o.shipment?.courier || 'unknown',
     client: o.customer?.name || '',

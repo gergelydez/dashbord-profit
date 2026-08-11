@@ -792,6 +792,18 @@ export default function GLSPage() {
           orderName: awbModal.name, isManual: !!awbModal.isManual,
         });
         setAwbMap(awbStore.get());
+        // Persistă și în DB (Shipment) — altfel AWB-ul trăiește doar în acest
+        // browser: nu apare în xConnector/Fulfillment și nu e urmărit de
+        // sincronizarea automată de status GLS.
+        if (!awbModal.isManual) {
+          fetch('/api/connector/save-awb', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              shopifyOrderId: awbModal.id, shop: getShopKey(), courier: 'gls',
+              trackingNumber: data.awb, trackingUrl: data.trackUrl, labelBase64: data.labelBase64 || null,
+            }),
+          }).catch(() => {});
+        }
         toast(`✅ AWB GLS ${data.awb} generat!`, 'success');
         if (awbModal.isManual) { clearManualClient(); setManualSelectedProduct(null); setManualRef(''); setManualCodAmount(''); setManualDiscount('0'); setManualQty('1'); }
       } else {
@@ -975,6 +987,13 @@ export default function GLSPage() {
         });
         if (data.ok) {
           awbStore.save(order.id, data);
+          fetch('/api/connector/save-awb', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              shopifyOrderId: order.id, shop: getShopKey(), courier: 'gls',
+              trackingNumber: data.awb, trackingUrl: data.trackUrl, labelBase64: data.labelBase64 || null,
+            }),
+          }).catch(() => {});
           setBulkResults(p => p.map(r => r.orderId === order.id ? { ...r, status: 'ok', awb: data.awb } : r));
         } else {
           setBulkResults(p => p.map(r => r.orderId === order.id ? { ...r, status: 'err', error: data.error } : r));
