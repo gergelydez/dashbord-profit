@@ -15,6 +15,20 @@ function findNoteValue(notes, pred) {
   return key ? notes[key] : '';
 }
 
+/**
+ * Statusuri Shipment (schema.prisma → enum ShipmentStatus) care înseamnă că
+ * coletul a plecat deja de la noi — populate de cron-ul de sincronizare
+ * /api/connector/gls-sync pe baza tracking-ului real de la curier. Aceste
+ * comenzi nu mai au ce căuta în Fulfillment: nu mai e nimic de ambalat.
+ */
+export const PICKED_UP_STATUSES = new Set([
+  'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED_ATTEMPT', 'RETURNED', 'FAILED',
+]);
+
+export function isPickedUp(order) {
+  return !!(order.shipmentStatus && PICKED_UP_STATUSES.has(order.shipmentStatus));
+}
+
 /** Normalizes one /api/connector/orders entry into the shape the rest of the fulfillment page expects. */
 export function mapConnectorOrder(o) {
   const notes = o.noteAttributes || {};
@@ -27,12 +41,18 @@ export function mapConnectorOrder(o) {
   const items = (o.lineItems || []).map(i => ({ name: i.name, sku: i.sku, qty: i.quantity, price: i.price }));
   const fin = (o.financialStatus || '').toLowerCase();
 
+  // Un AWB anulat (regenerat între timp) nu contează ca "înregistrat" — comanda
+  // trebuie să revină la "de procesat" până se creează unul nou.
+  const shipmentStatus = o.shipment?.status || null;
+  const shipmentCancelled = shipmentStatus === 'CANCELLED';
+
   return {
     id: o.id,
     name: o.name,
     fin,
     cancelled: !!o.cancelled,
-    trackingNo: o.shipment?.tracking || '',
+    shipmentStatus,
+    trackingNo: shipmentCancelled ? '' : (o.shipment?.tracking || ''),
     courier: o.shipment?.courier || 'unknown',
     client: o.customer?.name || '',
     oras: o.address?.city || '',

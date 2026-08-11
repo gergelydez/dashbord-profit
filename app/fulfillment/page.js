@@ -19,7 +19,7 @@ import { AwbModal } from './awb-flow';
 import { InvoiceModal } from './invoice-flow';
 import { useProductImages } from './product-images';
 import { buildWaLink } from './whatsapp-template';
-import { mapConnectorOrder } from './orders-source';
+import { mapConnectorOrder, isPickedUp } from './orders-source';
 
 const fmt = n => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -283,11 +283,24 @@ export default function FulfillmentPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Coletele deja predate curierului (în tranzit/livrate/etc., confirmate prin
+  // tracking-ul real sincronizat în DB) nu mai au ce căuta aici — nu mai e
+  // nimic de procesat sau ambalat pentru ele.
+  const withStatus = useMemo(() => orders
+    .filter(o => !isPickedUp(o))
+    .map(o => ({
+      ...o,
+      _ready: o.hasInvoice && !!o.trackingNo,
+      _cancelled: o.cancelled,
+    })), [orders]);
+
   // Validare adresă în fundal, în loturi mici, ca să nu blocheze UI-ul.
+  // Doar comenzile fără etichetă încă — o comandă deja înregistrată la curier
+  // a folosit deja adresa respectivă, n-are rost s-o re-validăm.
   useEffect(() => {
-    if (!orders.length) return;
+    if (!withStatus.length) return;
     let cancelled = false;
-    const toCheck = orders.filter(o => !o.cancelled && !addrChecks[o.id]);
+    const toCheck = withStatus.filter(o => !o._cancelled && !o.trackingNo && !addrChecks[o.id]);
 
     (async () => {
       for (let i = 0; i < toCheck.length; i += 3) {
@@ -312,13 +325,7 @@ export default function FulfillmentPage() {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders]);
-
-  const withStatus = useMemo(() => orders.map(o => ({
-    ...o,
-    _ready: o.hasInvoice && !!o.trackingNo,
-    _cancelled: o.cancelled,
-  })), [orders]);
+  }, [withStatus]);
 
   const filtered = useMemo(() => {
     let list = withStatus;
