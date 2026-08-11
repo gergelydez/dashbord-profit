@@ -333,7 +333,7 @@ export default function FulfillmentPage() {
 
   return (
     <>
-      <style>{CSS}</style>
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div className="ff-page">
         <div className="ff-hdr">
           <div className="ff-hdr-inner">
