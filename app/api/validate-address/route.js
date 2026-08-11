@@ -68,10 +68,18 @@ export async function POST(request) {
     }
 
     // ── Verificare cod poștal — sursă locală (județ/localitate/stradă) ──
-    const roResult = await validateRoAddress({ judet: county, localitate: city, strada: address, zip: zipClean });
+    // Dacă tabela RoPostalCode nu există încă (migrarea nu a fost rulată) sau
+    // DB-ul e temporar indisponibil, nu blocăm restul validării — continuăm
+    // doar cu verificările de bază de mai sus.
+    let roResult = null;
+    try {
+      roResult = await validateRoAddress({ judet: county, localitate: city, strada: address, zip: zipClean });
+    } catch (e) {
+      console.error('[validate-address] RoPostalCode lookup failed:', e.message);
+    }
 
     let suggestion = null;
-    if (!roResult.ok && roResult.issues.length) {
+    if (roResult && !roResult.ok && roResult.issues.length) {
       const msg = roResult.issues.join(' ');
       const idx = issues.findIndex(i => i.field === 'zip');
       const issue = { field: 'zip', severity: 'error', msg };
@@ -86,7 +94,7 @@ export async function POST(request) {
         zipMessage: `⚠️ ${msg}`,
         source: 'ro-postal-codes',
       };
-    } else if (roResult.zipMatchesLocation === true) {
+    } else if (roResult && roResult.zipMatchesLocation === true) {
       suggestion = {
         postcode: zipClean, city, county, formattedAddress: address,
         zipMismatch: false,

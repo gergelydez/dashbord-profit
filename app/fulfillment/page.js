@@ -157,7 +157,7 @@ function badgeForCourier(courier) {
 
 function OrderCard({ order, addrCheck, catalog, onOpenAwb, onOpenInvoice, waTemplate }) {
   const ready = order.hasInvoice && !!order.trackingNo;
-  const hasAddrIssues = addrCheck && !addrCheck.valid;
+  const hasAddrIssues = !!(addrCheck && addrCheck.valid === false);
   const waLink = buildWaLink({ name: order.name, client: order.client, total: order.total, prods: order.prods, phone: order.phone }, waTemplate);
 
   return (
@@ -188,7 +188,7 @@ function OrderCard({ order, addrCheck, catalog, onOpenAwb, onOpenInvoice, waTemp
 
       {hasAddrIssues && (
         <div className="ff-addr-issues">
-          {addrCheck.issues.map((iss, i) => <div key={i}>⚠ {iss.msg}</div>)}
+          {(addrCheck.issues || []).map((iss, i) => <div key={i}>⚠ {iss.msg || iss}</div>)}
           {addrCheck.suggestion?.zipMessage && <div>{addrCheck.suggestion.zipMessage}</div>}
         </div>
       )}
@@ -280,7 +280,9 @@ export default function FulfillmentPage() {
         if (cancelled) return;
         setAddrChecks(prev => {
           const next = { ...prev };
-          batch.forEach((o, idx) => { if (results[idx]) next[o.id] = results[idx]; });
+          batch.forEach((o, idx) => {
+            if (results[idx] && typeof results[idx].valid === 'boolean') next[o.id] = results[idx];
+          });
           return next;
         });
       }
