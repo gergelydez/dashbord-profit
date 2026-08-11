@@ -9,6 +9,9 @@
  *    din DB-ul nostru sau, ca fallback, direct din Shopify (fulfillment/note
  *    attributes) — exact sursa deja folosită de xConnector, nu doar DB-ul
  *    nostru (care ratează comenzi noi neajunse încă prin webhook).
+ *  - lib/courier-tracking.js (/api/tracking) → status live AWB per-comandă,
+ *    aceeași clasificare (înregistrat/ridicat/centru/livrare) ca la panoul
+ *    „Colete în tranzit" din pagina de Comenzi — nu doar statusul din DB.
  *  - lib/address/ro-postal-codes.ts (prin /api/validate-address) → validare adresă locală
  *
  * NU mai folosește /api/smartbill-invoice sau statusul din note Shopify/localStorage.
@@ -19,7 +22,8 @@ import { AwbModal } from './awb-flow';
 import { InvoiceModal } from './invoice-flow';
 import { useProductImages } from './product-images';
 import { buildWaLink } from './whatsapp-template';
-import { mapConnectorOrder, isPickedUp } from './orders-source';
+import { mapConnectorOrder } from './orders-source';
+import { classifyOrder, fetchLiveTrackingBatch } from '@/lib/courier-tracking';
 
 const fmt = n => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -246,6 +250,7 @@ export default function FulfillmentPage() {
   const [addrChecks, setAddrChecks] = useState({}); // orderId -> validation result
   const [awbOrder, setAwbOrder] = useState(null);
   const [invoiceOrder, setInvoiceOrder] = useState(null);
+  const [liveTracking, setLiveTracking] = useState({}); // orderId -> /api/tracking result
 
   // Comenzi live din Shopify (enrichite cu factură/AWB din DB-ul nostru sau,
   // ca fallback, din Shopify direct) — nu doar ce a ajuns deja prin webhook
@@ -309,16 +314,34 @@ export default function FulfillmentPage() {
     })();
   }, [orders, currentShop, load]);
 
-  // Coletele deja predate curierului (în tranzit/livrate/etc., confirmate prin
-  // tracking-ul real sincronizat în DB) nu mai au ce căuta aici — nu mai e
-  // nimic de procesat sau ambalat pentru ele.
+  // Status live per-AWB — exact același sistem (GLS/Sameday, coduri de status)
+  // ca panoul „Colete în tranzit" din pagina de Comenzi, prin lib/courier-tracking.js.
+  useEffect(() => {
+    const targets = orders
+      .filter(o => o.trackingNo)
+      .map(o => ({ id: o.id, awb: o.trackingNo, courier: o.courier }));
+    if (!targets.length) { setLiveTracking({}); return; }
+    let cancelled = false;
+    fetchLiveTrackingBatch(targets).then(map => {
+      if (cancelled) return;
+      const obj = {};
+      for (const [id, v] of map) obj[id] = v;
+      setLiveTracking(obj);
+    });
+    return () => { cancelled = true; };
+  }, [orders]);
+
+  // Coletele deja predate curierului (ridicate/în tranzit/livrate — confirmat
+  // prin tracking live, nu doar prin faptul că există un AWB) nu mai au ce
+  // căuta aici — nu mai e nimic de procesat sau ambalat pentru ele. Doar
+  // categoria „înregistrat" (AWB creat, încă la noi) rămâne vizibilă.
   const withStatus = useMemo(() => orders
-    .filter(o => !isPickedUp(o))
+    .filter(o => !o.trackingNo || classifyOrder(o.courier, liveTracking[o.id]) === 'inregistrat')
     .map(o => ({
       ...o,
       _ready: o.hasInvoice && !!o.trackingNo,
       _cancelled: o.cancelled,
-    })), [orders]);
+    })), [orders, liveTracking]);
 
   // Validare adresă în fundal, în loturi mici, ca să nu blocheze UI-ul.
   // Doar comenzile fără etichetă încă — o comandă deja înregistrată la curier
@@ -399,6 +422,9 @@ export default function FulfillmentPage() {
               <h1>Fulfillment</h1>
               <p>Procesare & ambalare comenzi</p>
             </div>
+            <button className="ff-btn ff-btn-ghost" style={{ marginLeft: 'auto' }} onClick={load} disabled={loading}>
+              {loading ? <span className="ff-spin">↻</span> : '↻'} Încarcă comenzi
+            </button>
           </div>
         </div>
 

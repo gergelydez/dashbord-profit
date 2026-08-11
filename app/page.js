@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { classifyByCode } from '@/lib/courier-tracking';
 
 // Helper safe pentru localStorage — returnează null pe server (SSR/prerender)
 const ls = {
@@ -1451,35 +1452,12 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
               const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
 
               // Clasificare status în categorii de filtrare
-              // Prioritate: 1) cod live numeric (cel mai precis) 2) status din Excel/Shopify
+              // Prioritate: 1) cod live numeric (cel mai precis, în lib/courier-tracking.js —
+              // aceeași sursă folosită și de Fulfillment) 2) status din Excel/Shopify
               const classifyTranzitStatus = (o, live) => {
-                const isGls = o.courier !== 'sameday';
                 const code = live?.statusCode ? parseInt(live.statusCode) : null;
-
-                // Dacă avem cod live numeric — cel mai precis
-                if (code) {
-                  if (isGls) {
-                    if ([4,29,32,56,58,92,93].includes(code)) return 'livrare';
-                    if ([3,10,13,22,26,27,41,46,47,53,84,97,99].includes(code)) return 'centru';
-                    if ([1,2,85,86].includes(code)) return 'ridicat';
-                    // 51=Date înregistrate, 52=Ramburs înregistrat, 80=Pickup înregistrat
-                    if ([51,52,80,83].includes(code)) return 'inregistrat';
-                    // orice alt cod — fallthrough la status cunoscut
-                  } else {
-                    // SD în livrare activă
-                    if ([10,33,34,35].includes(code)) return 'livrare';
-                    // SD easybox — colet depus în locker, așteaptă ridicare de client
-                    if ([74,75,78,79].includes(code)) return 'easybox';
-                    // SD easybox sender side / intermediar
-                    if ([70,71,72,73,76,77,80,81,82,83].includes(code)) return 'centru';
-                    // SD la depozit/hub
-                    if ([3,7,26,27,28,36,37,38,39,40,41,44,52,53,84,85,87].includes(code)) return 'centru';
-                    // SD preluat de curier
-                    if ([2,4,23].includes(code)) return 'ridicat';
-                    // SD înregistrat/AWB creat
-                    if ([1].includes(code)) return 'inregistrat';
-                  }
-                }
+                const byCode = code ? classifyByCode(o.courier, code) : null;
+                if (byCode) return byCode;
 
                 // Fallback: status rezolvat din Excel/Shopify/xConnector
                 const finalStatus = getFinalStatus(o);

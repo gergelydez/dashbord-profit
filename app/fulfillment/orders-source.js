@@ -15,20 +15,6 @@ function findNoteValue(notes, pred) {
   return key ? notes[key] : '';
 }
 
-/**
- * Statusuri Shipment (schema.prisma → enum ShipmentStatus) care înseamnă că
- * coletul a plecat deja de la noi — populate de cron-ul de sincronizare
- * /api/connector/gls-sync pe baza tracking-ului real de la curier. Aceste
- * comenzi nu mai au ce căuta în Fulfillment: nu mai e nimic de ambalat.
- */
-export const PICKED_UP_STATUSES = new Set([
-  'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED_ATTEMPT', 'RETURNED', 'FAILED',
-]);
-
-export function isPickedUp(order) {
-  return !!(order.shipmentStatus && PICKED_UP_STATUSES.has(order.shipmentStatus));
-}
-
 /** Normalizes one /api/connector/orders entry into the shape the rest of the fulfillment page expects. */
 export function mapConnectorOrder(o) {
   const notes = o.noteAttributes || {};
