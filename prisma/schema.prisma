@@ -237,6 +237,30 @@ model WebhookEvent {
   @@index([createdAt])
 }
 
+// Local Romanian postal code dataset (judet/localitate/strada -> zip), used by
+// /api/validate-address for precise offline validation instead of a general
+// geocoder. Seeded once from prisma/data/ro-postal-codes.csv — see
+// prisma/seed-postal-codes.ts. Read-only at runtime.
+model RoPostalCode {
+  id         Int     @id @default(autoincrement())
+  judet      String  // original casing/diacritics, for display
+  localitate String
+  strada     String? // null/empty for localities with a single postal code
+  zip        String
+
+  // Normalized (no diacritics, lowercase, street prefixes stripped) — computed
+  // once at seed time by lib/address/ro-postal-codes.ts's normalize functions,
+  // so runtime lookups are exact-match on an index instead of depending on a
+  // Postgres extension (e.g. unaccent) that may not be enabled on the host.
+  judetNorm      String
+  localitateNorm String
+  stradaNorm     String?
+
+  @@index([zip])
+  @@index([judetNorm, localitateNorm])
+  @@index([judetNorm, localitateNorm, stradaNorm])
+}
+
 // BullMQ job audit log — one row per job lifecycle
 model JobLog {
   id      String    @id @default(uuid())

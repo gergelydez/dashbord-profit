@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getShopConfig, SHOP_CONFIGS } from '@/lib/shops';
+import { buildInvoiceUrl } from '@/lib/security/tokens';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,7 +65,9 @@ function mapDbOrder(o) {
   const invoice = o.invoices?.[0] || null;
   const shipment = o.shipments?.[0] || null;
   const hasInvoice = !!(invoice);
-  const invoiceUrl = invoice ? `/api/connector/invoice?id=${invoice.id}` : '';
+  // /api/connector/invoice e rută POST (generare) — pentru vizualizare/print folosim
+  // link-ul semnat GET real (/api/invoice), la fel ca răspunsul lui /api/connector/invoice.
+  const invoiceUrl = invoice ? buildInvoiceUrl(invoice.id) : '';
 
   // Note attributes din rawPayload (pentru invoice URL din xConnector)
   let noteInvoiceUrl = '';

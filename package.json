@@ -10,6 +10,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:push": "prisma db push",
+    "db:seed-postal-codes": "node --loader ts-node/esm prisma/seed-postal-codes.ts",
     "db:studio": "prisma studio"
   },
   "dependencies": {
