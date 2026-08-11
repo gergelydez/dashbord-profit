@@ -5,7 +5,10 @@
  * Rescriere completă. Reutilizează explicit logica deja funcțională din:
  *  - app/gls/page.js       → creare AWB GLS (./awb-flow.js)
  *  - app/xconnector/page.tsx / /api/connector/invoice → facturare (./invoice-flow.js)
- *  - app/api/orders-server → status AWB/factură din DB (sursă de adevăr)
+ *  - app/api/connector/orders → listă comenzi live din Shopify + status AWB/factură
+ *    din DB-ul nostru sau, ca fallback, direct din Shopify (fulfillment/note
+ *    attributes) — exact sursa deja folosită de xConnector, nu doar DB-ul
+ *    nostru (care ratează comenzi noi neajunse încă prin webhook).
  *  - lib/address/ro-postal-codes.ts (prin /api/validate-address) → validare adresă locală
  *
  * NU mai folosește /api/smartbill-invoice sau statusul din note Shopify/localStorage.
@@ -16,6 +19,7 @@ import { AwbModal } from './awb-flow';
 import { InvoiceModal } from './invoice-flow';
 import { useProductImages } from './product-images';
 import { buildWaLink } from './whatsapp-template';
+import { mapConnectorOrder } from './orders-source';
 
 const fmt = n => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -237,26 +241,37 @@ export default function FulfillmentPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [warning, setWarning] = useState('');
   const [tab, setTab] = useState('todo');
   const [search, setSearch] = useState('');
   const [addrChecks, setAddrChecks] = useState({}); // orderId -> validation result
   const [awbOrder, setAwbOrder] = useState(null);
   const [invoiceOrder, setInvoiceOrder] = useState(null);
 
-  const load = useCallback(() => {
+  // Comenzi live din Shopify (enrichite cu factură/AWB din DB-ul nostru sau,
+  // ca fallback, din Shopify direct) — nu doar ce a ajuns deja prin webhook
+  // în DB, ca să apară imediat și comenzile noi.
+  const load = useCallback(async () => {
     if (!currentShop) return;
-    setLoading(true); setError(''); setWarning('');
+    setLoading(true); setError('');
     const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    fetch(`/api/orders-server?shop=${currentShop}&created_at_min=${from}`)
-      .then(r => r.json())
-      .then(data => {
+    const MAX_PAGES = 4;
+    try {
+      let all = [];
+      let cursor = null;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const url = `/api/connector/orders?shop=${currentShop}&from=${from}` + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
+        const data = await fetch(url).then(r => r.json());
         if (data.error) throw new Error(data.error);
-        if (data.warning) setWarning(data.warning);
-        setOrders(data.orders || []);
-      })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+        all = all.concat(data.orders || []);
+        if (!data.pageInfo?.hasNextPage) break;
+        cursor = data.pageInfo.endCursor;
+      }
+      setOrders(all.map(mapConnectorOrder));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   }, [currentShop]);
 
   useEffect(() => { load(); }, [load]);
@@ -265,7 +280,7 @@ export default function FulfillmentPage() {
   useEffect(() => {
     if (!orders.length) return;
     let cancelled = false;
-    const toCheck = orders.filter(o => o.ts !== 'anulat' && !addrChecks[o.id]);
+    const toCheck = orders.filter(o => !o.cancelled && !addrChecks[o.id]);
 
     (async () => {
       for (let i = 0; i < toCheck.length; i += 3) {
@@ -295,7 +310,7 @@ export default function FulfillmentPage() {
   const withStatus = useMemo(() => orders.map(o => ({
     ...o,
     _ready: o.hasInvoice && !!o.trackingNo,
-    _cancelled: o.ts === 'anulat',
+    _cancelled: o.cancelled,
   })), [orders]);
 
   const filtered = useMemo(() => {
@@ -366,7 +381,6 @@ export default function FulfillmentPage() {
           </div>
         </div>
 
-        {warning && <div className="ff-warn-banner">⚠️ {warning}</div>}
         {error && <div className="ff-errbox" style={{ marginBottom: 14 }}>❌ {error}</div>}
 
         <div className="ff-tabs">
@@ -406,6 +420,7 @@ export default function FulfillmentPage() {
       {awbOrder && (
         <AwbModal
           order={awbOrder}
+          shopKey={currentShop}
           onClose={() => setAwbOrder(null)}
           onSuccess={data => handleAwbSuccess(awbOrder, data)}
           toast={toast}

@@ -46,8 +46,15 @@ export function triggerPdfDownload(base64, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-/** Creates a GLS AWB — same payload/contract as app/gls/page.js's createAWB. */
-export async function createGlsAwb(order, addr, services, weight, parcels, content, observation) {
+/**
+ * Creates a GLS AWB — same payload/contract as app/gls/page.js's createAWB —
+ * then persists it via /api/connector/save-awb, exactly like xConnector does
+ * after its own GLS call. Without this, an AWB created here would only live
+ * in local React state: reloading the page (or viewing the order from
+ * xConnector/GLS) would show it as not shipped, since our DB's Shipment
+ * table would never actually get the row.
+ */
+export async function createGlsAwb(order, addr, services, weight, parcels, content, observation, shopKey) {
   const payload = {
     recipientName: addr.name    || order.client,
     phone:         addr.phone   || order.phone,
@@ -67,7 +74,24 @@ export async function createGlsAwb(order, addr, services, weight, parcels, conte
     observations:  observation || '',
   };
   const res = await fetch('/api/gls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  return res.json();
+  const data = await res.json();
+
+  if (data.ok) {
+    try {
+      const sr = await fetch('/api/connector/save-awb', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopifyOrderId: order.id, shop: shopKey, courier: 'gls',
+          trackingNumber: data.awb, trackingUrl: data.trackUrl, labelBase64: data.labelBase64 || null,
+        }),
+      });
+      const sd = await sr.json();
+      if (sd.ok && sd.labelUrl) data.persistedLabelUrl = sd.labelUrl;
+    } catch {
+      // Non-fatal — the AWB was created with GLS either way; save-awb only persists it for later.
+    }
+  }
+  return data;
 }
 
 /** Minimal Sameday AWB — secondary option, core fields only (no locker/easybox UI). */
@@ -130,7 +154,7 @@ export async function downloadGlsLabel(awbData, orderName, fallbackAwb) {
  * Props: order (id,name,client,phone,email,address,city,county,zip,isCOD,total,currency,prods,addrIssues,trackingNo,courier),
  *        onClose(), onSuccess(awbData), toast(msg,type)
  */
-export function AwbModal({ order, onClose, onSuccess, toast }) {
+export function AwbModal({ order, shopKey, onClose, onSuccess, toast }) {
   const [courier, setCourier] = useState('gls');
   const [weight, setWeight] = useState('1');
   const [parcels, setParcels] = useState('1');
@@ -159,7 +183,7 @@ export function AwbModal({ order, onClose, onSuccess, toast }) {
         ls.set('fb_sd_user', sdUser); ls.set('fb_sd_pass', sdPass);
       }
       const data = courier === 'gls'
-        ? await createGlsAwb(order, editAddr, selectedServices, weight, parcels, content, observation)
+        ? await createGlsAwb(order, editAddr, selectedServices, weight, parcels, content, observation, shopKey)
         : await createSamedayAwb(order, editAddr, weight, parcels, content, observation, sdUser, sdPass);
 
       setAwbResult(data);
