@@ -123,7 +123,7 @@ export async function validateRoAddress(input: RoAddressInput): Promise<RoAddres
     return { ok: false, issues, zipMatchesLocation: null, suggestion };
   }
 
-  const zipsForLocation = [...new Set(locationRows.map(r => r.zip))];
+  const zipsForLocation = Array.from(new Set(locationRows.map(r => r.zip)));
   const hasMultipleZips = zipsForLocation.length > 1;
 
   if (zip) {
