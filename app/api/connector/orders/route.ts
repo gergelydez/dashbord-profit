@@ -20,12 +20,14 @@ async function fetchShopifyOrders(
   pageInfo: string | null,
   filters: { search?: string; createdMin?: string; financialStatus?: string },
 ) {
-  const params = new URLSearchParams({ limit: '50', status: 'any' });
+  const params = new URLSearchParams({ limit: '50' });
 
   if (pageInfo) {
-    // Cursor pagination — only page_info is allowed alongside limit
+    // Cursor pagination — Shopify rejects any other filter (including status)
+    // alongside page_info, so only limit + page_info are allowed here.
     params.set('page_info', pageInfo);
   } else {
+    params.set('status', 'any');
     if (filters.createdMin)   params.set('created_at_min', `${filters.createdMin}T00:00:00Z`);
     if (filters.financialStatus && filters.financialStatus !== 'all')
       params.set('financial_status', filters.financialStatus);

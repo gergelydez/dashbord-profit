@@ -255,18 +255,25 @@ export default function FulfillmentPage() {
     setLoading(true); setError('');
     const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
     const MAX_PAGES = 4;
+    let all = [];
+    let pageError = '';
+    let cursor = null;
     try {
-      let all = [];
-      let cursor = null;
       for (let page = 0; page < MAX_PAGES; page++) {
         const url = `/api/connector/orders?shop=${currentShop}&from=${from}` + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
         const data = await fetch(url).then(r => r.json());
-        if (data.error) throw new Error(data.error);
+        if (data.error) {
+          // O pagină ulterioară eșuată nu trebuie să arunce comenzile deja încărcate.
+          if (page === 0) throw new Error(data.error);
+          pageError = data.error;
+          break;
+        }
         all = all.concat(data.orders || []);
         if (!data.pageInfo?.hasNextPage) break;
         cursor = data.pageInfo.endCursor;
       }
       setOrders(all.map(mapConnectorOrder));
+      if (pageError) setError(`Afișate ${all.length} comenzi — eroare la pagina următoare: ${pageError}`);
     } catch (e) {
       setError(e.message);
     } finally {
