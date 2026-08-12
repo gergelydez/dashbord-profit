@@ -746,6 +746,7 @@ export default function Stats() {
   const [sdAwbMap]  = useState(() => { try { return JSON.parse(ls.get('sd_awb_map')||'{}'); } catch { return {}; }});
   const [shopifyFeePercent, setShopifyFeePercent] = useState(() => parseFloat(ls.get('sp_fee_pct') || '1.9'));
   const [shopifyFeeFixed, setShopifyFeeFixed]     = useState(() => parseFloat(ls.get('sp_fee_fix') || '1.25'));
+  const [incasatModal, setIncasatModal] = useState(null); // dateStr — ce zi arătăm în modalul cu lista de comenzi
 
   useEffect(() => {
     const loadForShop = (sk) => {
@@ -933,23 +934,32 @@ export default function Stats() {
       return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
     });
     const previziuni = {};
-    workDays.forEach(str=>{previziuni[str]={gls:0,sameday:0,shopify:0,total:0};});
-    const addByDate=(dateStr,courier,val)=>{
-      if(previziuni[dateStr]){previziuni[dateStr][courier]+=val;previziuni[dateStr].total+=val;}
+    workDays.forEach(str=>{previziuni[str]={gls:0,sameday:0,shopify:0,total:0,orders:[]};});
+    const addByDate=(dateStr,courier,val,order)=>{
+      if(previziuni[dateStr]){
+        previziuni[dateStr][courier]+=val;
+        previziuni[dateStr].total+=val;
+        previziuni[dateStr].orders.push({
+          id: order.id, name: order.name||order.orderNumber||order.id||'',
+          client: order.client||order.customerName||order.shipping_address?.name||'',
+          oras: order.oras||order.city||order.shipping_address?.city||'',
+          courier, val,
+        });
+      }
     };
     allLivrate.forEach(o=>{
       if(isOnlinePayment(o,onlineIds)) return;
       if(o.courier==='sameday'&&getFinalStatus(o,sdAwbMap)!=='livrat') return;
       if(!o.fulfilledAt) return;
       const livStr=o.fulfilledAt.slice(0,10);
-      if(o.courier==='gls')          addByDate(nextBD(livStr,2),'gls',o.total);
-      else if(o.courier==='sameday') addByDate(nextBD(livStr,1),'sameday',o.total);
+      if(o.courier==='gls')          addByDate(nextBD(livStr,2),'gls',o.total,o);
+      else if(o.courier==='sameday') addByDate(nextBD(livStr,1),'sameday',o.total,o);
     });
     allOnlineOrders.forEach(o=>{
       const base=(o.createdAt||'').slice(0,10);
       if(!base) return;
       const net=o.total*(1-shopifyFeePercent/100)-shopifyFeeFixed;
-      addByDate(nextBD(base,2),'shopify',net);
+      addByDate(nextBD(base,2),'shopify',net,o);
     });
 
     return {
@@ -1156,13 +1166,15 @@ export default function Stats() {
             const label = idx===0 ? '⏰ De incasat AZI' : `📅 ${dayLabel}`;
             const color = idx===0 ? '#a855f7' : '#10b981';
             return (
-              <div key={dateStr} style={{background:'#0d1520',border:`1px solid ${color}`,borderRadius:12,padding:'14px 16px'}}>
+              <div key={dateStr} onClick={()=>p.total>0&&setIncasatModal(dateStr)}
+                style={{background:'#0d1520',border:`1px solid ${color}`,borderRadius:12,padding:'14px 16px',cursor:p.total>0?'pointer':'default'}}>
                 <div style={{fontSize:10,color,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{label}</div>
                 <div style={{fontSize:24,fontWeight:800,color,marginBottom:8}}>{fmt(p.total)} <span style={{fontSize:12}}>RON</span></div>
                 {p.gls>0     && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>📦 GLS: <strong style={{color:'#f97316'}}>{fmt(p.gls)} RON</strong></div>}
                 {p.sameday>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>🚀 SD: <strong style={{color:'#3b82f6'}}>{fmt(p.sameday)} RON</strong></div>}
                 {p.shopify>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>💳 Card: <strong style={{color:'#a855f7'}}>{fmt(p.shopify)} RON</strong></div>}
                 {p.total===0 && <div style={{fontSize:11,color:'#4a5568'}}>Nimic programat</div>}
+                {p.total>0 && <div style={{fontSize:10,color:'#334155',marginTop:6}}>👆 Vezi comenzile</div>}
               </div>
             );
           })}
@@ -1192,7 +1204,8 @@ export default function Stats() {
                 const label=(stats.workDayLabels||[])[idx+2]||dateStr;
                 if(p.total===0) return null;
                 return (
-                  <div key={dateStr} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #1a2535'}}>
+                  <div key={dateStr} onClick={()=>setIncasatModal(dateStr)}
+                    style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #1a2535',cursor:'pointer'}}>
                     <div>
                       <div style={{fontSize:11,fontWeight:600,color:'#e2e8f0'}}>{label}</div>
                       <div style={{fontSize:10,color:'#475569',display:'flex',gap:8,marginTop:1}}>
@@ -1352,6 +1365,52 @@ export default function Stats() {
           </>
         )}
       </div>
+
+      {incasatModal && (() => {
+        const p = stats.previziuni?.[incasatModal] || {gls:0,sameday:0,shopify:0,total:0,orders:[]};
+        const idx = (stats.workDays||[]).indexOf(incasatModal);
+        const dayLabel = idx===0 ? 'Azi' : ((stats.workDayLabels||[])[idx] || incasatModal);
+        const courierMeta = {gls:{icon:'📦',label:'GLS',color:'#f97316'},sameday:{icon:'🚀',label:'Sameday',color:'#3b82f6'},shopify:{icon:'💳',label:'Card',color:'#a855f7'}};
+        return (
+          <div onClick={()=>setIncasatModal(null)}
+            style={{position:'fixed',inset:0,background:'rgba(0,0,0,.85)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+            <div onClick={e=>e.stopPropagation()}
+              style={{background:'#0d1520',border:'1px solid #1e2a35',borderRadius:14,width:'100%',maxWidth:480,maxHeight:'85vh',display:'flex',flexDirection:'column'}}>
+              <div style={{padding:'16px 18px',borderBottom:'1px solid #1e2a35',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:800,color:'#e8edf2'}}>💰 De incasat — {dayLabel}</div>
+                  <div style={{fontSize:11,color:'#4a5568',marginTop:2}}>{p.orders.length} comenzi · {fmt(p.total)} RON</div>
+                </div>
+                <button onClick={()=>setIncasatModal(null)}
+                  style={{background:'rgba(255,255,255,.07)',border:'1px solid rgba(255,255,255,.1)',color:'#94a3b8',padding:'6px 12px',borderRadius:8,cursor:'pointer',fontSize:13}}>✕</button>
+              </div>
+              <div style={{overflowY:'auto',padding:'8px 0'}}>
+                {p.orders.length===0 ? (
+                  <div style={{padding:20,textAlign:'center',color:'#4a5568',fontSize:12}}>Nicio comanda</div>
+                ) : p.orders.map((o,i)=>{
+                  const cm = courierMeta[o.courier] || {icon:'❔',label:o.courier,color:'#64748b'};
+                  return (
+                    <div key={o.id+i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,padding:'10px 18px',borderBottom:'1px solid #161d24'}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:700,color:'#e8edf2'}}>{o.name} <span style={{fontWeight:400,color:'#64748b'}}>· {o.client}</span></div>
+                        <div style={{fontSize:10,color:'#4a5568',marginTop:2}}>{o.oras}</div>
+                      </div>
+                      <div style={{textAlign:'right',flexShrink:0}}>
+                        <div style={{fontSize:10,color:cm.color,fontWeight:700}}>{cm.icon} {cm.label}</div>
+                        <div style={{fontSize:13,fontWeight:700,color:'#10b981',fontFamily:'monospace'}}>{fmt(o.val)} RON</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{padding:'12px 18px',borderTop:'1px solid #1e2a35',display:'flex',justifyContent:'flex-end'}}>
+                <button onClick={()=>setIncasatModal(null)}
+                  style={{background:'rgba(255,255,255,.05)',color:'#94a3b8',border:'1px solid rgba(255,255,255,.1)',padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600}}>Inchide</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
