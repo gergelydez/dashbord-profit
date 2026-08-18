@@ -1112,6 +1112,18 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const rangeFromD = new Date(rangeFrom + 'T00:00:00');
   const rangeToD   = new Date(rangeTo   + 'T23:59:59');
 
+  // Comenzi efectiv expediate (au AWB creat = fulfilledAt setat) în perioada
+  // selectată — livrate + în tranzit + retur, indiferent de statusul curent,
+  // dar excludem anulate și cele încă neexpediate. Filtrăm după data
+  // expedierii (fulfilledAt), nu după data plasării — ca la "Livrate" pt Azi/Ieri.
+  const expediateOrders = allOrders.filter(o => {
+    if (!['livrat','incurs','outfor','easybox','retur'].includes(getFinalStatus(o))) return false;
+    if (!o.fulfilledAt) return false;
+    const fd = new Date(o.fulfilledAt);
+    return fd >= rangeFromD && fd <= rangeToD;
+  });
+  const expediate = expediateOrders.length;
+
   const ONLINE_GW = ['shopify_payments','stripe','paypal'];
   const isOnlinePayment = (o) => {
     if (onlinePaymentIds.includes(String(o.id))) return true;
@@ -1240,7 +1252,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
     {v:livrate,    lbl:'Livrate',       e:'✅',color:'#10b981',p:pct(livrate,n)}, // livrate = orders cu ts=livrat în perioadă
     {v:incurs+outfor+easyboxCount, lbl:'În tranzit', e:'🚚',color:'#3b82f6',p:pct(incurs+outfor+easyboxCount,n)},
     {v:returTotal, lbl:'Retur',         e:'↩️',color:'#f43f5e',p:pct(returTotal,n)},
-    {v:anulate,    lbl:'Anulate',       e:'❌',color:'#4a5568',p:pct(anulate,n)},
+    {v:expediate,  lbl:'Expediate',     e:'📮',color:'#06b6d4',p:pct(expediate,n)},
     {v:pend,       lbl:'Neexpediate',   e:'⏳',color:'#f59e0b',p:pct(pend,n)},
   ];
 
