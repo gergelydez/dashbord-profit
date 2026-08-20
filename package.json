@@ -18,7 +18,7 @@
     "@aws-sdk/s3-request-presigner": "^3.600.0",
     "@prisma/client": "^5.16.0",
     "@tanstack/react-query": "^5.51.0",
-    "archiver": "^8.0.0",
+    "archiver": "^7.0.1",
     "bullmq": "^5.12.0",
     "google-auth-library": "^10.5.0",
     "googleapis": "^176.0.0",
@@ -35,7 +35,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
-    "@types/archiver": "^8.0.0",
+    "@types/archiver": "^6.0.2",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^20.14.0",
     "@types/react": "^18",

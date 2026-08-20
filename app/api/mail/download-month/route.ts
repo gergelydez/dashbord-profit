@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 import { Readable, PassThrough } from 'stream';
-import { ZipArchive } from 'archiver';
+import archiver from 'archiver';
 import { db } from '@/lib/db';
 import { decrypt } from '@/lib/security/crypt';
 import { getAuthorizedClient } from '@/lib/google/oauth';
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Nicio comandă pentru această lună' }, { status: 404 });
   }
 
-  const archive = new ZipArchive({ level: 9 });
+  const archive = archiver('zip', { zlib: { level: 9 } });
   const passthrough = new PassThrough();
   archive.pipe(passthrough);
 
