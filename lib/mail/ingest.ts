@@ -14,7 +14,7 @@ import { db } from '@/lib/db';
 import { decrypt } from '@/lib/security/crypt';
 import { getAuthorizedClient } from '@/lib/google/oauth';
 import { getOrCreateMonthPath, uploadFile } from '@/lib/google/drive';
-import { classifySender } from './classify';
+import { classifyAttachment } from './classify';
 import type { FetchedMessage } from './types';
 
 function monthKey(d: Date): string {
@@ -37,10 +37,10 @@ export async function ingestMessages(
   let failed = 0;
 
   for (const msg of messages) {
-    const { category, subcategory } = await classifySender(msg.senderEmail);
     const month = monthKey(msg.receivedAt);
 
     for (const att of msg.attachments) {
+      const { category, subcategory } = await classifyAttachment(msg.senderEmail, att.filename);
       const key = { mailAccountId_messageId_filename: { mailAccountId, messageId: msg.messageId, filename: att.filename } };
       const existing = await db.ingestedDocument.findUnique({ where: key });
       if (existing && existing.status !== 'failed') continue; // already ingested — 'failed' rows are retried below

@@ -12,8 +12,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as { category?: string; subcategory?: string; matchType?: string; matchValue?: string };
-  const { category, subcategory, matchType, matchValue } = body;
+  const body = (await request.json()) as {
+    category?: string; subcategory?: string; matchType?: string; matchValue?: string; filenameContains?: string;
+  };
+  const { category, subcategory, matchType, matchValue, filenameContains } = body;
   if (!category || !matchType || !matchValue) {
     return NextResponse.json({ error: 'category, matchType, matchValue sunt obligatorii' }, { status: 400 });
   }
@@ -21,7 +23,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'matchType invalid' }, { status: 400 });
   }
   const rule = await db.sortRule.create({
-    data: { category, subcategory: subcategory || null, matchType, matchValue: matchValue.toLowerCase().trim() },
+    data: {
+      category, subcategory: subcategory || null, matchType, matchValue: matchValue.toLowerCase().trim(),
+      filenameContains: filenameContains?.trim() || null,
+    },
   });
   return NextResponse.json({ ok: true, rule });
 }

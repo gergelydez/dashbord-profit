@@ -103,8 +103,8 @@ const CSS = `
 `;
 
 const CATEGORY_PRESETS = [
-  { category: 'GLS', subcategories: ['Rambursuri', 'Facturi'] },
-  { category: 'Sameday', subcategories: ['Rambursuri', 'Facturi'] },
+  { category: 'GLS', subcategories: ['Rambursuri', 'Facturi transport'] },
+  { category: 'Sameday', subcategories: ['Rambursuri', 'Facturi transport'] },
   { category: 'Facebook', subcategories: [] },
   { category: 'TikTok', subcategories: [] },
   { category: 'Google', subcategories: [] },
@@ -167,7 +167,7 @@ export default function DocumentePage() {
   const [savingStat, setSavingStat] = useState(false);
 
   const [rules, setRules] = useState([]);
-  const [newRule, setNewRule] = useState({ category: 'GLS', subcategory: '', matchType: 'sender_domain', matchValue: '' });
+  const [newRule, setNewRule] = useState({ category: 'GLS', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
   const [savingRule, setSavingRule] = useState(false);
 
   const [unclassified, setUnclassified] = useState([]);
@@ -306,12 +306,12 @@ export default function DocumentePage() {
     try {
       const res = await fetch('/api/mail/rules', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newRule, subcategory: newRule.subcategory || null, matchValue: newRule.matchValue.trim() }),
+        body: JSON.stringify({ ...newRule, subcategory: newRule.subcategory || null, matchValue: newRule.matchValue.trim(), filenameContains: newRule.filenameContains.trim() || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Eroare');
       toast('✅ Regulă adăugată', 'success');
-      setNewRule({ category: 'GLS', subcategory: '', matchType: 'sender_domain', matchValue: '' });
+      setNewRule({ category: 'GLS', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
       loadRules();
     } catch (e) {
       toast('❌ ' + e.message, 'error');
@@ -533,7 +533,10 @@ export default function DocumentePage() {
           ) : rules.map(r => (
             <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px solid #161d24' }}>
               <span className="doc-badge doc-badge-ok" style={{ flexShrink: 0 }}>{r.category}{r.subcategory ? ` / ${r.subcategory}` : ''}</span>
-              <span style={{ fontSize: 11, color: '#94a3b8', flex: 1 }}>{r.matchType === 'sender_email' ? 'email' : 'domeniu'}: {r.matchValue}</span>
+              <span style={{ fontSize: 11, color: '#94a3b8', flex: 1 }}>
+                {r.matchType === 'sender_email' ? 'email' : 'domeniu'}: {r.matchValue}
+                {r.filenameContains ? ` · fișier conține „${r.filenameContains}"` : ''}
+              </span>
               <button className="doc-btn doc-btn-red" onClick={() => deleteRule(r.id)}>✕</button>
             </div>
           ))}
@@ -550,6 +553,7 @@ export default function DocumentePage() {
               <option value="sender_email">după email exact</option>
             </select>
             <input className="doc-inp" placeholder={newRule.matchType === 'sender_domain' ? 'sameday.ro' : 'noreply@sameday.ro'} value={newRule.matchValue} onChange={e => setNewRule(p => ({ ...p, matchValue: e.target.value }))} />
+            <input className="doc-inp" placeholder="opțional: fișierul conține (ex: RON sau Document)" value={newRule.filenameContains} onChange={e => setNewRule(p => ({ ...p, filenameContains: e.target.value }))} />
             <div style={{ gridColumn: '1/-1' }}>
               <button className="doc-btn doc-btn-primary" onClick={addRule} disabled={savingRule}>
                 {savingRule ? <span className="doc-spin">↻</span> : '➕'} Adaugă regulă

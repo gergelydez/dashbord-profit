@@ -58,10 +58,14 @@ export async function GET(request) {
         "subcategory" TEXT,
         "matchType" TEXT NOT NULL,
         "matchValue" TEXT NOT NULL,
+        "filenameContains" TEXT,
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
     await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SortRule_matchType_matchValue_idx" ON "SortRule" ("matchType", "matchValue")`);
+    // Added after the initial table creation — ADD COLUMN IF NOT EXISTS so
+    // hitting this endpoint again on an already-created table is still safe.
+    await db.$executeRawUnsafe(`ALTER TABLE "SortRule" ADD COLUMN IF NOT EXISTS "filenameContains" TEXT`);
 
     await db.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "IngestedDocument" (

@@ -322,15 +322,19 @@ model MailAccount {
   @@index([provider])
 }
 
-// Sender → category mapping, editable from the Documente page. First match wins:
-// exact sender email checked before domain.
+// Sender → category mapping, editable from the Documente page. Rules are
+// scored by specificity (see lib/mail/classify.ts): a filenameContains rule
+// beats a sender-only rule for the same sender, so e.g. GLS can split into
+// "Rambursuri" vs "Facturi transport" — same sender, different attachment
+// naming pattern — without the two rules conflicting.
 model SortRule {
-  id          String   @id @default(uuid())
-  category    String   // "gls" | "sameday" | "meta" | "tiktok" | "google" | "shopify" | "smartbill" | "vesna" | "extras" | ...
-  subcategory String?  // "rambursuri" | "facturi" | null
-  matchType   String   // "sender_email" | "sender_domain"
-  matchValue  String
-  createdAt   DateTime @default(now())
+  id                String   @id @default(uuid())
+  category          String   // "gls" | "sameday" | "meta" | "tiktok" | "google" | "shopify" | "smartbill" | "vesna" | "extras" | ...
+  subcategory       String?  // "rambursuri" | "facturi transport" | null
+  matchType         String   // "sender_email" | "sender_domain"
+  matchValue        String
+  filenameContains  String?  // optional extra filter: attachment filename must contain this (case-insensitive)
+  createdAt         DateTime @default(now())
 
   @@index([matchType, matchValue])
 }

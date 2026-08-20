@@ -25,9 +25,11 @@ CREATE TABLE IF NOT EXISTS "SortRule" (
     "subcategory" TEXT,
     "matchType" TEXT NOT NULL,
     "matchValue" TEXT NOT NULL,
+    "filenameContains" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS "SortRule_matchType_matchValue_idx" ON "SortRule" ("matchType", "matchValue");
+ALTER TABLE "SortRule" ADD COLUMN IF NOT EXISTS "filenameContains" TEXT;
 
 CREATE TABLE IF NOT EXISTS "IngestedDocument" (
     "id" TEXT PRIMARY KEY,
