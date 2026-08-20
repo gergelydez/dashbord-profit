@@ -3,6 +3,10 @@
     {
       "path": "/api/connector/gls-sync",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/mail/sync",
+      "schedule": "0 4 * * *"
     }
   ]
 }
