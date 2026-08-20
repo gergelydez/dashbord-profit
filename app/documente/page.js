@@ -46,11 +46,13 @@ const CSS = `
   .doc-kpi input{width:100%;background:#080d12;border:1px solid #1a2535;color:#e2e8f0;padding:7px 9px;border-radius:7px;font-size:14px;font-family:'Space Grotesk',monospace;font-weight:700;outline:none;}
   .doc-kpi input:focus{border-color:#f97316;}
 
-  .doc-account{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #161d24;}
+  .doc-account{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #161d24;flex-wrap:wrap;}
   .doc-account:last-child{border-bottom:none;}
   .doc-account-icon{width:34px;height:34px;border-radius:9px;background:#080d12;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
-  .doc-account-email{font-size:13px;font-weight:700;color:#e2e8f0;}
+  .doc-account-email{font-size:13px;font-weight:700;color:#e2e8f0;word-break:break-all;}
   .doc-account-meta{font-size:10px;color:#475569;margin-top:1px;}
+  .doc-account-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:44px;}
+  @media(min-width:520px){.doc-account-actions{margin-left:0;}}
 
   .doc-badges{display:flex;gap:5px;flex-wrap:wrap;}
   .doc-badge{display:inline-flex;align-items:center;gap:3px;padding:3px 9px;border-radius:99px;font-size:10px;font-weight:700;white-space:nowrap;}
@@ -390,8 +392,10 @@ export default function DocumentePage() {
                 </div>
               </div>
               <span className={`doc-badge ${acc.active ? 'doc-badge-ok' : 'doc-badge-gray'}`}>{acc.active ? '✓ Activ' : 'Inactiv'}</span>
-              <button className="doc-btn doc-btn-ghost" onClick={() => { setBackfillFor(acc.id); setBackfillDate(firstOfMonth(currentMonth())); }}>📥 Import istoric</button>
-              {acc.active && <button className="doc-btn doc-btn-red" onClick={() => disconnectAccount(acc.id)}>Deconectează</button>}
+              <div className="doc-account-actions">
+                <button className="doc-btn doc-btn-ghost" onClick={() => { setBackfillFor(acc.id); setBackfillDate(firstOfMonth(currentMonth())); }}>📥 Import istoric</button>
+                {acc.active && <button className="doc-btn doc-btn-red" onClick={() => disconnectAccount(acc.id)}>Deconectează</button>}
+              </div>
             </div>
           ))}
 
