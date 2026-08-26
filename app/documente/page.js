@@ -484,71 +484,116 @@ export default function DocumentePage() {
   });
 
   /** Recepție only ever holds PDFs — an .xlsx (the transport commercial
-   * invoice) is rendered to a simple table PDF client-side before upload;
-   * the original filename (which encodes the invoice number + AWB) is kept
-   * with just the extension swapped, so server-side extraction still works. */
+   * invoice) is rendered to a PDF client-side before upload; the original
+   * filename (which sometimes encodes the invoice number + AWB) is kept
+   * with just the extension swapped, so server-side filename extraction
+   * still works when it can. */
   /**
-   * Dumping the raw sheet into one wide table looked bad (confirmed): most
-   * columns are blank for most rows, dates showed as serial numbers, and
-   * transport invoices from Chinese freight forwarders mix in CJK labels
-   * jsPDF's default fonts can't render (blank boxes). Instead: strip
-   * anything outside printable ASCII + Latin-1/Extended-A (keeps Romanian
-   * ă/â/î/ș/ț, drops CJK), compact each row to its non-empty cells (most
-   * rows are then just a couple of clean "label: value" pairs), find the
-   * line-items header row (the one mentioning "tracking") and render only
-   * that section as an actual table — everything before/after it renders as
-   * plain readable lines. Not tied to one exact invoice template — this
-   * degrades gracefully to "readable text dump" for anything that doesn't
-   * have a recognizable line-items table at all.
+   * Renders the ORIGINAL grid (every row/column of the sheet's used range,
+   * with merged cells preserved as spanning cells) via jspdf-autotable's
+   * grid theme, instead of reconstructing a simplified summary - this is
+   * what makes the output look like a native Excel Save As -> PDF export.
+   * One real, unavoidable limitation: the free xlsx (SheetJS Community)
+   * build cannot read cell fill/background colour, so header shading is
+   * lost - everything else (layout, merges, text, column order) is kept.
+   * Fully-blank rows are dropped (confirmed safe for this document family:
+   * none of its merge ranges span multiple rows, so no merge can straddle
+   * a dropped row) - a genuinely different sheet layout with vertical
+   * merges could in principle break on this, but none seen so far do.
+   *
+   * Also extracts the invoice number + AWB/tracking number straight from
+   * the sheet's cells (not just the filename): some transport invoices
+   * (confirmed real example: Invoice_tracking1309608801.xlsx) don't encode
+   * the invoice number in the filename at all, only the tracking number -
+   * so filename-only extraction silently loses the invoice-AWB link for
+   * those. The caller sends these back to the server explicitly.
    */
   const convertXlsxToPdf = async (file) => {
     const XLSX = await loadXLSXLib();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: false });
 
-    const clean = v => (v === null || v === undefined ? '' : String(v).replace(/[^\x20-\x7E -ɏ]/g, '').trim());
-    const compact = row => (row || []).map(clean).filter(Boolean);
-    const rows = rawRows.map(compact).filter(r => r.length > 0);
-
-    const headerIdx = rows.findIndex(r => r.some(c => /tracking/i.test(c)));
-    const before = headerIdx === -1 ? rows : rows.slice(0, headerIdx);
-    const tableHeader = headerIdx === -1 ? null : rows[headerIdx];
-    let bodyEnd = rows.length;
+    // --- content-based invoice number / AWB extraction ---
+    const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+    let invoiceNumber = null;
+    for (const row of rawRows) {
+      for (let i = 0; i < row.length; i++) {
+        const cellText = String(row[i] || '').trim();
+        if (!cellText) continue;
+        const inline = cellText.match(/invoice\s*no\.?:?\s*([A-Za-z0-9-]{5,})/i);
+        if (inline) { invoiceNumber = inline[1]; break; }
+        if (/invoice\s*no/i.test(cellText)) {
+          for (let j = i + 1; j < row.length; j++) {
+            const v = String(row[j] || '').trim();
+            if (v) { invoiceNumber = v; break; }
+          }
+          if (invoiceNumber) break;
+        }
+      }
+      if (invoiceNumber) break;
+    }
+    let awb = null;
+    const headerIdx = rawRows.findIndex(r => r.some(c => /tracking/i.test(String(c || ''))));
     if (headerIdx !== -1) {
-      for (let i = headerIdx + 1; i < rows.length; i++) {
-        if (rows[i].some(c => /signature|seller|buyer|payment/i.test(c))) { bodyEnd = i; break; }
+      const col = rawRows[headerIdx].findIndex(c => /tracking/i.test(String(c || '')));
+      for (let i = headerIdx + 1; i < rawRows.length && !awb; i++) {
+        const m = String(rawRows[i]?.[col] || '').match(/\d{6,}/);
+        if (m) awb = m[0];
       }
     }
-    const tableBody = headerIdx === -1 ? [] : rows.slice(headerIdx + 1, bodyEnd);
-    const after = headerIdx === -1 ? [] : rows.slice(bodyEnd);
+    if (!awb) {
+      const fm = file.name.match(/tracking(\d{6,})/i);
+      if (fm) awb = fm[1];
+    }
+
+    // --- full-grid, merge-aware render ---
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    const merges = sheet['!merges'] || [];
+    const covered = new Set();
+    const spanAt = new Map();
+    for (const m of merges) {
+      const rowSpan = m.e.r - m.s.r + 1;
+      const colSpan = m.e.c - m.s.c + 1;
+      if (rowSpan < 2 && colSpan < 2) continue;
+      spanAt.set(`${m.s.r},${m.s.c}`, { rowSpan, colSpan });
+      for (let r = m.s.r; r <= m.e.r; r++) {
+        for (let c = m.s.c; c <= m.e.c; c++) {
+          if (r === m.s.r && c === m.s.c) continue;
+          covered.add(`${r},${c}`);
+        }
+      }
+    }
+    // Printable ASCII + Latin-1/Extended-A/B (keeps Romanian diacritics in
+    // both spellings, drops CJK - jsPDF's default fonts can't render it).
+    const clean = v => (v === null || v === undefined ? '' : String(v).replace(/[^ -~ -ɏ]/g, '').trim());
+
+    const gridRows = [];
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      const rowCells = [];
+      let rowHasContent = false;
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const key = `${r},${c}`;
+        if (covered.has(key)) continue;
+        const cellObj = sheet[XLSX.utils.encode_cell({ r, c })];
+        const text = clean(cellObj ? (cellObj.w !== undefined ? cellObj.w : cellObj.v) : '');
+        if (text) rowHasContent = true;
+        const span = spanAt.get(key);
+        rowCells.push(span ? { content: text, colSpan: span.colSpan, rowSpan: span.rowSpan } : text);
+      }
+      if (rowHasContent) gridRows.push(rowCells);
+    }
 
     const { jsPDF } = await import('jspdf');
     await import('jspdf-autotable');
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    let y = 18;
-    doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-    doc.text(file.name.replace(/\.xlsx$/i, ''), 14, y);
-    y += 8;
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-    for (const row of before) {
-      if (y > 275) { doc.addPage(); y = 18; }
-      doc.text(row.join('   ·   '), 14, y, { maxWidth: 180 });
-      y += 6;
-    }
-    if (tableHeader) {
-      y += 4;
-      doc.autoTable({ startY: y, head: [tableHeader], body: tableBody, styles: { fontSize: 8 } });
-      y = doc.lastAutoTable.finalY + 8;
-    }
-    doc.setFontSize(9);
-    for (const row of after) {
-      if (y > 275) { doc.addPage(); y = 18; }
-      doc.text(row.join('   ·   '), 14, y, { maxWidth: 180 });
-      y += 6;
-    }
-    return { blob: doc.output('blob'), filename: file.name.replace(/\.xlsx$/i, '.pdf') };
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+    doc.autoTable({
+      body: gridRows,
+      theme: 'grid',
+      styles: { fontSize: 7, cellPadding: 1.2, overflow: 'linebreak', font: 'helvetica' },
+      margin: { top: 8, left: 6, right: 6, bottom: 8 },
+    });
+    return { blob: doc.output('blob'), filename: file.name.replace(/\.xlsx$/i, '.pdf'), invoiceNumber, awb };
   };
 
   const handleReceptieUpload = async (fileList) => {
@@ -562,15 +607,21 @@ export default function DocumentePage() {
         try {
           let blob = file;
           let filename = file.name;
+          let contentInvoiceNumber = null;
+          let contentAwb = null;
           if (file.name.toLowerCase().endsWith('.xlsx')) {
             const converted = await convertXlsxToPdf(file);
             blob = converted.blob;
             filename = converted.filename;
+            contentInvoiceNumber = converted.invoiceNumber;
+            contentAwb = converted.awb;
           }
           const form = new FormData();
           form.append('file', blob, filename);
           form.append('filename', filename);
           form.append('month', month);
+          if (contentInvoiceNumber) form.append('invoiceNumber', contentInvoiceNumber);
+          if (contentAwb) form.append('awb', contentAwb);
           const res = await fetch('/api/mail/manual-upload-receptie', { method: 'POST', body: form });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || 'eroare');

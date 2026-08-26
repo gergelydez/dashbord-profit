@@ -10,14 +10,22 @@
  *     commercial invoice) — record the invoiceNumber→awb link for later
  *     documents that only know the invoice number, then file under that AWB.
  *  2. Filename itself contains an AWB (matches lib/mail/classify.ts's
- *     extractAwb — e.g. "9485142461_inv50.pdf") — file under that AWB
- *     directly, no lookup needed.
+ *     extractAwb — e.g. "9485142461_inv50.pdf" or "Invoice_tracking<awb>.xlsx"
+ *     with no invoice-number segment at all). The client-side xlsx→PDF
+ *     conversion (app/documente/page.js's convertXlsxToPdf) also reads the
+ *     invoice number straight out of the sheet's cells for exactly this case
+ *     — confirmed real example: "Invoice_tracking1309608801.xlsx" has the
+ *     tracking/AWB number in its filename but NOT the invoice number, so
+ *     without this the invoiceNumber→awb link would never get recorded and
+ *     the NIR that only knows the invoice number would never resolve. When
+ *     the client sends that extracted invoiceNumber alongside, record the
+ *     link here too, same as step 1.
  *  3. PDF text mentions an invoice number (NIR: "Factura SX6193524801", or
  *     generic "Invoice No: X") and a link for it already exists — file under
  *     the linked AWB.
  *  4. Invoice number found but no link yet (e.g. the NIR arrived before the
  *     transport invoice) — filed as unclassified with the invoice number in
- *     the subject, so step 1 above can reconcile it retroactively once the
+ *     the subject, so step 1/2 above can reconcile it retroactively once the
  *     transport invoice does show up (see the reconcile step below).
  *  5. Nothing found — plain Neclasificate, same as the email pipeline's
  *     default when a sender/pattern isn't recognized.
@@ -50,6 +58,11 @@ export async function POST(request: Request) {
     if (!(file instanceof Blob)) return NextResponse.json({ error: 'file lipsă' }, { status: 400 });
     const filename = (form.get('filename') as string) || 'document.pdf';
     const month = (form.get('month') as string) || currentMonth();
+    // Extracted client-side, straight from the original xlsx's cells, before
+    // it got converted to PDF (the server never sees the original sheet) —
+    // see the big comment above for why the filename alone isn't reliable.
+    const formInvoiceNumber = (form.get('invoiceNumber') as string) || null;
+    const formAwb = (form.get('awb') as string) || null;
 
     const googleAccount = await db.mailAccount.findFirst({ where: { provider: 'gmail', active: true } });
     if (!googleAccount?.refreshToken) return NextResponse.json({ error: 'Cont Google neconectat' }, { status: 400 });
@@ -71,13 +84,29 @@ export async function POST(request: Request) {
       const directAwb = extractAwb(filename);
       if (directAwb) {
         awb = directAwb.replace(/^AWB-/i, '');
+        // The filename carried an AWB but no invoice-number segment (e.g.
+        // "Invoice_tracking1309608801.xlsx") — the client's cell-level
+        // extraction is the only source for the invoice number in that
+        // case, so record the link here too, not just in the branch above.
+        if (formInvoiceNumber) {
+          invoiceNumber = formInvoiceNumber;
+          await recordInvoiceAwbLink(invoiceNumber, awb);
+          newlyLinked = true;
+        }
+      } else if (formAwb && formInvoiceNumber) {
+        // Neither pattern matched the filename at all, but the client still
+        // found both values by reading the sheet's cells directly.
+        awb = formAwb;
+        invoiceNumber = formInvoiceNumber;
+        await recordInvoiceAwbLink(invoiceNumber, awb);
+        newlyLinked = true;
       } else {
         // Only PDF text extraction is allowed to fail silently (falls through
         // to Neclasificate below, same as "nothing recognizable") — a lookup
         // failure is a real system error (e.g. a missing table) and must
         // surface as one instead of being misreported as "no AWB found yet".
         const text = await pdf(buffer).then(r => r.text).catch(() => '');
-        invoiceNumber = extractInvoiceNumberFromText(text);
+        invoiceNumber = extractInvoiceNumberFromText(text) || formInvoiceNumber;
         if (invoiceNumber) awb = await lookupAwbByInvoiceNumber(invoiceNumber);
       }
     }
