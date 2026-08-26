@@ -33,9 +33,22 @@ export function isIgnored(category: string): boolean {
  * folder) but the AWB always appears in the subject as "AWB: <digits>". */
 export const AWB_SUBCATEGORY = '{AWB}';
 
+/**
+ * Not every DHL notification's subject actually says "AWB" (confirmed:
+ * a "Formular de împuternicire" and other generic notices don't) — but
+ * every DHL attachment filename seen so far carries the shipment number as
+ * a bare digit run ("9485142461_awb50.pdf", "DHL_import_1309608801.pdf",
+ * "7794472825.pdf"), so that's tried first as the more reliable signal;
+ * an explicit "AWB: <digits>" label in either string is preferred over a
+ * bare number when present, since it's unambiguous by construction.
+ */
 function extractAwb(text: string): string | null {
-  const m = (text || '').match(/AWB[:#\s]*#?(\d{6,})/i);
-  return m ? `AWB-${m[1]}` : null;
+  const labeled = (text || '').match(/AWB[:#\s]*#?(\d{6,})/i);
+  if (labeled) return `AWB-${labeled[1]}`;
+  const numbers = (text || '').match(/\d{6,}/g);
+  if (!numbers || numbers.length === 0) return null;
+  const longest = numbers.reduce((a, b) => (b.length > a.length ? b : a));
+  return `AWB-${longest}`;
 }
 
 export async function classifyAttachment(senderEmail: string, filename: string, subject?: string): Promise<Classification> {
@@ -61,7 +74,7 @@ export async function classifyAttachment(senderEmail: string, filename: string, 
 
   const best = candidates[0];
   if (best.subcategory === AWB_SUBCATEGORY) {
-    const awb = extractAwb(subject || '') || extractAwb(filename || '');
+    const awb = extractAwb(filename || '') || extractAwb(subject || '');
     return { category: best.category, subcategory: awb };
   }
   return { category: best.category, subcategory: best.subcategory };
