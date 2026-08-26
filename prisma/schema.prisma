@@ -358,6 +358,7 @@ model IngestedDocument {
   driveUrl      String?
   status        String   @default("ingested") // "ingested" | "unclassified" | "failed"
   fileData      Bytes?
+  amount        Decimal? @db.Decimal(12, 2) // parsed from the document itself (e.g. a Meta Ads invoice total) — lets a monthly total be recomputed without re-parsing every file
   receivedAt    DateTime
   createdAt     DateTime @default(now())
 

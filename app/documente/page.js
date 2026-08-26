@@ -168,6 +168,8 @@ export default function DocumentePage() {
   const [showYahooForm, setShowYahooForm] = useState(false);
 
   const [reclassifying, setReclassifying] = useState(false);
+  const [uploadingMeta, setUploadingMeta] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null); // { done, total }
   const [backfillFor, setBackfillFor] = useState(null); // mailAccountId
   const [backfillDate, setBackfillDate] = useState('');
   const [backfilling, setBackfilling] = useState(false);
@@ -180,6 +182,7 @@ export default function DocumentePage() {
   const [stat, setStat] = useState(null);
   const [savingStat, setSavingStat] = useState(false);
   const [computingGls, setComputingGls] = useState(false);
+  const [computingMeta, setComputingMeta] = useState(false);
 
   const [rules, setRules] = useState([]);
   const [newRule, setNewRule] = useState({ category: 'GLS', customCategory: '', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
@@ -333,6 +336,99 @@ export default function DocumentePage() {
       setComputingGls(false);
     }
   };
+
+  const computeMetaStat = async () => {
+    setComputingMeta(true);
+    try {
+      const res = await fetch('/api/mail/stats/compute-meta', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Eroare calcul');
+      setStat(data.stat);
+      toast(`✅ Meta spend: ${fmt(data.total)} RON`, 'success');
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      setComputingMeta(false);
+    }
+  };
+
+  const loadJSZip = () => new Promise((resolve, reject) => {
+    if (typeof window !== 'undefined' && window.JSZip) { resolve(window.JSZip); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = () => resolve(window.JSZip);
+    s.onerror = () => reject(new Error('Nu s-a putut încărca JSZip'));
+    document.head.appendChild(s);
+  });
+
+  const handleMetaUpload = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setUploadingMeta(true);
+    setUploadProgress({ done: 0, total: 0 });
+    try {
+      // Flatten: a .zip is unzipped in the browser (Meta's export can be 10+ MB —
+      // too big to forward whole to a single serverless request), individual
+      // .pdf files pass through as-is.
+      const pdfEntries = [];
+      for (const file of files) {
+        if (file.name.toLowerCase().endsWith('.zip')) {
+          const JSZip = await loadJSZip();
+          const zip = await JSZip.loadAsync(file);
+          for (const entry of Object.values(zip.files)) {
+            if (entry.dir || !entry.name.toLowerCase().endsWith('.pdf')) continue;
+            const blob = await entry.async('blob');
+            pdfEntries.push({ name: entry.name.split('/').pop(), blob });
+          }
+        } else if (file.name.toLowerCase().endsWith('.pdf')) {
+          pdfEntries.push({ name: file.name, blob: file });
+        }
+      }
+
+      if (pdfEntries.length === 0) { toast('Nu am găsit niciun PDF în fișierele selectate', 'error'); return; }
+      setUploadProgress({ done: 0, total: pdfEntries.length });
+
+      let paid = 0, failed = 0, duplicate = 0, unknown = 0;
+      const monthsAffected = new Set();
+      for (const entry of pdfEntries) {
+        try {
+          const form = new FormData();
+          form.append('file', entry.blob, entry.name);
+          form.append('filename', entry.name);
+          const res = await fetch('/api/mail/manual-upload', { method: 'POST', body: form });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'eroare');
+          if (data.status === 'paid' && data.uploaded) { paid++; monthsAffected.add(data.month); }
+          else if (data.status === 'duplicate') { duplicate++; if (data.month) monthsAffected.add(data.month); }
+          else if (data.status === 'failed') failed++;
+          else unknown++;
+        } catch {
+          unknown++;
+        }
+        setUploadProgress(p => ({ done: (p?.done || 0) + 1, total: pdfEntries.length }));
+      }
+
+      for (const m of monthsAffected) {
+        await fetch('/api/mail/stats/compute-meta', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month: m }),
+        }).catch(() => {});
+      }
+
+      toast(
+        `✅ Meta: ${paid} facturi plătite urcate, ${failed} eșuate ignorate, ${duplicate} deja existente${unknown ? `, ${unknown} nerecunoscute` : ''}`,
+        'success',
+      );
+      loadDocuments(); loadStat();
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      setUploadingMeta(false);
+      setUploadProgress(null);
+    }
+  };
+
   const commitStat = async () => {
     setSavingStat(true);
     try {
@@ -576,6 +672,28 @@ export default function DocumentePage() {
           </>
         )}
 
+        <div className="doc-section-title">Încărcare manuală facturi Meta Ads</div>
+        <div className="doc-panel">
+          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+            Meta nu trimite facturile pe email — descarci exportul „Transactions" (zip sau PDF-uri individuale) din Ads Manager → Billing, îl încarci aici. Se verifică automat statusul din fiecare PDF: doar cele <b style={{ color: '#10b981' }}>Paid</b> ajung pe Drive (folder Facebook) și intră în calculul „Meta spend"; cele <b style={{ color: '#f43f5e' }}>Failed</b> sunt ignorate complet.
+          </div>
+          <div className="doc-actions">
+            <label className="doc-btn doc-btn-primary" style={{ cursor: 'pointer' }}>
+              {uploadingMeta ? <span className="doc-spin">↻</span> : '📤'} Alege zip sau PDF-uri
+              <input
+                type="file" accept=".zip,.pdf" multiple style={{ display: 'none' }}
+                disabled={uploadingMeta}
+                onChange={e => { handleMetaUpload(e.target.files); e.target.value = ''; }}
+              />
+            </label>
+            {uploadProgress && (
+              <span style={{ fontSize: 11, color: '#94a3b8', alignSelf: 'center' }}>
+                Procesez {uploadProgress.done}/{uploadProgress.total}...
+              </span>
+            )}
+          </div>
+        </div>
+
         <div className="doc-section-title">Statistici lunare</div>
         <div className="doc-month-nav">
           <button className="doc-month-btn" onClick={() => setMonth(m => shiftMonth(m, -1))}>‹</button>
@@ -585,7 +703,7 @@ export default function DocumentePage() {
         <div className="doc-kpis">
           <StatField label="📦 GLS încasat" value={stat?.glsIncasat} onChange={v => saveStat('glsIncasat', v)} onCompute={computeGlsStat} computing={computingGls} />
           <StatField label="🚀 Sameday încasat" value={stat?.sdIncasat} onChange={v => saveStat('sdIncasat', v)} />
-          <StatField label="📘 Meta spend" value={stat?.metaSpend} onChange={v => saveStat('metaSpend', v)} />
+          <StatField label="📘 Meta spend" value={stat?.metaSpend} onChange={v => saveStat('metaSpend', v)} onCompute={computeMetaStat} computing={computingMeta} />
           <StatField label="🎵 TikTok spend" value={stat?.tiktokSpend} onChange={v => saveStat('tiktokSpend', v)} />
           <StatField label="🔍 Google spend" value={stat?.googleSpend} onChange={v => saveStat('googleSpend', v)} />
           <StatField label="💹 Profit" value={stat?.profit} onChange={v => saveStat('profit', v)} />

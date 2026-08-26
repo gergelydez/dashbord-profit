@@ -83,6 +83,7 @@ export async function GET(request) {
         "driveUrl" TEXT,
         "status" TEXT NOT NULL DEFAULT 'ingested',
         "fileData" BYTEA,
+        "amount" DECIMAL(12,2),
         "receivedAt" TIMESTAMP(3) NOT NULL,
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -90,6 +91,7 @@ export async function GET(request) {
     await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "IngestedDocument_mailAccountId_messageId_filename_key" ON "IngestedDocument" ("mailAccountId", "messageId", "filename")`);
     await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "IngestedDocument_month_category_idx" ON "IngestedDocument" ("month", "category")`);
     await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "IngestedDocument_status_idx" ON "IngestedDocument" ("status")`);
+    await db.$executeRawUnsafe(`ALTER TABLE "IngestedDocument" ADD COLUMN IF NOT EXISTS "amount" DECIMAL(12,2)`);
 
     await db.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "MonthlyStat" (

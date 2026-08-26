@@ -46,12 +46,14 @@ CREATE TABLE IF NOT EXISTS "IngestedDocument" (
     "driveUrl" TEXT,
     "status" TEXT NOT NULL DEFAULT 'ingested',
     "fileData" BYTEA,
+    "amount" DECIMAL(12,2),
     "receivedAt" TIMESTAMP(3) NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "IngestedDocument_mailAccountId_messageId_filename_key" ON "IngestedDocument" ("mailAccountId", "messageId", "filename");
 CREATE INDEX IF NOT EXISTS "IngestedDocument_month_category_idx" ON "IngestedDocument" ("month", "category");
 CREATE INDEX IF NOT EXISTS "IngestedDocument_status_idx" ON "IngestedDocument" ("status");
+ALTER TABLE "IngestedDocument" ADD COLUMN IF NOT EXISTS "amount" DECIMAL(12,2);
 
 CREATE TABLE IF NOT EXISTS "MonthlyStat" (
     "id" TEXT PRIMARY KEY,
