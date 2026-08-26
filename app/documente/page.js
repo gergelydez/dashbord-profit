@@ -729,7 +729,7 @@ export default function DocumentePage() {
             <div style={{ marginBottom: 6, fontWeight: 700 }}>Rezultat per fișier ({glsPerFile.length}):</div>
             {glsPerFile.map((f, i) => (
               <div key={i} style={{ color: f.headerFound ? '#10b981' : '#f43f5e' }}>
-                {f.headerFound ? '✓' : '✗'} {f.filename} [{f.source}] — {f.headerFound ? `${fmt(f.total)} RON` : `header lipsă (foi: ${f.sheetNames.join(',')}, ${f.rowCount} rânduri)`}
+                {f.headerFound ? '✓' : '✗'} {f.filename} [{f.source}]{f.headerHex ? ` hex:${f.headerHex}` : ''} — {f.headerFound ? `${fmt(f.total)} RON` : `header lipsă (foi: ${f.sheetNames.join(',')}, ${f.rowCount} rânduri)`}
               </div>
             ))}
           </div>
@@ -737,6 +737,7 @@ export default function DocumentePage() {
         {glsDebug && (
           <div className="doc-errbox" style={{ marginBottom: 12, fontFamily: 'monospace', fontSize: 10, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
             <div style={{ marginBottom: 6, fontWeight: 700 }}>Debug — {glsDebug.filename} [sursă: {glsDebug.source}] ({glsDebug.bufferBytes} bytes, foi: {glsDebug.sheetNames.join(', ')}, {glsDebug.rowCount} rânduri)</div>
+            {glsDebug.headerHex && <div style={{ marginBottom: 6 }}>Primii 16 bytes (hex): {glsDebug.headerHex} — un xlsx valid trebuie să înceapă cu 504b0304</div>}
             {(glsDebug.sampleRows || []).map((row, i) => (
               <div key={i}>{i}: [{row.map(c => `"${c}"`).join(', ')}]</div>
             ))}

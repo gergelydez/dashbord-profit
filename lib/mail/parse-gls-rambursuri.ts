@@ -28,13 +28,16 @@ export interface GlsRambursuriResult {
   rowCount: number;
   /** First few rows' cell text, only populated when the header wasn't found — for debugging a format mismatch without needing direct file access. */
   sampleRows?: string[][];
+  /** First 16 bytes as hex — a valid xlsx (a zip) must start with "504b0304". Lets a download-level corruption be told apart from a parsing bug without needing direct file access. */
+  headerHex?: string;
 }
 
 export function sumGlsRambursuriXlsx(buffer: Buffer): GlsRambursuriResult {
+  const headerHex = buffer.subarray(0, 16).toString('hex');
   const wb = XLSX.read(buffer, { type: 'buffer' });
   const sheetNames = wb.SheetNames;
   const sheet = wb.Sheets[sheetNames[0]];
-  if (!sheet) return { total: 0, headerFound: false, sheetNames, rowCount: 0 };
+  if (!sheet) return { total: 0, headerFound: false, sheetNames, rowCount: 0, headerHex };
 
   const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
 
@@ -55,7 +58,7 @@ export function sumGlsRambursuriXlsx(buffer: Buffer): GlsRambursuriResult {
 
   if (headerRowIdx === -1) {
     const sampleRows = rows.slice(0, 12).map(row => row.map(c => String(c ?? '')));
-    return { total: 0, headerFound: false, sheetNames, rowCount: rows.length, sampleRows };
+    return { total: 0, headerFound: false, sheetNames, rowCount: rows.length, sampleRows, headerHex };
   }
 
   let total = 0;
