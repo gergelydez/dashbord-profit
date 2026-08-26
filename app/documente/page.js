@@ -168,7 +168,7 @@ export default function DocumentePage() {
   const [savingStat, setSavingStat] = useState(false);
 
   const [rules, setRules] = useState([]);
-  const [newRule, setNewRule] = useState({ category: 'GLS', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
+  const [newRule, setNewRule] = useState({ category: 'GLS', customCategory: '', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
   const [savingRule, setSavingRule] = useState(false);
 
   const [unclassified, setUnclassified] = useState([]);
@@ -317,17 +317,19 @@ export default function DocumentePage() {
   };
 
   const addRule = async () => {
+    const category = newRule.category === '__custom__' ? newRule.customCategory.trim() : newRule.category;
+    if (!category) { toast('Completează numele categoriei', 'error'); return; }
     if (!newRule.matchValue.trim()) { toast('Completează expeditorul/domeniul', 'error'); return; }
     setSavingRule(true);
     try {
       const res = await fetch('/api/mail/rules', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newRule, subcategory: newRule.subcategory || null, matchValue: newRule.matchValue.trim(), filenameContains: newRule.filenameContains.trim() || null }),
+        body: JSON.stringify({ ...newRule, category, subcategory: newRule.subcategory || null, matchValue: newRule.matchValue.trim(), filenameContains: newRule.filenameContains.trim() || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Eroare');
       toast('✅ Regulă adăugată', 'success');
-      setNewRule({ category: 'GLS', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
+      setNewRule({ category: 'GLS', customCategory: '', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
       loadRules();
     } catch (e) {
       toast('❌ ' + e.message, 'error');
@@ -343,11 +345,12 @@ export default function DocumentePage() {
 
   const assignDocument = async (docId) => {
     const a = assign[docId];
-    if (!a?.category) { toast('Alege o categorie', 'error'); return; }
+    const category = a?.category === '__custom__' ? (a.customCategory || '').trim() : a?.category;
+    if (!category) { toast('Alege sau completează o categorie', 'error'); return; }
     try {
       const res = await fetch('/api/mail/documents', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: docId, category: a.category, subcategory: a.subcategory || null, createRule: a.createRule !== false }),
+        body: JSON.stringify({ id: docId, category, subcategory: a.subcategory || null, createRule: a.createRule !== false }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Eroare');
@@ -357,6 +360,15 @@ export default function DocumentePage() {
       toast('❌ ' + e.message, 'error');
     }
   };
+
+  const allCategories = useMemo(() => {
+    const names = new Set(CATEGORY_PRESETS.map(c => c.category));
+    for (const r of rules) if (r.category) names.add(r.category);
+    for (const d of documents) if (d.category) names.add(d.category);
+    for (const d of unclassified) if (d.category) names.add(d.category);
+    names.delete('Neclasificate');
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [rules, documents, unclassified]);
 
   const grouped = useMemo(() => {
     const map = {};
@@ -462,7 +474,7 @@ export default function DocumentePage() {
             <div className="doc-section-title">⚠️ Neclasificate ({unclassified.length})</div>
             <div className="doc-panel">
               {unclassified.map(doc => {
-                const a = assign[doc.id] || { category: '', subcategory: '', createRule: true };
+                const a = assign[doc.id] || { category: '', customCategory: '', subcategory: '', createRule: true };
                 const preset = CATEGORY_PRESETS.find(c => c.category === a.category);
                 return (
                   <div key={doc.id} style={{ padding: '10px 0', borderTop: '1px solid #161d24' }}>
@@ -471,8 +483,17 @@ export default function DocumentePage() {
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                       <select className="doc-select" value={a.category} onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, category: e.target.value, subcategory: '' } }))}>
                         <option value="">Categorie...</option>
-                        {CATEGORY_PRESETS.map(c => <option key={c.category} value={c.category}>{c.category}</option>)}
+                        {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        <option value="__custom__">+ Categorie nouă...</option>
                       </select>
+                      {a.category === '__custom__' && (
+                        <input
+                          className="doc-inp"
+                          placeholder="ex: TheMarketer, ElevenLabs"
+                          value={a.customCategory || ''}
+                          onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, customCategory: e.target.value } }))}
+                        />
+                      )}
                       {preset?.subcategories.length > 0 && (
                         <select className="doc-select" value={a.subcategory} onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, subcategory: e.target.value } }))}>
                           <option value="">(fără subcategorie)</option>
@@ -562,13 +583,18 @@ export default function DocumentePage() {
             </div>
           ))}
           <div className="doc-grid2" style={{ marginTop: 12 }}>
-            <select className="doc-select" value={newRule.category} onChange={e => setNewRule(p => ({ ...p, category: e.target.value }))}>
-              {CATEGORY_PRESETS.map(c => <option key={c.category} value={c.category}>{c.category}</option>)}
+            <select className="doc-select" value={newRule.category} onChange={e => setNewRule(p => ({ ...p, category: e.target.value, subcategory: '' }))}>
+              {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value="__custom__">+ Categorie nouă...</option>
             </select>
-            <select className="doc-select" value={newRule.subcategory} onChange={e => setNewRule(p => ({ ...p, subcategory: e.target.value }))}>
-              <option value="">(fără subcategorie)</option>
-              {(CATEGORY_PRESETS.find(c => c.category === newRule.category)?.subcategories || []).map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+            {newRule.category === '__custom__' ? (
+              <input className="doc-inp" placeholder="ex: TheMarketer, ElevenLabs" value={newRule.customCategory} onChange={e => setNewRule(p => ({ ...p, customCategory: e.target.value }))} />
+            ) : (
+              <select className="doc-select" value={newRule.subcategory} onChange={e => setNewRule(p => ({ ...p, subcategory: e.target.value }))}>
+                <option value="">(fără subcategorie)</option>
+                {(CATEGORY_PRESETS.find(c => c.category === newRule.category)?.subcategories || []).map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
             <select className="doc-select" value={newRule.matchType} onChange={e => setNewRule(p => ({ ...p, matchType: e.target.value }))}>
               <option value="sender_domain">după domeniu</option>
               <option value="sender_email">după email exact</option>
