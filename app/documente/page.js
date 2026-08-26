@@ -583,7 +583,7 @@ export default function DocumentePage() {
         setReceptieProgress(p => ({ done: (p?.done || 0) + 1, total: files.length }));
       }
       toast(
-        `✅ Recepție: ${uploaded} urcate, ${pending} în așteptare (AWB negăsit)${duplicate ? `, ${duplicate} deja existente` : ''}${reconciled ? `, ${reconciled} reconciliate automat` : ''}`,
+        `✅ Receptie: ${uploaded} urcate, ${pending} în așteptare (AWB negăsit)${duplicate ? `, ${duplicate} deja existente` : ''}${reconciled ? `, ${reconciled} reconciliate automat` : ''}`,
         'success',
       );
       loadDocuments(); loadUnclassified();
