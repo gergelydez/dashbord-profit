@@ -68,3 +68,10 @@ CREATE TABLE IF NOT EXISTS "MonthlyStat" (
     "updatedAt" TIMESTAMP(3) NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "MonthlyStat_month_key" ON "MonthlyStat" ("month");
+
+CREATE TABLE IF NOT EXISTS "InvoiceAwbLink" (
+    "invoiceNumber" TEXT PRIMARY KEY,
+    "awb" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "InvoiceAwbLink_awb_idx" ON "InvoiceAwbLink" ("awb");

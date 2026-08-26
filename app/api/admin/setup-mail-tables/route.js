@@ -109,6 +109,15 @@ export async function GET(request) {
     `);
     await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "MonthlyStat_month_key" ON "MonthlyStat" ("month")`);
 
+    await db.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "InvoiceAwbLink" (
+        "invoiceNumber" TEXT PRIMARY KEY,
+        "awb" TEXT NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "InvoiceAwbLink_awb_idx" ON "InvoiceAwbLink" ("awb")`);
+
     return NextResponse.json({ ok: true, message: 'Tabelele pentru Documente au fost create.' });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });

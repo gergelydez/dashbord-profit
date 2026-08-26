@@ -369,6 +369,19 @@ model IngestedDocument {
   @@index([status])
 }
 
+// Links a supplier invoice number to the DHL AWB it shipped under — learned
+// from the transport commercial invoice (which carries both), used to route
+// documents that only mention the invoice number (NIR, supplier invoices)
+// into the correct Recepție/AWB-<number> folder without a human matching
+// them by hand each time.
+model InvoiceAwbLink {
+  invoiceNumber String   @id
+  awb           String
+  createdAt     DateTime @default(now())
+
+  @@index([awb])
+}
+
 // Persisted monthly financial rollup (GLS/Sameday collected, ad spend, profit) —
 // entered/edited manually for now (same numbers as app/profit/page.js today, but
 // saved server-side instead of localStorage so they don't need re-entering).

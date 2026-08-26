@@ -110,6 +110,7 @@ const AWB_SUBCATEGORY = '{AWB}';
 const CATEGORY_PRESETS = [
   { category: 'GLS', subcategories: ['Rambursuri', 'Facturi transport'] },
   { category: 'Sameday', subcategories: ['Rambursuri', 'Facturi transport'] },
+  { category: 'Recepție', subcategories: [] },
   { category: 'Facebook', subcategories: [] },
   { category: 'TikTok', subcategories: [] },
   { category: 'Google', subcategories: [] },
@@ -174,6 +175,8 @@ export default function DocumentePage() {
 
   const [reclassifying, setReclassifying] = useState(false);
   const [uploadingMeta, setUploadingMeta] = useState(false);
+  const [uploadingReceptie, setUploadingReceptie] = useState(false);
+  const [receptieProgress, setReceptieProgress] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null); // { done, total }
   const [backfillFor, setBackfillFor] = useState(null); // mailAccountId
   const [backfillDate, setBackfillDate] = useState('');
@@ -471,6 +474,76 @@ export default function DocumentePage() {
     }
   };
 
+  const loadXLSXLib = () => new Promise((resolve, reject) => {
+    if (typeof window !== 'undefined' && window.XLSX) { resolve(window.XLSX); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = () => resolve(window.XLSX);
+    s.onerror = () => reject(new Error('Nu s-a putut încărca XLSX.js'));
+    document.head.appendChild(s);
+  });
+
+  /** Recepție only ever holds PDFs — an .xlsx (the transport commercial
+   * invoice) is rendered to a simple table PDF client-side before upload;
+   * the original filename (which encodes the invoice number + AWB) is kept
+   * with just the extension swapped, so server-side extraction still works. */
+  const convertXlsxToPdf = async (file) => {
+    const XLSX = await loadXLSXLib();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }).map(r => r.map(c => String(c ?? '')));
+    const { jsPDF } = await import('jspdf');
+    await import('jspdf-autotable');
+    const doc = new jsPDF({ orientation: 'landscape' });
+    doc.autoTable({ body: rows, styles: { fontSize: 7 } });
+    return { blob: doc.output('blob'), filename: file.name.replace(/\.xlsx$/i, '.pdf') };
+  };
+
+  const handleReceptieUpload = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setUploadingReceptie(true);
+    setReceptieProgress({ done: 0, total: files.length });
+    try {
+      let uploaded = 0, pending = 0, duplicate = 0, reconciled = 0;
+      for (const file of files) {
+        try {
+          let blob = file;
+          let filename = file.name;
+          if (file.name.toLowerCase().endsWith('.xlsx')) {
+            const converted = await convertXlsxToPdf(file);
+            blob = converted.blob;
+            filename = converted.filename;
+          }
+          const form = new FormData();
+          form.append('file', blob, filename);
+          form.append('filename', filename);
+          form.append('month', month);
+          const res = await fetch('/api/mail/manual-upload-receptie', { method: 'POST', body: form });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'eroare');
+          if (data.status === 'duplicate') duplicate++;
+          else if (data.awb) { uploaded++; reconciled += data.reconciled || 0; }
+          else pending++;
+        } catch (e) {
+          toast(`❌ ${file.name}: ${e.message}`, 'error');
+        }
+        setReceptieProgress(p => ({ done: (p?.done || 0) + 1, total: files.length }));
+      }
+      toast(
+        `✅ Recepție: ${uploaded} urcate, ${pending} în așteptare (AWB negăsit)${duplicate ? `, ${duplicate} deja existente` : ''}${reconciled ? `, ${reconciled} reconciliate automat` : ''}`,
+        'success',
+      );
+      loadDocuments(); loadUnclassified();
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      setUploadingReceptie(false);
+      setReceptieProgress(null);
+    }
+  };
+
   const commitStat = async () => {
     setSavingStat(true);
     try {
@@ -732,6 +805,28 @@ export default function DocumentePage() {
             {uploadProgress && (
               <span style={{ fontSize: 11, color: '#94a3b8', alignSelf: 'center' }}>
                 Procesez {uploadProgress.done}/{uploadProgress.total}...
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="doc-section-title">Încărcare manuală Recepție (facturi transport, NIR, furnizor)</div>
+        <div className="doc-panel">
+          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+            Încarci PDF-uri (sau .xlsx pentru factura de transport — se convertește automat în PDF). Fiecare fișier ajunge automat în <b>Recepție/AWB-&lt;număr&gt;</b>: dacă numele conține „Invoice_...tracking..." (factura de transport), reține legătura factură↔AWB pentru viitor; dacă numele conține direct un AWB, îl folosește pe acela; altfel caută numărul facturii în textul PDF-ului (NIR, factură furnizor) și caută AWB-ul asociat. Dacă nu găsește nimic încă, fișierul așteaptă în „Neclasificate" până apare factura de transport corespunzătoare — apoi se mută automat.
+          </div>
+          <div className="doc-actions">
+            <label className="doc-btn doc-btn-primary" style={{ cursor: 'pointer' }}>
+              {uploadingReceptie ? <span className="doc-spin">↻</span> : '📤'} Alege PDF-uri sau .xlsx
+              <input
+                type="file" accept=".pdf,.xlsx" multiple style={{ display: 'none' }}
+                disabled={uploadingReceptie}
+                onChange={e => { handleReceptieUpload(e.target.files); e.target.value = ''; }}
+              />
+            </label>
+            {receptieProgress && (
+              <span style={{ fontSize: 11, color: '#94a3b8', alignSelf: 'center' }}>
+                Procesez {receptieProgress.done}/{receptieProgress.total}...
               </span>
             )}
           </div>

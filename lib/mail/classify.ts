@@ -42,7 +42,7 @@ export const AWB_SUBCATEGORY = '{AWB}';
  * an explicit "AWB: <digits>" label in either string is preferred over a
  * bare number when present, since it's unambiguous by construction.
  */
-function extractAwb(text: string): string | null {
+export function extractAwb(text: string): string | null {
   const labeled = (text || '').match(/AWB[:#\s]*#?(\d{6,})/i);
   if (labeled) return `AWB-${labeled[1]}`;
   const numbers = (text || '').match(/\d{6,}/g);
