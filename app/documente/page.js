@@ -188,6 +188,7 @@ export default function DocumentePage() {
   const [savingStat, setSavingStat] = useState(false);
   const [computingGls, setComputingGls] = useState(false);
   const [glsDebug, setGlsDebug] = useState(null);
+  const [glsPerFile, setGlsPerFile] = useState(null);
   const [computingMeta, setComputingMeta] = useState(false);
 
   const [rules, setRules] = useState([]);
@@ -323,6 +324,7 @@ export default function DocumentePage() {
   const computeGlsStat = async () => {
     setComputingGls(true);
     setGlsDebug(null);
+    setGlsPerFile(null);
     try {
       const res = await fetch('/api/mail/stats/compute', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }),
@@ -331,6 +333,7 @@ export default function DocumentePage() {
       if (!res.ok) throw new Error(data.error || 'Eroare calcul');
       setStat(data.stat);
       if (data.debug) setGlsDebug(data.debug);
+      if (data.perFile) setGlsPerFile(data.perFile);
       if (data.checked === 0) {
         toast('⚠️ Niciun fișier "GLS / Rambursuri" găsit pentru luna asta — verifică subcategoria din reguli sau apasă „Reclasifică" întâi', 'error');
       } else if (data.errors?.length) {
@@ -354,7 +357,11 @@ export default function DocumentePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Eroare calcul');
       setStat(data.stat);
-      toast(`✅ Meta spend: ${fmt(data.total)} RON`, 'success');
+      if (data.errors?.length) {
+        toast(`⚠️ Meta spend: ${fmt(data.total)} RON (${data.filesUsed}/${data.checked} facturi) — probleme: ${data.errors.join(' · ')}`, 'error');
+      } else {
+        toast(`✅ Meta spend: ${fmt(data.total)} RON (din ${data.filesUsed} facturi)`, 'success');
+      }
     } catch (e) {
       toast('❌ ' + e.message, 'error');
     } finally {
@@ -717,6 +724,16 @@ export default function DocumentePage() {
           <StatField label="🔍 Google spend" value={stat?.googleSpend} onChange={v => saveStat('googleSpend', v)} />
           <StatField label="💹 Profit" value={stat?.profit} onChange={v => saveStat('profit', v)} />
         </div>
+        {glsPerFile && (
+          <div className="doc-errbox" style={{ marginBottom: 12, fontFamily: 'monospace', fontSize: 10, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+            <div style={{ marginBottom: 6, fontWeight: 700 }}>Rezultat per fișier ({glsPerFile.length}):</div>
+            {glsPerFile.map((f, i) => (
+              <div key={i} style={{ color: f.headerFound ? '#10b981' : '#f43f5e' }}>
+                {f.headerFound ? '✓' : '✗'} {f.filename} — {f.headerFound ? `${fmt(f.total)} RON` : `header lipsă (foi: ${f.sheetNames.join(',')}, ${f.rowCount} rânduri)`}
+              </div>
+            ))}
+          </div>
+        )}
         {glsDebug && (
           <div className="doc-errbox" style={{ marginBottom: 12, fontFamily: 'monospace', fontSize: 10, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
             <div style={{ marginBottom: 6, fontWeight: 700 }}>Debug — {glsDebug.filename} ({glsDebug.bufferBytes} bytes, foi: {glsDebug.sheetNames.join(', ')}, {glsDebug.rowCount} rânduri)</div>

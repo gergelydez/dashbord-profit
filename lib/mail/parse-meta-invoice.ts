@@ -20,6 +20,18 @@
  */
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 
+/** "RON1,866.20" (comma thousands separator) must not be truncated at the
+ * comma — confirmed bug: a naive \d+(?:[.,]\d+)? regex matches only "1,866"
+ * out of "1,866.20", parsing as 1.866 instead of 1866.20 for any invoice
+ * at or above 1000. Prefers a strict "digits,digits.NN" match (real money
+ * amounts always have exactly 2 decimals) before falling back looser. */
+function parseMoney(text: string): number | null {
+  const strict = text.match(/([\d,]+\.\d{2})/);
+  if (strict) return parseFloat(strict[1].replace(/,/g, ''));
+  const loose = text.match(/([\d,]+(?:\.\d+)?)/);
+  return loose ? parseFloat(loose[1].replace(/,/g, '')) : null;
+}
+
 export interface MetaInvoiceInfo {
   status: 'paid' | 'failed' | 'unknown';
   amount: number | null;
@@ -35,8 +47,7 @@ export async function parseMetaInvoicePdf(buffer: Buffer): Promise<MetaInvoiceIn
 
   const statusLine = (lines[typeIdx + 2] || '').toLowerCase();
   const amountLine = lines[typeIdx + 3] || '';
-  const amountMatch = amountLine.match(/(\d+(?:[.,]\d+)?)/);
-  const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '.')) : null;
+  const amount = parseMoney(amountLine);
 
   let status: MetaInvoiceInfo['status'] = 'unknown';
   if (statusLine === 'paid') status = 'paid';

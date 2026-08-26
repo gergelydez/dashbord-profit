@@ -32,6 +32,7 @@ export async function POST(request: Request) {
     let total = 0;
     let filesUsed = 0;
     const errors: string[] = [];
+    const perFile: { filename: string; headerFound: boolean; total: number; sheetNames: string[]; rowCount: number }[] = [];
     let debug: { filename: string; bufferBytes: number; sheetNames: string[]; rowCount: number; sampleRows?: string[][] } | undefined;
 
     for (const doc of docs) {
@@ -42,6 +43,7 @@ export async function POST(request: Request) {
         if (!buffer) { errors.push(`${doc.filename}: fără date (nici Drive, nici fallback)`); continue; }
 
         const result = sumGlsRambursuriXlsx(buffer);
+        perFile.push({ filename: doc.filename, headerFound: result.headerFound, total: result.total, sheetNames: result.sheetNames, rowCount: result.rowCount });
         if (!result.headerFound) {
           errors.push(`${doc.filename}: header „Sumă ramburs" negăsit`);
           if (!debug) {
@@ -62,7 +64,7 @@ export async function POST(request: Request) {
       update: { glsIncasat: total },
     });
 
-    return NextResponse.json({ ok: true, total, filesUsed, checked: docs.length, errors, debug, stat });
+    return NextResponse.json({ ok: true, total, filesUsed, checked: docs.length, errors, debug, perFile, stat });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
