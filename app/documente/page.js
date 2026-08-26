@@ -177,6 +177,7 @@ export default function DocumentePage() {
   const [uploadingMeta, setUploadingMeta] = useState(false);
   const [uploadingReceptie, setUploadingReceptie] = useState(false);
   const [receptieProgress, setReceptieProgress] = useState(null);
+  const [receptieDebug, setReceptieDebug] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null); // { done, total }
   const [backfillFor, setBackfillFor] = useState(null); // mailAccountId
   const [backfillDate, setBackfillDate] = useState('');
@@ -603,6 +604,7 @@ export default function DocumentePage() {
     setReceptieProgress({ done: 0, total: files.length });
     try {
       let uploaded = 0, pending = 0, duplicate = 0, reconciled = 0;
+      const debugRows = [];
       for (const file of files) {
         try {
           let blob = file;
@@ -625,6 +627,7 @@ export default function DocumentePage() {
           const res = await fetch('/api/mail/manual-upload-receptie', { method: 'POST', body: form });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || 'eroare');
+          debugRows.push({ filename, contentInvoiceNumber, contentAwb, ...data });
           if (data.status === 'duplicate') duplicate++;
           else if (data.awb) { uploaded++; reconciled += data.reconciled || 0; }
           else pending++;
@@ -633,6 +636,7 @@ export default function DocumentePage() {
         }
         setReceptieProgress(p => ({ done: (p?.done || 0) + 1, total: files.length }));
       }
+      setReceptieDebug(debugRows);
       toast(
         `✅ Receptie: ${uploaded} urcate, ${pending} în așteptare (AWB negăsit)${duplicate ? `, ${duplicate} deja existente` : ''}${reconciled ? `, ${reconciled} reconciliate automat` : ''}`,
         'success',
@@ -932,6 +936,23 @@ export default function DocumentePage() {
               </span>
             )}
           </div>
+          {receptieDebug && (
+            <div className="doc-errbox" style={{ marginTop: 12, fontFamily: 'monospace', fontSize: 10, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+              <div style={{ marginBottom: 6, fontWeight: 700 }}>Debug ultima încărcare ({receptieDebug.length} fișier{receptieDebug.length === 1 ? '' : 'e'}):</div>
+              {receptieDebug.map((r, i) => (
+                <div key={i} style={{ marginBottom: 8, color: r.status === 'duplicate' ? '#94a3b8' : (r.awb ? '#10b981' : '#f43f5e') }}>
+                  {r.status === 'duplicate' ? '⏸' : (r.awb ? '✓' : '✗')} {r.filename}
+                  {r.contentInvoiceNumber && <> · factură din conținut: {r.contentInvoiceNumber}</>}
+                  {r.contentAwb && <> · awb din conținut: {r.contentAwb}</>}
+                  {r.invoiceNumber && <> · factură folosită: {r.invoiceNumber}</>}
+                  {r.awb && <> · AWB: {r.awb}</>}
+                  {r.status === 'duplicate' && <> · deja există (fișier deja clasificat cu succes)</>}
+                  {r.debug?.path && <div>&nbsp;&nbsp;traseu: {r.debug.path}</div>}
+                  {r.debug?.pdfTextSample && <div>&nbsp;&nbsp;text extras din PDF (primele 400 caractere): "{r.debug.pdfTextSample}"</div>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="doc-section-title">Statistici lunare</div>

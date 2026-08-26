@@ -89,6 +89,11 @@ export async function POST(request: Request) {
     let awb: string | null = null;
     let invoiceNumber: string | null = null;
     let newlyLinked = false;
+    // Not used for routing — only surfaced back to the client so a still-
+    // unresolved file shows exactly WHY, instead of guessing from screenshots
+    // (the same instrumentation approach that root-caused the GLS parser bug).
+    let path = 'none';
+    let pdfTextSample: string | null = null;
 
     const transportMatch = extractInvoiceAwbFromFilename(filename);
     if (transportMatch) {
@@ -96,6 +101,7 @@ export async function POST(request: Request) {
       invoiceNumber = transportMatch.invoiceNumber;
       await recordInvoiceAwbLink(invoiceNumber, awb);
       newlyLinked = true;
+      path = 'filename:Invoice_<num>_tracking<awb>';
     } else {
       const directAwb = extractAwb(filename);
       if (directAwb) {
@@ -108,6 +114,9 @@ export async function POST(request: Request) {
           invoiceNumber = formInvoiceNumber;
           await recordInvoiceAwbLink(invoiceNumber, awb);
           newlyLinked = true;
+          path = 'filename-awb+form-invoiceNumber';
+        } else {
+          path = 'filename-awb-only (nicio legătură invoice->awb creată)';
         }
       } else if (formAwb && formInvoiceNumber) {
         // Neither pattern matched the filename at all, but the client still
@@ -116,14 +125,21 @@ export async function POST(request: Request) {
         invoiceNumber = formInvoiceNumber;
         await recordInvoiceAwbLink(invoiceNumber, awb);
         newlyLinked = true;
+        path = 'form-awb+form-invoiceNumber';
       } else {
         // Only PDF text extraction is allowed to fail silently (falls through
         // to Neclasificate below, same as "nothing recognizable") — a lookup
         // failure is a real system error (e.g. a missing table) and must
         // surface as one instead of being misreported as "no AWB found yet".
         const text = await pdf(buffer).then(r => r.text).catch(() => '');
+        pdfTextSample = text.slice(0, 400);
         invoiceNumber = extractInvoiceNumberFromText(text) || formInvoiceNumber;
-        if (invoiceNumber) awb = await lookupAwbByInvoiceNumber(invoiceNumber);
+        if (invoiceNumber) {
+          awb = await lookupAwbByInvoiceNumber(invoiceNumber);
+          path = awb ? 'pdf-text-invoiceNumber+link-gasit' : 'pdf-text-invoiceNumber, dar niciun link salvat pentru el';
+        } else {
+          path = 'nimic gasit (nici filename, nici form, nici text PDF)';
+        }
       }
     }
 
@@ -132,13 +148,14 @@ export async function POST(request: Request) {
     const subject = invoiceNumber && !awb
       ? `Așteaptă asociere AWB pentru factura ${invoiceNumber}`
       : (invoiceNumber ? `Factură: ${invoiceNumber}` : filename);
+    const debug = { path, formInvoiceNumber, formAwb, pdfTextSample };
 
     if (existing) {
       // Retrying a file that's still stuck as unclassified. If it's still
       // not resolved, leave it exactly as-is (no Drive/DB writes) instead of
       // erroring — same observable "pending" outcome as the first attempt.
       if (!awb) {
-        return NextResponse.json({ ok: true, uploaded: false, status: 'pending', filename, awb: null, invoiceNumber });
+        return NextResponse.json({ ok: true, uploaded: false, status: 'pending', filename, awb: null, invoiceNumber, debug });
       }
       const targetFolder = await getOrCreateMonthPath(auth, existing.month, category, subcategory);
       if (existing.driveFileId) await moveFile(auth, existing.driveFileId, targetFolder);
@@ -188,7 +205,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, uploaded: true, filename, awb, invoiceNumber, category, subcategory, reconciled });
+    return NextResponse.json({ ok: true, uploaded: true, filename, awb, invoiceNumber, category, subcategory, reconciled, debug });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
