@@ -45,7 +45,7 @@ import { getAuthorizedClient } from '@/lib/google/oauth';
 import { getOrCreateMonthPath, uploadFile, moveFile } from '@/lib/google/drive';
 import { extractAwb } from '@/lib/mail/classify';
 import { extractInvoiceAwbFromFilename, extractInvoiceNumberFromText, recordInvoiceAwbLink, lookupAwbByInvoiceNumber } from '@/lib/mail/invoice-awb-link';
-import pdf from 'pdf-parse/lib/pdf-parse.js';
+import { extractPdfText } from '@/lib/mail/pdf-text';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -137,7 +137,7 @@ export async function POST(request: Request) {
         // characters" and "pdf-parse threw" look identical otherwise, and a
         // scanned/photographed PDF (no text layer at all — pdf-parse can't
         // OCR) is a real, different failure mode from a genuine bug.
-        const text = await pdf(buffer).then(r => r.text).catch((e) => {
+        const text = await extractPdfText(buffer).catch((e) => {
           pdfParseError = (e as Error).message;
           return '';
         });

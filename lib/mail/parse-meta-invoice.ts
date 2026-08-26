@@ -6,19 +6,13 @@
  * "Product type" / "Meta ads" / <status> / <amount> block, where
  * status is exactly "Paid" or "Failed".
  *
- * Uses pdf-parse@1.x deliberately (not the current v2, which pulls in
- * @napi-rs/canvas — a native binary dependency that's risky on Vercel's
- * serverless runtime) since only plain text extraction is needed here.
- *
- * Imports the inner lib file directly, NOT the package root ('pdf-parse'):
- * pdf-parse@1.1.1's index.js runs `if (!module.parent) { <read its own
- * bundled test fixture> }` at module load time, which throws ENOENT the
- * moment webpack's module wrapping makes module.parent falsy (confirmed:
- * this crashes Next.js's "Collecting page data" build step, and would
- * crash the deployed function the same way). lib/pdf-parse.js exports the
- * identical function without that debug branch.
+ * Uses lib/mail/pdf-text.ts (pdfjs-dist directly) rather than pdf-parse —
+ * see that file for why: pdf-parse's bundled 2017 pdf.js throws on PDFs a
+ * real viewer opens fine, and pdf-parse v2 pulls in a native `canvas`
+ * dependency that's risky on Vercel's serverless runtime, neither of
+ * which pdfjs-dist's plain getTextContent() needs.
  */
-import pdf from 'pdf-parse/lib/pdf-parse.js';
+import { extractPdfText } from './pdf-text';
 
 /** "RON1,866.20" (comma thousands separator) must not be truncated at the
  * comma — confirmed bug: a naive \d+(?:[.,]\d+)? regex matches only "1,866"
@@ -39,8 +33,8 @@ export interface MetaInvoiceInfo {
 }
 
 export async function parseMetaInvoicePdf(buffer: Buffer): Promise<MetaInvoiceInfo> {
-  const data = await pdf(buffer);
-  const lines = data.text.split('\n').map(l => l.trim()).filter(Boolean);
+  const text = await extractPdfText(buffer);
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
   const typeIdx = lines.indexOf('Product type');
   if (typeIdx === -1) return { status: 'unknown', amount: null, invoiceDate: null };
