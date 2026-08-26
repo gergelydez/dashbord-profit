@@ -19,6 +19,13 @@ export interface Classification {
 
 const UNCLASSIFIED: Classification = { category: 'Neclasificate', subcategory: null };
 
+/** A rule whose category is "Ignorat" (any casing) marks a sender's mail as
+ * noise — e.g. a noreply@ address whose attachments aren't worth keeping —
+ * so it's skipped entirely instead of landing in Neclasificate. */
+export function isIgnored(category: string): boolean {
+  return category.trim().toLowerCase() === 'ignorat';
+}
+
 export async function classifyAttachment(senderEmail: string, filename: string): Promise<Classification> {
   const email = (senderEmail || '').trim().toLowerCase();
   if (!email) return UNCLASSIFIED;

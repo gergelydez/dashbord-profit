@@ -11,8 +11,8 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { decrypt } from '@/lib/security/crypt';
 import { getAuthorizedClient } from '@/lib/google/oauth';
-import { getOrCreateMonthPath, moveFile } from '@/lib/google/drive';
-import { classifyAttachment } from '@/lib/mail/classify';
+import { getOrCreateMonthPath, moveFile, trashFile } from '@/lib/google/drive';
+import { classifyAttachment, isIgnored } from '@/lib/mail/classify';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -28,6 +28,14 @@ export async function POST() {
     let changed = 0;
     for (const doc of docs) {
       const { category, subcategory } = await classifyAttachment(doc.senderEmail, doc.filename);
+
+      if (isIgnored(category)) {
+        if (doc.driveFileId) await trashFile(auth, doc.driveFileId).catch(() => {});
+        await db.ingestedDocument.delete({ where: { id: doc.id } });
+        changed++;
+        continue;
+      }
+
       if (category === doc.category && subcategory === doc.subcategory) continue;
 
       if (doc.driveFileId) {

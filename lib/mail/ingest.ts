@@ -14,7 +14,7 @@ import { db } from '@/lib/db';
 import { decrypt } from '@/lib/security/crypt';
 import { getAuthorizedClient } from '@/lib/google/oauth';
 import { getOrCreateMonthPath, uploadFile } from '@/lib/google/drive';
-import { classifyAttachment } from './classify';
+import { classifyAttachment, isIgnored } from './classify';
 import type { FetchedMessage } from './types';
 
 function monthKey(d: Date): string {
@@ -41,6 +41,8 @@ export async function ingestMessages(
 
     for (const att of msg.attachments) {
       const { category, subcategory } = await classifyAttachment(msg.senderEmail, att.filename);
+      if (isIgnored(category)) continue; // never stored, never uploaded — the sender was explicitly marked as noise
+
       const key = { mailAccountId_messageId_filename: { mailAccountId, messageId: msg.messageId, filename: att.filename } };
       const existing = await db.ingestedDocument.findUnique({ where: key });
       if (existing && existing.status !== 'failed') continue; // already ingested — 'failed' rows are retried below

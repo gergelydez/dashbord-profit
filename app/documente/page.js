@@ -320,7 +320,13 @@ export default function DocumentePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Eroare calcul');
       setStat(data.stat);
-      toast(`✅ GLS încasat: ${fmt(data.total)} RON (din ${data.filesUsed} fișiere Rambursuri)`, 'success');
+      if (data.checked === 0) {
+        toast('⚠️ Niciun fișier "GLS / Rambursuri" găsit pentru luna asta — verifică subcategoria din reguli sau apasă „Reclasifică" întâi', 'error');
+      } else if (data.errors?.length) {
+        toast(`⚠️ GLS încasat: ${fmt(data.total)} RON (${data.filesUsed}/${data.checked} fișiere) — probleme: ${data.errors.join(' · ')}`, 'error');
+      } else {
+        toast(`✅ GLS încasat: ${fmt(data.total)} RON (din ${data.filesUsed} fișiere Rambursuri)`, 'success');
+      }
     } catch (e) {
       toast('❌ ' + e.message, 'error');
     } finally {
@@ -376,16 +382,32 @@ export default function DocumentePage() {
   const assignDocument = async (docId) => {
     const a = assign[docId];
     const category = a?.category === '__custom__' ? (a.customCategory || '').trim() : a?.category;
+    const subcategory = a?.subcategory === '__custom__' ? (a.customSubcategory || '').trim() : a?.subcategory;
     if (!category) { toast('Alege sau completează o categorie', 'error'); return; }
     try {
       const res = await fetch('/api/mail/documents', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: docId, category, subcategory: a.subcategory || null, createRule: a.createRule !== false }),
+        body: JSON.stringify({ id: docId, category, subcategory: subcategory || null, createRule: a.createRule !== false }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Eroare');
       toast('✅ Document clasificat', 'success');
       loadUnclassified(); loadDocuments();
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    }
+  };
+
+  const ignoreSender = async (doc) => {
+    if (!confirm(`Ignori toate email-urile de la ${doc.senderEmail}? Documentul curent va fi șters din Drive (coș de gunoi) și din listă, iar cele viitoare de la acest expeditor nu vor mai fi importate deloc.`)) return;
+    try {
+      await fetch('/api/mail/rules', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Ignorat', matchType: 'sender_email', matchValue: doc.senderEmail }),
+      });
+      await fetch(`/api/mail/documents?id=${doc.id}`, { method: 'DELETE' });
+      toast(`🚫 Ignorat: ${doc.senderEmail}`, 'success');
+      loadUnclassified(); loadDocuments(); loadRules();
     } catch (e) {
       toast('❌ ' + e.message, 'error');
     }
@@ -397,6 +419,7 @@ export default function DocumentePage() {
     for (const d of documents) if (d.category) names.add(d.category);
     for (const d of unclassified) if (d.category) names.add(d.category);
     names.delete('Neclasificate');
+    names.delete('Ignorat'); // use the dedicated "🚫 Ignoră expeditor" button instead of picking this from the dropdown
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [rules, documents, unclassified]);
 
@@ -504,7 +527,7 @@ export default function DocumentePage() {
             <div className="doc-section-title">⚠️ Neclasificate ({unclassified.length})</div>
             <div className="doc-panel">
               {unclassified.map(doc => {
-                const a = assign[doc.id] || { category: '', customCategory: '', subcategory: '', createRule: true };
+                const a = assign[doc.id] || { category: '', customCategory: '', subcategory: '', customSubcategory: '', createRule: true };
                 const preset = CATEGORY_PRESETS.find(c => c.category === a.category);
                 return (
                   <div key={doc.id} style={{ padding: '10px 0', borderTop: '1px solid #161d24' }}>
@@ -519,22 +542,32 @@ export default function DocumentePage() {
                       {a.category === '__custom__' && (
                         <input
                           className="doc-inp"
-                          placeholder="ex: TheMarketer, ElevenLabs"
+                          placeholder="ex: TheMarketer, ElevenLabs, Recepție"
                           value={a.customCategory || ''}
                           onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, customCategory: e.target.value } }))}
                         />
                       )}
-                      {preset?.subcategories.length > 0 && (
-                        <select className="doc-select" value={a.subcategory} onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, subcategory: e.target.value } }))}>
+                      {a.category && (
+                        <select className="doc-select" value={a.subcategory} onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, subcategory: e.target.value, createRule: e.target.value === '__custom__' ? false : a.createRule } }))}>
                           <option value="">(fără subcategorie)</option>
-                          {preset.subcategories.map(s => <option key={s} value={s}>{s}</option>)}
+                          {(preset?.subcategories || []).map(s => <option key={s} value={s}>{s}</option>)}
+                          <option value="__custom__">+ Subcategorie nouă...</option>
                         </select>
+                      )}
+                      {a.subcategory === '__custom__' && (
+                        <input
+                          className="doc-inp"
+                          placeholder="ex: nr. AWB 1309608801"
+                          value={a.customSubcategory || ''}
+                          onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, customSubcategory: e.target.value } }))}
+                        />
                       )}
                       <label style={{ fontSize: 10, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 4 }}>
                         <input type="checkbox" checked={a.createRule !== false} onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, createRule: e.target.checked } }))} />
                         creează regulă automată
                       </label>
                       <button className="doc-btn doc-btn-primary" onClick={() => assignDocument(doc.id)}>Atribuie</button>
+                      <button className="doc-btn doc-btn-red" onClick={() => ignoreSender(doc)}>🚫 Ignoră expeditor</button>
                     </div>
                   </div>
                 );

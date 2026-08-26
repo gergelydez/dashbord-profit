@@ -118,6 +118,12 @@ export async function downloadFile(auth: OAuth2Client, fileId: string): Promise<
   return Buffer.from(res.data as ArrayBuffer);
 }
 
+/** Moves a file to trash (reversible from Drive's own Trash) — used when a sender gets ignored after already being ingested. */
+export async function trashFile(auth: OAuth2Client, fileId: string): Promise<void> {
+  const drive = google.drive({ version: 'v3', auth });
+  await drive.files.update({ fileId, requestBody: { trashed: true } });
+}
+
 /** Moves a file to a new parent folder (e.g. reclassifying a "Neclasificate" document) — removes it from all current parents first. */
 export async function moveFile(auth: OAuth2Client, fileId: string, newParentId: string): Promise<void> {
   const drive = google.drive({ version: 'v3', auth });

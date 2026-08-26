@@ -31,16 +31,19 @@ export async function POST(request: Request) {
 
     let total = 0;
     let filesUsed = 0;
+    const errors: string[] = [];
     for (const doc of docs) {
       try {
         let buffer: Buffer | null = null;
         if (doc.fileData) buffer = Buffer.from(doc.fileData);
         else if (doc.driveFileId && auth) buffer = await downloadFile(auth, doc.driveFileId);
-        if (!buffer) continue;
-        total += sumGlsRambursuriXlsx(buffer);
+        if (!buffer) { errors.push(`${doc.filename}: fără date (nici Drive, nici fallback)`); continue; }
+        const sum = sumGlsRambursuriXlsx(buffer);
+        if (sum === 0) errors.push(`${doc.filename}: 0 detectat — verifică formatul`);
+        total += sum;
         filesUsed++;
-      } catch {
-        // Skip a file that fails to download/parse rather than aborting the whole total.
+      } catch (e) {
+        errors.push(`${doc.filename}: ${(e as Error).message}`);
       }
     }
     total = Math.round(total * 100) / 100;
@@ -51,7 +54,7 @@ export async function POST(request: Request) {
       update: { glsIncasat: total },
     });
 
-    return NextResponse.json({ ok: true, total, filesUsed, checked: docs.length, stat });
+    return NextResponse.json({ ok: true, total, filesUsed, checked: docs.length, errors, stat });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { decrypt } from '@/lib/security/crypt';
 import { getAuthorizedClient } from '@/lib/google/oauth';
-import { getOrCreateMonthPath, uploadFile, moveFile } from '@/lib/google/drive';
+import { getOrCreateMonthPath, uploadFile, moveFile, trashFile } from '@/lib/google/drive';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,6 +72,32 @@ export async function PATCH(request: Request) {
       }
     }
 
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}
+
+/** DELETE ?id= — trashes the Drive file (if any) and drops the DB row. Used when
+ * a document turns out to be from a sender the user wants to ignore entirely. */
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    if (!id) return NextResponse.json({ error: 'id lipsă' }, { status: 400 });
+
+    const doc = await db.ingestedDocument.findUnique({ where: { id } });
+    if (!doc) return NextResponse.json({ ok: true }); // already gone
+
+    if (doc.driveFileId) {
+      const googleAccount = await db.mailAccount.findFirst({ where: { provider: 'gmail', active: true } });
+      if (googleAccount?.refreshToken) {
+        const auth = getAuthorizedClient(googleAccount.id, decrypt(googleAccount.refreshToken));
+        await trashFile(auth, doc.driveFileId).catch(() => {});
+      }
+    }
+
+    await db.ingestedDocument.delete({ where: { id } });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
