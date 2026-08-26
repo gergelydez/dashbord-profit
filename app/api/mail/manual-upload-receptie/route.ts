@@ -94,6 +94,8 @@ export async function POST(request: Request) {
     // (the same instrumentation approach that root-caused the GLS parser bug).
     let path = 'none';
     let pdfTextSample: string | null = null;
+    let pdfTextLength: number | null = null;
+    let pdfParseError: string | null = null;
 
     const transportMatch = extractInvoiceAwbFromFilename(filename);
     if (transportMatch) {
@@ -127,11 +129,19 @@ export async function POST(request: Request) {
         newlyLinked = true;
         path = 'form-awb+form-invoiceNumber';
       } else {
-        // Only PDF text extraction is allowed to fail silently (falls through
-        // to Neclasificate below, same as "nothing recognizable") — a lookup
-        // failure is a real system error (e.g. a missing table) and must
-        // surface as one instead of being misreported as "no AWB found yet".
-        const text = await pdf(buffer).then(r => r.text).catch(() => '');
+        // Only PDF text extraction is allowed to fail silently for ROUTING
+        // purposes (falls through to Neclasificate below, same as "nothing
+        // recognizable") — a lookup failure is a real system error (e.g. a
+        // missing table) and must surface as one. The actual parse error (if
+        // any) is still captured for the debug panel, since "extracted zero
+        // characters" and "pdf-parse threw" look identical otherwise, and a
+        // scanned/photographed PDF (no text layer at all — pdf-parse can't
+        // OCR) is a real, different failure mode from a genuine bug.
+        const text = await pdf(buffer).then(r => r.text).catch((e) => {
+          pdfParseError = (e as Error).message;
+          return '';
+        });
+        pdfTextLength = text.length;
         pdfTextSample = text.slice(0, 400);
         invoiceNumber = extractInvoiceNumberFromText(text) || formInvoiceNumber;
         if (invoiceNumber) {
@@ -148,7 +158,7 @@ export async function POST(request: Request) {
     const subject = invoiceNumber && !awb
       ? `Așteaptă asociere AWB pentru factura ${invoiceNumber}`
       : (invoiceNumber ? `Factură: ${invoiceNumber}` : filename);
-    const debug = { path, formInvoiceNumber, formAwb, pdfTextSample };
+    const debug = { path, formInvoiceNumber, formAwb, pdfTextSample, pdfTextLength, pdfParseError };
 
     if (existing) {
       // Retrying a file that's still stuck as unclassified. If it's still

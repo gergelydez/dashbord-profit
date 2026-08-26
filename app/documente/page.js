@@ -948,7 +948,15 @@ export default function DocumentePage() {
                   {r.awb && <> · AWB: {r.awb}</>}
                   {r.status === 'duplicate' && <> · deja există (fișier deja clasificat cu succes)</>}
                   {r.debug?.path && <div>&nbsp;&nbsp;traseu: {r.debug.path}</div>}
-                  {r.debug?.pdfTextSample && <div>&nbsp;&nbsp;text extras din PDF (primele 400 caractere): "{r.debug.pdfTextSample}"</div>}
+                  {r.debug?.pdfParseError && <div style={{ color: '#f43f5e' }}>&nbsp;&nbsp;eroare la citirea PDF-ului: {r.debug.pdfParseError}</div>}
+                  {r.debug && typeof r.debug.pdfTextLength === 'number' && (
+                    <div>
+                      &nbsp;&nbsp;text extras din PDF: {r.debug.pdfTextLength} caractere
+                      {r.debug.pdfTextLength === 0
+                        ? ' — GOL (probabil PDF scanat/poză, fără strat de text selectabil)'
+                        : ` — "${r.debug.pdfTextSample}"`}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
