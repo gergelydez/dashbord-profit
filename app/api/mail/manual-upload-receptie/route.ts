@@ -72,13 +72,13 @@ export async function POST(request: Request) {
       if (directAwb) {
         awb = directAwb.replace(/^AWB-/i, '');
       } else {
-        try {
-          const text = (await pdf(buffer)).text;
-          invoiceNumber = extractInvoiceNumberFromText(text);
-          if (invoiceNumber) awb = await lookupAwbByInvoiceNumber(invoiceNumber);
-        } catch {
-          // unreadable PDF text — falls through to Neclasificate below
-        }
+        // Only PDF text extraction is allowed to fail silently (falls through
+        // to Neclasificate below, same as "nothing recognizable") — a lookup
+        // failure is a real system error (e.g. a missing table) and must
+        // surface as one instead of being misreported as "no AWB found yet".
+        const text = await pdf(buffer).then(r => r.text).catch(() => '');
+        invoiceNumber = extractInvoiceNumberFromText(text);
+        if (invoiceNumber) awb = await lookupAwbByInvoiceNumber(invoiceNumber);
       }
     }
 
