@@ -112,10 +112,25 @@ export async function uploadFile(
   return { fileId: res.data.id, webViewLink: res.data.webViewLink || null };
 }
 
+/**
+ * Confirmed bug: `{ responseType: 'arraybuffer' }` here was silently
+ * corrupting binary files (xlsx confirmed — correct and complete when
+ * viewed directly on Drive, but garbled after this round-trip: diacritics
+ * mangled, most columns lost). gaxios/googleapis' arraybuffer handling for
+ * Drive's alt=media downloads isn't reliable for binary content; 'stream'
+ * is the pattern Google's own docs use and reads raw bytes with nothing
+ * in between that could reinterpret them as text.
+ */
 export async function downloadFile(auth: OAuth2Client, fileId: string): Promise<Buffer> {
   const drive = google.drive({ version: 'v3', auth });
-  const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
-  return Buffer.from(res.data as ArrayBuffer);
+  const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+  const chunks: Buffer[] = [];
+  return new Promise((resolve, reject) => {
+    res.data
+      .on('data', (chunk: Buffer) => chunks.push(chunk))
+      .on('end', () => resolve(Buffer.concat(chunks)))
+      .on('error', reject);
+  });
 }
 
 /** Moves a file to trash (reversible from Drive's own Trash) — used when a sender gets ignored after already being ingested. */
