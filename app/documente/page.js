@@ -110,7 +110,7 @@ const AWB_SUBCATEGORY = '{AWB}';
 const CATEGORY_PRESETS = [
   { category: 'GLS', subcategories: ['Rambursuri', 'Facturi transport'] },
   { category: 'Sameday', subcategories: ['Rambursuri', 'Facturi transport'] },
-  { category: 'Recepție', subcategories: [] },
+  { category: 'Receptie', subcategories: [] },
   { category: 'Facebook', subcategories: [] },
   { category: 'TikTok', subcategories: [] },
   { category: 'Google', subcategories: [] },
@@ -487,16 +487,67 @@ export default function DocumentePage() {
    * invoice) is rendered to a simple table PDF client-side before upload;
    * the original filename (which encodes the invoice number + AWB) is kept
    * with just the extension swapped, so server-side extraction still works. */
+  /**
+   * Dumping the raw sheet into one wide table looked bad (confirmed): most
+   * columns are blank for most rows, dates showed as serial numbers, and
+   * transport invoices from Chinese freight forwarders mix in CJK labels
+   * jsPDF's default fonts can't render (blank boxes). Instead: strip
+   * anything outside printable ASCII + Latin-1/Extended-A (keeps Romanian
+   * ă/â/î/ș/ț, drops CJK), compact each row to its non-empty cells (most
+   * rows are then just a couple of clean "label: value" pairs), find the
+   * line-items header row (the one mentioning "tracking") and render only
+   * that section as an actual table — everything before/after it renders as
+   * plain readable lines. Not tied to one exact invoice template — this
+   * degrades gracefully to "readable text dump" for anything that doesn't
+   * have a recognizable line-items table at all.
+   */
   const convertXlsxToPdf = async (file) => {
     const XLSX = await loadXLSXLib();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }).map(r => r.map(c => String(c ?? '')));
+    const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: false });
+
+    const clean = v => (v === null || v === undefined ? '' : String(v).replace(/[^\x20-\x7E -ɏ]/g, '').trim());
+    const compact = row => (row || []).map(clean).filter(Boolean);
+    const rows = rawRows.map(compact).filter(r => r.length > 0);
+
+    const headerIdx = rows.findIndex(r => r.some(c => /tracking/i.test(c)));
+    const before = headerIdx === -1 ? rows : rows.slice(0, headerIdx);
+    const tableHeader = headerIdx === -1 ? null : rows[headerIdx];
+    let bodyEnd = rows.length;
+    if (headerIdx !== -1) {
+      for (let i = headerIdx + 1; i < rows.length; i++) {
+        if (rows[i].some(c => /signature|seller|buyer|payment/i.test(c))) { bodyEnd = i; break; }
+      }
+    }
+    const tableBody = headerIdx === -1 ? [] : rows.slice(headerIdx + 1, bodyEnd);
+    const after = headerIdx === -1 ? [] : rows.slice(bodyEnd);
+
     const { jsPDF } = await import('jspdf');
     await import('jspdf-autotable');
-    const doc = new jsPDF({ orientation: 'landscape' });
-    doc.autoTable({ body: rows, styles: { fontSize: 7 } });
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    let y = 18;
+    doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+    doc.text(file.name.replace(/\.xlsx$/i, ''), 14, y);
+    y += 8;
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    for (const row of before) {
+      if (y > 275) { doc.addPage(); y = 18; }
+      doc.text(row.join('   ·   '), 14, y, { maxWidth: 180 });
+      y += 6;
+    }
+    if (tableHeader) {
+      y += 4;
+      doc.autoTable({ startY: y, head: [tableHeader], body: tableBody, styles: { fontSize: 8 } });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+    doc.setFontSize(9);
+    for (const row of after) {
+      if (y > 275) { doc.addPage(); y = 18; }
+      doc.text(row.join('   ·   '), 14, y, { maxWidth: 180 });
+      y += 6;
+    }
     return { blob: doc.output('blob'), filename: file.name.replace(/\.xlsx$/i, '.pdf') };
   };
 
@@ -754,7 +805,7 @@ export default function DocumentePage() {
                       {a.category === '__custom__' && (
                         <input
                           className="doc-inp"
-                          placeholder="ex: TheMarketer, ElevenLabs, Recepție"
+                          placeholder="ex: TheMarketer, ElevenLabs, Receptie"
                           value={a.customCategory || ''}
                           onChange={e => setAssign(p => ({ ...p, [doc.id]: { ...a, customCategory: e.target.value } }))}
                         />
@@ -933,7 +984,7 @@ export default function DocumentePage() {
               <option value="__custom__">+ Categorie nouă...</option>
             </select>
             {newRule.category === '__custom__' ? (
-              <input className="doc-inp" placeholder="ex: TheMarketer, ElevenLabs, Recepție" value={newRule.customCategory} onChange={e => setNewRule(p => ({ ...p, customCategory: e.target.value }))} />
+              <input className="doc-inp" placeholder="ex: TheMarketer, ElevenLabs, Receptie" value={newRule.customCategory} onChange={e => setNewRule(p => ({ ...p, customCategory: e.target.value }))} />
             ) : (
               <select className="doc-select" value={newRule.subcategory} onChange={e => setNewRule(p => ({ ...p, subcategory: e.target.value }))} disabled={newRule.awbAuto}>
                 <option value="">(fără subcategorie)</option>

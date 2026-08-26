@@ -82,7 +82,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const category = awb ? 'Recepție' : 'Neclasificate';
+    const category = awb ? 'Receptie' : 'Neclasificate';
     const subcategory = awb ? toAwbSubcategory(awb) : null;
     const subject = invoiceNumber && !awb
       ? `Așteaptă asociere AWB pentru factura ${invoiceNumber}`
@@ -126,11 +126,11 @@ export async function POST(request: Request) {
       });
       for (const doc of pending) {
         const targetSub = toAwbSubcategory(awb!);
-        const targetFolder = await getOrCreateMonthPath(auth, doc.month, 'Recepție', targetSub);
+        const targetFolder = await getOrCreateMonthPath(auth, doc.month, 'Receptie', targetSub);
         if (doc.driveFileId) await moveFile(auth, doc.driveFileId, targetFolder);
         await db.ingestedDocument.update({
           where: { id: doc.id },
-          data: { category: 'Recepție', subcategory: targetSub, status: 'ingested' },
+          data: { category: 'Receptie', subcategory: targetSub, status: 'ingested' },
         });
         reconciled++;
       }
