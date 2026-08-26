@@ -24,6 +24,23 @@ export async function POST(request: Request) {
       where: { month, category: 'GLS', subcategory: 'Rambursuri' },
     });
 
+    // Detect duplicate filenames anywhere in the month (any category/status) —
+    // if GLS sends more than one attachment per day sharing the same
+    // filename (e.g. a short reference list AND the full statement), a
+    // "Vezi" click in the folder browser and this compute pass could be
+    // looking at two different underlying Drive files despite an identical
+    // displayed name.
+    const allMonthDocs = await db.ingestedDocument.findMany({
+      where: { month, filename: { in: docs.map(d => d.filename) } },
+      select: { filename: true, messageId: true, category: true, status: true },
+    });
+    const duplicates = Object.entries(
+      allMonthDocs.reduce<Record<string, number>>((acc, d) => {
+        acc[d.filename] = (acc[d.filename] || 0) + 1;
+        return acc;
+      }, {}),
+    ).filter(([, count]) => count > 1);
+
     const googleAccount = await db.mailAccount.findFirst({ where: { provider: 'gmail', active: true } });
     const auth = googleAccount?.refreshToken
       ? getAuthorizedClient(googleAccount.id, decrypt(googleAccount.refreshToken))
@@ -32,7 +49,7 @@ export async function POST(request: Request) {
     let total = 0;
     let filesUsed = 0;
     const errors: string[] = [];
-    const perFile: { filename: string; headerFound: boolean; total: number; sheetNames: string[]; rowCount: number; source: string; headerHex?: string }[] = [];
+    const perFile: { filename: string; headerFound: boolean; total: number; sheetNames: string[]; rowCount: number; source: string; headerHex?: string; driveUrl: string | null; messageId: string }[] = [];
     let debug: { filename: string; bufferBytes: number; sheetNames: string[]; rowCount: number; sampleRows?: string[][]; source: string; headerHex?: string } | undefined;
 
     for (const doc of docs) {
@@ -44,7 +61,7 @@ export async function POST(request: Request) {
         if (!buffer) { errors.push(`${doc.filename}: fără date (nici Drive, nici fallback)`); continue; }
 
         const result = sumGlsRambursuriXlsx(buffer);
-        perFile.push({ filename: doc.filename, headerFound: result.headerFound, total: result.total, sheetNames: result.sheetNames, rowCount: result.rowCount, source, headerHex: result.headerHex });
+        perFile.push({ filename: doc.filename, headerFound: result.headerFound, total: result.total, sheetNames: result.sheetNames, rowCount: result.rowCount, source, headerHex: result.headerHex, driveUrl: doc.driveUrl, messageId: doc.messageId });
         if (!result.headerFound) {
           errors.push(`${doc.filename}: header „Sumă ramburs" negăsit (sursă: ${source})`);
           if (!debug) {
@@ -65,7 +82,7 @@ export async function POST(request: Request) {
       update: { glsIncasat: total },
     });
 
-    return NextResponse.json({ ok: true, total, filesUsed, checked: docs.length, errors, debug, perFile, stat });
+    return NextResponse.json({ ok: true, total, filesUsed, checked: docs.length, errors, debug, perFile, duplicates, stat });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

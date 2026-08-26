@@ -189,6 +189,7 @@ export default function DocumentePage() {
   const [computingGls, setComputingGls] = useState(false);
   const [glsDebug, setGlsDebug] = useState(null);
   const [glsPerFile, setGlsPerFile] = useState(null);
+  const [glsDuplicates, setGlsDuplicates] = useState(null);
   const [computingMeta, setComputingMeta] = useState(false);
 
   const [rules, setRules] = useState([]);
@@ -325,6 +326,7 @@ export default function DocumentePage() {
     setComputingGls(true);
     setGlsDebug(null);
     setGlsPerFile(null);
+    setGlsDuplicates(null);
     try {
       const res = await fetch('/api/mail/stats/compute', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }),
@@ -334,6 +336,7 @@ export default function DocumentePage() {
       setStat(data.stat);
       if (data.debug) setGlsDebug(data.debug);
       if (data.perFile) setGlsPerFile(data.perFile);
+      if (data.duplicates) setGlsDuplicates(data.duplicates);
       if (data.checked === 0) {
         toast('⚠️ Niciun fișier "GLS / Rambursuri" găsit pentru luna asta — verifică subcategoria din reguli sau apasă „Reclasifică" întâi', 'error');
       } else if (data.errors?.length) {
@@ -724,12 +727,19 @@ export default function DocumentePage() {
           <StatField label="🔍 Google spend" value={stat?.googleSpend} onChange={v => saveStat('googleSpend', v)} />
           <StatField label="💹 Profit" value={stat?.profit} onChange={v => saveStat('profit', v)} />
         </div>
+        {glsDuplicates?.length > 0 && (
+          <div className="doc-errbox" style={{ marginBottom: 12, fontFamily: 'monospace', fontSize: 10 }}>
+            <div style={{ fontWeight: 700 }}>⚠️ Nume de fișier duplicate găsite luna asta:</div>
+            {glsDuplicates.map(([name, count]) => <div key={name}>{name} — apare de {count} ori</div>)}
+          </div>
+        )}
         {glsPerFile && (
           <div className="doc-errbox" style={{ marginBottom: 12, fontFamily: 'monospace', fontSize: 10, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
             <div style={{ marginBottom: 6, fontWeight: 700 }}>Rezultat per fișier ({glsPerFile.length}):</div>
             {glsPerFile.map((f, i) => (
               <div key={i} style={{ color: f.headerFound ? '#10b981' : '#f43f5e' }}>
                 {f.headerFound ? '✓' : '✗'} {f.filename} [{f.source}]{f.headerHex ? ` hex:${f.headerHex}` : ''} — {f.headerFound ? `${fmt(f.total)} RON` : `header lipsă (foi: ${f.sheetNames.join(',')}, ${f.rowCount} rânduri)`}
+                {f.driveUrl && <> · <a href={f.driveUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>deschide exact acest fișier</a></>}
               </div>
             ))}
           </div>
