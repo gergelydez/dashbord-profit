@@ -76,6 +76,21 @@ async function getRootFolderId(auth: OAuth2Client): Promise<string> {
   return id;
 }
 
+/**
+ * Romanian ș/ț (comma-below, U+0219/U+021B — the correct modern spelling)
+ * vs ş/ţ (cedilla, U+015F/U+0163 — a legacy encoding many phone keyboards
+ * still produce) look identical on screen but are different codepoints.
+ * Confirmed live: a category typed by hand ("Recepție") used a different
+ * variant than this codebase's own hardcoded string, and Drive's
+ * exact-name folder lookup silently created a second, visually-identical
+ * "Recepție" folder instead of finding the existing one. Canonicalizing
+ * here — the one place every folder path passes through — means it no
+ * longer matters which variant any given caller happens to use.
+ */
+function normalizeRoDiacritics(s: string): string {
+  return s.replace(/ş/g, 'ș').replace(/Ş/g, 'Ș').replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț');
+}
+
 /** month = "2026-08". Returns the final folder id, creating any missing folder along the path. */
 export async function getOrCreateMonthPath(
   auth: OAuth2Client,
@@ -86,13 +101,15 @@ export async function getOrCreateMonthPath(
   const [yearStr, monthStr] = month.split('-');
   const monthNum = parseInt(monthStr, 10);
   const monthLabel = `${monthStr} - ${MONTH_NAMES_RO[monthNum - 1] || monthStr}`;
+  const cat = normalizeRoDiacritics(category);
+  const subcat = subcategory ? normalizeRoDiacritics(subcategory) : subcategory;
 
   const rootId = await getRootFolderId(auth);
   const yearId = await ensureFolderCached(auth, yearStr, rootId, `${rootId}/${yearStr}`);
   const monthId = await ensureFolderCached(auth, monthLabel, yearId, `${yearId}/${monthLabel}`);
-  const catId = await ensureFolderCached(auth, category, monthId, `${monthId}/${category}`);
-  if (!subcategory) return catId;
-  return ensureFolderCached(auth, subcategory, catId, `${catId}/${subcategory}`);
+  const catId = await ensureFolderCached(auth, cat, monthId, `${monthId}/${cat}`);
+  if (!subcat) return catId;
+  return ensureFolderCached(auth, subcat, catId, `${catId}/${subcat}`);
 }
 
 export async function uploadFile(
