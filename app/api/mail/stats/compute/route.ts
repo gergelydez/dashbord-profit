@@ -32,22 +32,23 @@ export async function POST(request: Request) {
     let total = 0;
     let filesUsed = 0;
     const errors: string[] = [];
-    const perFile: { filename: string; headerFound: boolean; total: number; sheetNames: string[]; rowCount: number }[] = [];
-    let debug: { filename: string; bufferBytes: number; sheetNames: string[]; rowCount: number; sampleRows?: string[][] } | undefined;
+    const perFile: { filename: string; headerFound: boolean; total: number; sheetNames: string[]; rowCount: number; source: string }[] = [];
+    let debug: { filename: string; bufferBytes: number; sheetNames: string[]; rowCount: number; sampleRows?: string[][]; source: string } | undefined;
 
     for (const doc of docs) {
       try {
         let buffer: Buffer | null = null;
-        if (doc.fileData) buffer = Buffer.from(doc.fileData);
-        else if (doc.driveFileId && auth) buffer = await downloadFile(auth, doc.driveFileId);
+        let source = 'none';
+        if (doc.driveFileId && auth) { buffer = await downloadFile(auth, doc.driveFileId); source = 'Drive'; }
+        else if (doc.fileData) { buffer = Buffer.from(doc.fileData); source = 'fileData (DB fallback, nu Drive)'; }
         if (!buffer) { errors.push(`${doc.filename}: fără date (nici Drive, nici fallback)`); continue; }
 
         const result = sumGlsRambursuriXlsx(buffer);
-        perFile.push({ filename: doc.filename, headerFound: result.headerFound, total: result.total, sheetNames: result.sheetNames, rowCount: result.rowCount });
+        perFile.push({ filename: doc.filename, headerFound: result.headerFound, total: result.total, sheetNames: result.sheetNames, rowCount: result.rowCount, source });
         if (!result.headerFound) {
-          errors.push(`${doc.filename}: header „Sumă ramburs" negăsit`);
+          errors.push(`${doc.filename}: header „Sumă ramburs" negăsit (sursă: ${source})`);
           if (!debug) {
-            debug = { filename: doc.filename, bufferBytes: buffer.length, sheetNames: result.sheetNames, rowCount: result.rowCount, sampleRows: result.sampleRows };
+            debug = { filename: doc.filename, bufferBytes: buffer.length, sheetNames: result.sheetNames, rowCount: result.rowCount, sampleRows: result.sampleRows, source };
           }
         }
         total += result.total;
