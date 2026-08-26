@@ -15,13 +15,27 @@
 import * as XLSX from 'xlsx';
 
 function norm(s: unknown): string {
-  return String(s ?? '').trim().toLowerCase();
+  return String(s ?? '')
+    .replace(/ /g, ' ') // non-breaking space, common in auto-exported Excel files
+    .trim()
+    .toLowerCase();
 }
 
-export function sumGlsRambursuriXlsx(buffer: Buffer): number {
+export interface GlsRambursuriResult {
+  total: number;
+  headerFound: boolean;
+  sheetNames: string[];
+  rowCount: number;
+  /** First few rows' cell text, only populated when the header wasn't found — for debugging a format mismatch without needing direct file access. */
+  sampleRows?: string[][];
+}
+
+export function sumGlsRambursuriXlsx(buffer: Buffer): GlsRambursuriResult {
   const wb = XLSX.read(buffer, { type: 'buffer' });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  if (!sheet) return 0;
+  const sheetNames = wb.SheetNames;
+  const sheet = wb.Sheets[sheetNames[0]];
+  if (!sheet) return { total: 0, headerFound: false, sheetNames, rowCount: 0 };
+
   const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
 
   let refCol = -1;
@@ -29,7 +43,7 @@ export function sumGlsRambursuriXlsx(buffer: Buffer): number {
   let headerRowIdx = -1;
   for (let i = 0; i < Math.min(rows.length, 20); i++) {
     const row = rows[i];
-    const ref = row.findIndex(c => norm(c) === 'referire la ramb.');
+    const ref = row.findIndex(c => norm(c) === 'referire la ramb.' || norm(c).startsWith('referire la ramb'));
     const amt = row.findIndex(c => norm(c).startsWith('sumă ramburs') || norm(c).startsWith('suma ramburs'));
     if (ref !== -1 && amt !== -1) {
       refCol = ref;
@@ -38,7 +52,11 @@ export function sumGlsRambursuriXlsx(buffer: Buffer): number {
       break;
     }
   }
-  if (headerRowIdx === -1) return 0;
+
+  if (headerRowIdx === -1) {
+    const sampleRows = rows.slice(0, 12).map(row => row.map(c => String(c ?? '')));
+    return { total: 0, headerFound: false, sheetNames, rowCount: rows.length, sampleRows };
+  }
 
   let total = 0;
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
@@ -49,5 +67,5 @@ export function sumGlsRambursuriXlsx(buffer: Buffer): number {
       total += amount;
     }
   }
-  return Math.round(total * 100) / 100;
+  return { total: Math.round(total * 100) / 100, headerFound: true, sheetNames, rowCount: rows.length };
 }

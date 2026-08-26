@@ -187,6 +187,7 @@ export default function DocumentePage() {
   const [stat, setStat] = useState(null);
   const [savingStat, setSavingStat] = useState(false);
   const [computingGls, setComputingGls] = useState(false);
+  const [glsDebug, setGlsDebug] = useState(null);
   const [computingMeta, setComputingMeta] = useState(false);
 
   const [rules, setRules] = useState([]);
@@ -321,6 +322,7 @@ export default function DocumentePage() {
   };
   const computeGlsStat = async () => {
     setComputingGls(true);
+    setGlsDebug(null);
     try {
       const res = await fetch('/api/mail/stats/compute', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }),
@@ -328,6 +330,7 @@ export default function DocumentePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Eroare calcul');
       setStat(data.stat);
+      if (data.debug) setGlsDebug(data.debug);
       if (data.checked === 0) {
         toast('⚠️ Niciun fișier "GLS / Rambursuri" găsit pentru luna asta — verifică subcategoria din reguli sau apasă „Reclasifică" întâi', 'error');
       } else if (data.errors?.length) {
@@ -714,6 +717,14 @@ export default function DocumentePage() {
           <StatField label="🔍 Google spend" value={stat?.googleSpend} onChange={v => saveStat('googleSpend', v)} />
           <StatField label="💹 Profit" value={stat?.profit} onChange={v => saveStat('profit', v)} />
         </div>
+        {glsDebug && (
+          <div className="doc-errbox" style={{ marginBottom: 12, fontFamily: 'monospace', fontSize: 10, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+            <div style={{ marginBottom: 6, fontWeight: 700 }}>Debug — {glsDebug.filename} ({glsDebug.bufferBytes} bytes, foi: {glsDebug.sheetNames.join(', ')}, {glsDebug.rowCount} rânduri)</div>
+            {(glsDebug.sampleRows || []).map((row, i) => (
+              <div key={i}>{i}: [{row.map(c => `"${c}"`).join(', ')}]</div>
+            ))}
+          </div>
+        )}
         <div className="doc-actions" style={{ marginBottom: 16 }}>
           <button className="doc-btn doc-btn-primary" onClick={commitStat} disabled={savingStat}>
             {savingStat ? <span className="doc-spin">↻</span> : '💾'} Salvează cifrele lunii
