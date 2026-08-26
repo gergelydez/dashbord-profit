@@ -134,10 +134,23 @@ function shiftMonth(month, delta) {
 }
 const fmt = n => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function StatField({ label, value, onChange }) {
+function StatField({ label, value, onChange, onCompute, computing }) {
   return (
     <div className="doc-kpi">
-      <div className="doc-kpi-l">{label}</div>
+      <div className="doc-kpi-l" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>{label}</span>
+        {onCompute && (
+          <button
+            type="button"
+            onClick={onCompute}
+            disabled={computing}
+            title="Calculează automat din documentele GLS deja importate"
+            style={{ background: 'none', border: 'none', color: '#f97316', cursor: 'pointer', fontSize: 12, padding: 0 }}
+          >
+            {computing ? <span className="doc-spin">↻</span> : '🧮'}
+          </button>
+        )}
+      </div>
       <input type="number" step="0.01" value={value ?? ''} placeholder="0.00" onChange={e => onChange(e.target.value)} />
     </div>
   );
@@ -166,6 +179,7 @@ export default function DocumentePage() {
 
   const [stat, setStat] = useState(null);
   const [savingStat, setSavingStat] = useState(false);
+  const [computingGls, setComputingGls] = useState(false);
 
   const [rules, setRules] = useState([]);
   const [newRule, setNewRule] = useState({ category: 'GLS', customCategory: '', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
@@ -296,6 +310,22 @@ export default function DocumentePage() {
 
   const saveStat = async (field, value) => {
     setStat(prev => ({ ...(prev || {}), [field]: value }));
+  };
+  const computeGlsStat = async () => {
+    setComputingGls(true);
+    try {
+      const res = await fetch('/api/mail/stats/compute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Eroare calcul');
+      setStat(data.stat);
+      toast(`✅ GLS încasat: ${fmt(data.total)} RON (din ${data.filesUsed} fișiere Rambursuri)`, 'success');
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      setComputingGls(false);
+    }
   };
   const commitStat = async () => {
     setSavingStat(true);
@@ -520,7 +550,7 @@ export default function DocumentePage() {
           <button className="doc-month-btn" onClick={() => setMonth(m => shiftMonth(m, 1))}>›</button>
         </div>
         <div className="doc-kpis">
-          <StatField label="📦 GLS încasat" value={stat?.glsIncasat} onChange={v => saveStat('glsIncasat', v)} />
+          <StatField label="📦 GLS încasat" value={stat?.glsIncasat} onChange={v => saveStat('glsIncasat', v)} onCompute={computeGlsStat} computing={computingGls} />
           <StatField label="🚀 Sameday încasat" value={stat?.sdIncasat} onChange={v => saveStat('sdIncasat', v)} />
           <StatField label="📘 Meta spend" value={stat?.metaSpend} onChange={v => saveStat('metaSpend', v)} />
           <StatField label="🎵 TikTok spend" value={stat?.tiktokSpend} onChange={v => saveStat('tiktokSpend', v)} />
