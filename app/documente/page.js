@@ -154,6 +154,7 @@ export default function DocumentePage() {
   const [connectingYahoo, setConnectingYahoo] = useState(false);
   const [showYahooForm, setShowYahooForm] = useState(false);
 
+  const [reclassifying, setReclassifying] = useState(false);
   const [backfillFor, setBackfillFor] = useState(null); // mailAccountId
   const [backfillDate, setBackfillDate] = useState('');
   const [backfilling, setBackfilling] = useState(false);
@@ -226,6 +227,21 @@ export default function DocumentePage() {
       toast('Eroare sincronizare: ' + e.message, 'error');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const runReclassify = async () => {
+    setReclassifying(true);
+    try {
+      const res = await fetch('/api/mail/reclassify', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Eroare reclasificare');
+      toast(`✅ Reclasificat — ${data.changed} din ${data.checked} documente mutate`, 'success');
+      loadDocuments(); loadUnclassified();
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      setReclassifying(false);
     }
   };
 
@@ -370,9 +386,14 @@ export default function DocumentePage() {
               <h1>Documente</h1>
               <p>Sortare automată email → Google Drive</p>
             </div>
-            <button className="doc-btn doc-btn-primary" style={{ marginLeft: 'auto' }} onClick={runSync} disabled={syncing}>
-              {syncing ? <span className="doc-spin">↻</span> : '↻'} Sincronizează acum
-            </button>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button className="doc-btn doc-btn-ghost" onClick={runReclassify} disabled={reclassifying} title="Re-aplică regulile curente peste documentele deja importate">
+                {reclassifying ? <span className="doc-spin">↻</span> : '🔀'} Reclasifică
+              </button>
+              <button className="doc-btn doc-btn-primary" onClick={runSync} disabled={syncing}>
+                {syncing ? <span className="doc-spin">↻</span> : '↻'} Sincronizează acum
+              </button>
+            </div>
           </div>
         </div>
 
