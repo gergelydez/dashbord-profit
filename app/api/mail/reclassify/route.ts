@@ -27,7 +27,16 @@ export async function POST() {
 
     let changed = 0;
     for (const doc of docs) {
-      const { category, subcategory } = await classifyAttachment(doc.senderEmail, doc.filename, doc.subject);
+      // Manually uploaded documents (Meta invoices via /api/mail/manual-upload)
+      // are classified directly as "Facebook" at upload time — there's no
+      // real sender, so no SortRule can ever match them. Re-running
+      // classifyAttachment on them here would always come up empty and
+      // wrongly bounce them into Neclasificate (confirmed: this happened to
+      // 49 already-classified invoices the first time this ran). Keep their
+      // category pinned instead of re-deriving it.
+      const { category, subcategory } = doc.messageId.startsWith('manual:')
+        ? { category: 'Facebook', subcategory: null }
+        : await classifyAttachment(doc.senderEmail, doc.filename, doc.subject);
 
       if (isIgnored(category)) {
         if (doc.driveFileId) await trashFile(auth, doc.driveFileId).catch(() => {});
