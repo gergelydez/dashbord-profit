@@ -29,6 +29,14 @@
  *     transport invoice does show up (see the reconcile step below).
  *  5. Nothing found — plain Neclasificate, same as the email pipeline's
  *     default when a sender/pattern isn't recognized.
+ *
+ * Re-uploading the SAME filename (confirmed real usage: retrying a file
+ * stuck in "AWB negăsit" after a code fix, without deleting it first) must
+ * not just bounce off as a duplicate — a document that's still 'unclassified'
+ * gets its classification re-attempted and, if resolved this time, is moved
+ * in place rather than re-uploaded as a second Drive file. Only an already
+ * successfully-filed ('ingested') document short-circuits as a true no-op
+ * duplicate.
  */
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -69,6 +77,14 @@ export async function POST(request: Request) {
     const auth = getAuthorizedClient(googleAccount.id, decrypt(googleAccount.refreshToken));
 
     const buffer = Buffer.from(await file.arrayBuffer());
+
+    const key = {
+      mailAccountId_messageId_filename: { mailAccountId: googleAccount.id, messageId: `manual:${filename}`, filename },
+    };
+    const existing = await db.ingestedDocument.findUnique({ where: key });
+    if (existing && existing.status !== 'unclassified') {
+      return NextResponse.json({ ok: true, uploaded: false, status: 'duplicate', filename, awb: null, invoiceNumber: null });
+    }
 
     let awb: string | null = null;
     let invoiceNumber: string | null = null;
@@ -117,34 +133,41 @@ export async function POST(request: Request) {
       ? `Așteaptă asociere AWB pentru factura ${invoiceNumber}`
       : (invoiceNumber ? `Factură: ${invoiceNumber}` : filename);
 
-    const key = {
-      mailAccountId_messageId_filename: { mailAccountId: googleAccount.id, messageId: `manual:${filename}`, filename },
-    };
-    const existing = await db.ingestedDocument.findUnique({ where: key });
     if (existing) {
-      return NextResponse.json({ ok: true, uploaded: false, status: 'duplicate', filename, awb, invoiceNumber });
+      // Retrying a file that's still stuck as unclassified. If it's still
+      // not resolved, leave it exactly as-is (no Drive/DB writes) instead of
+      // erroring — same observable "pending" outcome as the first attempt.
+      if (!awb) {
+        return NextResponse.json({ ok: true, uploaded: false, status: 'pending', filename, awb: null, invoiceNumber });
+      }
+      const targetFolder = await getOrCreateMonthPath(auth, existing.month, category, subcategory);
+      if (existing.driveFileId) await moveFile(auth, existing.driveFileId, targetFolder);
+      await db.ingestedDocument.update({
+        where: { id: existing.id },
+        data: { category, subcategory, subject, status: 'ingested' },
+      });
+    } else {
+      const folderId = await getOrCreateMonthPath(auth, month, category, subcategory);
+      const { fileId, webViewLink } = await uploadFile(auth, filename, folderId, buffer, 'application/pdf');
+
+      await db.ingestedDocument.create({
+        data: {
+          mailAccountId: googleAccount.id,
+          messageId: `manual:${filename}`,
+          senderEmail: 'incarcare-manuala@receptie',
+          subject,
+          category,
+          subcategory,
+          month,
+          filename,
+          mimeType: 'application/pdf',
+          driveFileId: fileId,
+          driveUrl: webViewLink,
+          status: awb ? 'ingested' : 'unclassified',
+          receivedAt: new Date(),
+        },
+      });
     }
-
-    const folderId = await getOrCreateMonthPath(auth, month, category, subcategory);
-    const { fileId, webViewLink } = await uploadFile(auth, filename, folderId, buffer, 'application/pdf');
-
-    await db.ingestedDocument.create({
-      data: {
-        mailAccountId: googleAccount.id,
-        messageId: `manual:${filename}`,
-        senderEmail: 'incarcare-manuala@receptie',
-        subject,
-        category,
-        subcategory,
-        month,
-        filename,
-        mimeType: 'application/pdf',
-        driveFileId: fileId,
-        driveUrl: webViewLink,
-        status: awb ? 'ingested' : 'unclassified',
-        receivedAt: new Date(),
-      },
-    });
 
     // A transport invoice just got linked — reconcile any earlier upload that
     // was waiting on this exact invoice number (e.g. the NIR arrived first).
