@@ -27,7 +27,7 @@ export async function POST() {
 
     let changed = 0;
     for (const doc of docs) {
-      const { category, subcategory } = await classifyAttachment(doc.senderEmail, doc.filename);
+      const { category, subcategory } = await classifyAttachment(doc.senderEmail, doc.filename, doc.subject);
 
       if (isIgnored(category)) {
         if (doc.driveFileId) await trashFile(auth, doc.driveFileId).catch(() => {});

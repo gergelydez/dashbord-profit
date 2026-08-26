@@ -26,7 +26,19 @@ export function isIgnored(category: string): boolean {
   return category.trim().toLowerCase() === 'ignorat';
 }
 
-export async function classifyAttachment(senderEmail: string, filename: string): Promise<Classification> {
+/** Sentinel a rule's subcategory can hold instead of a fixed string: means
+ * "extract the AWB number from this message and use AWB-<number> as the
+ * actual subcategory" — e.g. DHL customs-clearance mail, where every email
+ * is a different shipment (a fixed subcategory would dump them all in one
+ * folder) but the AWB always appears in the subject as "AWB: <digits>". */
+export const AWB_SUBCATEGORY = '{AWB}';
+
+function extractAwb(text: string): string | null {
+  const m = (text || '').match(/AWB[:#\s]*#?(\d{6,})/i);
+  return m ? `AWB-${m[1]}` : null;
+}
+
+export async function classifyAttachment(senderEmail: string, filename: string, subject?: string): Promise<Classification> {
   const email = (senderEmail || '').trim().toLowerCase();
   if (!email) return UNCLASSIFIED;
   const domain = email.split('@')[1] || '';
@@ -48,5 +60,9 @@ export async function classifyAttachment(senderEmail: string, filename: string):
   });
 
   const best = candidates[0];
+  if (best.subcategory === AWB_SUBCATEGORY) {
+    const awb = extractAwb(subject || '') || extractAwb(filename || '');
+    return { category: best.category, subcategory: awb };
+  }
   return { category: best.category, subcategory: best.subcategory };
 }

@@ -40,7 +40,7 @@ export async function ingestMessages(
     const month = monthKey(msg.receivedAt);
 
     for (const att of msg.attachments) {
-      const { category, subcategory } = await classifyAttachment(msg.senderEmail, att.filename);
+      const { category, subcategory } = await classifyAttachment(msg.senderEmail, att.filename, msg.subject);
       if (isIgnored(category)) continue; // never stored, never uploaded — the sender was explicitly marked as noise
 
       const key = { mailAccountId_messageId_filename: { mailAccountId, messageId: msg.messageId, filename: att.filename } };

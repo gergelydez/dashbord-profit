@@ -102,6 +102,11 @@ const CSS = `
   .doc-toast.error{border-color:rgba(244,63,94,.3);background:rgba(244,63,94,.08);color:#f43f5e;}
 `;
 
+// Must match lib/mail/classify.ts's AWB_SUBCATEGORY exactly — a rule saved
+// with this subcategory value gets its real subcategory (AWB-<number>)
+// computed server-side per message, extracted from the subject/filename.
+const AWB_SUBCATEGORY = '{AWB}';
+
 const CATEGORY_PRESETS = [
   { category: 'GLS', subcategories: ['Rambursuri', 'Facturi transport'] },
   { category: 'Sameday', subcategories: ['Rambursuri', 'Facturi transport'] },
@@ -185,7 +190,7 @@ export default function DocumentePage() {
   const [computingMeta, setComputingMeta] = useState(false);
 
   const [rules, setRules] = useState([]);
-  const [newRule, setNewRule] = useState({ category: 'GLS', customCategory: '', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
+  const [newRule, setNewRule] = useState({ category: 'GLS', customCategory: '', subcategory: '', awbAuto: false, matchType: 'sender_domain', matchValue: '', filenameContains: '' });
   const [savingRule, setSavingRule] = useState(false);
 
   const [unclassified, setUnclassified] = useState([]);
@@ -452,16 +457,17 @@ export default function DocumentePage() {
     const category = newRule.category === '__custom__' ? newRule.customCategory.trim() : newRule.category;
     if (!category) { toast('Completează numele categoriei', 'error'); return; }
     if (!newRule.matchValue.trim()) { toast('Completează expeditorul/domeniul', 'error'); return; }
+    const subcategory = newRule.awbAuto ? AWB_SUBCATEGORY : (newRule.subcategory || null);
     setSavingRule(true);
     try {
       const res = await fetch('/api/mail/rules', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newRule, category, subcategory: newRule.subcategory || null, matchValue: newRule.matchValue.trim(), filenameContains: newRule.filenameContains.trim() || null }),
+        body: JSON.stringify({ ...newRule, category, subcategory, matchValue: newRule.matchValue.trim(), filenameContains: newRule.filenameContains.trim() || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Eroare');
       toast('✅ Regulă adăugată', 'success');
-      setNewRule({ category: 'GLS', customCategory: '', subcategory: '', matchType: 'sender_domain', matchValue: '', filenameContains: '' });
+      setNewRule({ category: 'GLS', customCategory: '', subcategory: '', awbAuto: false, matchType: 'sender_domain', matchValue: '', filenameContains: '' });
       loadRules();
     } catch (e) {
       toast('❌ ' + e.message, 'error');
@@ -769,9 +775,9 @@ export default function DocumentePage() {
               <option value="__custom__">+ Categorie nouă...</option>
             </select>
             {newRule.category === '__custom__' ? (
-              <input className="doc-inp" placeholder="ex: TheMarketer, ElevenLabs" value={newRule.customCategory} onChange={e => setNewRule(p => ({ ...p, customCategory: e.target.value }))} />
+              <input className="doc-inp" placeholder="ex: TheMarketer, ElevenLabs, Recepție" value={newRule.customCategory} onChange={e => setNewRule(p => ({ ...p, customCategory: e.target.value }))} />
             ) : (
-              <select className="doc-select" value={newRule.subcategory} onChange={e => setNewRule(p => ({ ...p, subcategory: e.target.value }))}>
+              <select className="doc-select" value={newRule.subcategory} onChange={e => setNewRule(p => ({ ...p, subcategory: e.target.value }))} disabled={newRule.awbAuto}>
                 <option value="">(fără subcategorie)</option>
                 {(CATEGORY_PRESETS.find(c => c.category === newRule.category)?.subcategories || []).map(s => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -782,6 +788,10 @@ export default function DocumentePage() {
             </select>
             <input className="doc-inp" placeholder={newRule.matchType === 'sender_domain' ? 'sameday.ro' : 'noreply@sameday.ro'} value={newRule.matchValue} onChange={e => setNewRule(p => ({ ...p, matchValue: e.target.value }))} />
             <input className="doc-inp" placeholder="opțional: fișierul conține (ex: RON sau Document)" value={newRule.filenameContains} onChange={e => setNewRule(p => ({ ...p, filenameContains: e.target.value }))} />
+            <label style={{ fontSize: 10, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 4, gridColumn: '1/-1' }}>
+              <input type="checkbox" checked={newRule.awbAuto} onChange={e => setNewRule(p => ({ ...p, awbAuto: e.target.checked, subcategory: '' }))} />
+              subcategorie automată: extrage nr. AWB din subiectul emailului (ex: DHL — fiecare colet într-un subfolder separat)
+            </label>
             <div style={{ gridColumn: '1/-1' }}>
               <button className="doc-btn doc-btn-primary" onClick={addRule} disabled={savingRule}>
                 {savingRule ? <span className="doc-spin">↻</span> : '➕'} Adaugă regulă
