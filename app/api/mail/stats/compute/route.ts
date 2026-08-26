@@ -2,8 +2,7 @@
  * POST /api/mail/stats/compute — sums every "GLS / Rambursuri" xlsx already
  * ingested for a month and writes the total into MonthlyStat.glsIncasat, so
  * the card doesn't have to be filled in by hand once the documents are in.
- * Sameday isn't wired up yet — its remittance file format hasn't been
- * confirmed against a real sample.
+ * See /api/mail/stats/compute-sameday for the Sameday equivalent.
  */
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';

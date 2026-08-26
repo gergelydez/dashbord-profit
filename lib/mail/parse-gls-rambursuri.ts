@@ -1,35 +1,48 @@
 /**
  * lib/mail/parse-gls-rambursuri.ts
- * Sums the "Sumă ramburs" column of one GLS daily rambursuri xlsx
- * (format confirmed from a real sample: sheet "Daily", a header row with
- * "Număr referinta" / "Număr colet" / "Referire la ramb." / "Livrat la
- * data" / "Sumă ramburs" / currency / "Postal Address", one row per parcel,
- * then a totals row with the same columns blank except the sum).
+ * Sums the "Sumă ramburs" column of one GLS daily rambursuri xlsx.
  *
- * Deliberately re-sums the per-parcel rows instead of trusting the file's
- * own totals row: a row only counts if "Referire la ramb." is non-empty,
- * which real line items always have and the totals row never does — so
- * this comes out right whether or not a totals row is present, without
- * depending on it being the literal last row.
+ * Reads cells by direct coordinate (A9, E9, ...) instead of
+ * XLSX.utils.sheet_to_json({header:1}) — confirmed against a real,
+ * already-working standalone GLS/Sameday report tool the user has, which
+ * uses the same direct-coordinate approach specifically to avoid
+ * sparse-array issues from merged cells. sheet_to_json's array-flattening
+ * was confirmed unreliable here: it reported "header not found" on files
+ * independently verified correct (opened directly on Drive, full columns,
+ * correct totals), while reading the identical file by coordinate works.
+ *
+ * Fixed layout (confirmed): rows 1-8 are the preamble (company name,
+ * client, email, bank account, transfer date, blank, header row), data
+ * starts at row 9. A=Număr referință, B=Număr colet, C=Referire la ramb.,
+ * D=Livrat la data, E=Sumă ramburs, F=currency, G=Postal Address. The
+ * totals row (if present) has A blank and E holding the grand total —
+ * used only to detect where data ends, the total here is always the sum
+ * of the individual rows above it.
  */
 import * as XLSX from 'xlsx';
-
-function norm(s: unknown): string {
-  return String(s ?? '')
-    .replace(/ /g, ' ') // non-breaking space, common in auto-exported Excel files
-    .trim()
-    .toLowerCase();
-}
 
 export interface GlsRambursuriResult {
   total: number;
   headerFound: boolean;
   sheetNames: string[];
   rowCount: number;
-  /** First few rows' cell text, only populated when the header wasn't found — for debugging a format mismatch without needing direct file access. */
+  /** First few rows' cell text, only populated when no data was found at the expected fixed position — for debugging a format mismatch without needing direct file access. */
   sampleRows?: string[][];
   /** First 16 bytes as hex — a valid xlsx (a zip) must start with "504b0304". Lets a download-level corruption be told apart from a parsing bug without needing direct file access. */
   headerHex?: string;
+}
+
+function cellValue(sheet: XLSX.WorkSheet, col: string, row: number): unknown {
+  const cell = sheet[`${col}${row}`] as { v?: unknown } | undefined;
+  return cell ? cell.v : null;
+}
+
+function toNum(v: unknown): number {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === 'number') return isNaN(v) ? 0 : v;
+  const s = String(v).replace(/\s/g, '').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
 }
 
 export function sumGlsRambursuriXlsx(buffer: Buffer): GlsRambursuriResult {
@@ -39,36 +52,22 @@ export function sumGlsRambursuriXlsx(buffer: Buffer): GlsRambursuriResult {
   const sheet = wb.Sheets[sheetNames[0]];
   if (!sheet) return { total: 0, headerFound: false, sheetNames, rowCount: 0, headerHex };
 
-  const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
-
-  let refCol = -1;
-  let amountCol = -1;
-  let headerRowIdx = -1;
-  for (let i = 0; i < Math.min(rows.length, 20); i++) {
-    const row = rows[i];
-    const ref = row.findIndex(c => norm(c) === 'referire la ramb.' || norm(c).startsWith('referire la ramb'));
-    const amt = row.findIndex(c => norm(c).startsWith('sumă ramburs') || norm(c).startsWith('suma ramburs'));
-    if (ref !== -1 && amt !== -1) {
-      refCol = ref;
-      amountCol = amt;
-      headerRowIdx = i;
-      break;
-    }
+  let total = 0;
+  let dataRows = 0;
+  for (let r = 9; r <= 1000; r++) {
+    const ref = cellValue(sheet, 'A', r);
+    if (ref === null || ref === undefined) break;
+    const suma = cellValue(sheet, 'E', r);
+    if (!ref && suma) break; // totals row: A blank, E holds the grand total
+    dataRows++;
+    total += toNum(suma);
   }
 
-  if (headerRowIdx === -1) {
+  if (dataRows === 0) {
+    const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
     const sampleRows = rows.slice(0, 12).map(row => row.map(c => String(c ?? '')));
     return { total: 0, headerFound: false, sheetNames, rowCount: rows.length, sampleRows, headerHex };
   }
 
-  let total = 0;
-  for (let i = headerRowIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
-    const ref = row[refCol];
-    const amount = row[amountCol];
-    if (typeof ref === 'string' && ref.trim() && typeof amount === 'number') {
-      total += amount;
-    }
-  }
-  return { total: Math.round(total * 100) / 100, headerFound: true, sheetNames, rowCount: rows.length };
+  return { total: Math.round(total * 100) / 100, headerFound: true, sheetNames, rowCount: dataRows };
 }

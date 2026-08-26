@@ -191,6 +191,7 @@ export default function DocumentePage() {
   const [glsPerFile, setGlsPerFile] = useState(null);
   const [glsDuplicates, setGlsDuplicates] = useState(null);
   const [computingMeta, setComputingMeta] = useState(false);
+  const [computingSameday, setComputingSameday] = useState(false);
 
   const [rules, setRules] = useState([]);
   const [newRule, setNewRule] = useState({ category: 'GLS', customCategory: '', subcategory: '', awbAuto: false, matchType: 'sender_domain', matchValue: '', filenameContains: '' });
@@ -369,6 +370,29 @@ export default function DocumentePage() {
       toast('❌ ' + e.message, 'error');
     } finally {
       setComputingMeta(false);
+    }
+  };
+
+  const computeSamedayStat = async () => {
+    setComputingSameday(true);
+    try {
+      const res = await fetch('/api/mail/stats/compute-sameday', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Eroare calcul');
+      setStat(data.stat);
+      if (data.checked === 0) {
+        toast('⚠️ Niciun fișier "Sameday / Rambursuri" găsit pentru luna asta', 'error');
+      } else if (data.errors?.length) {
+        toast(`⚠️ Sameday încasat: ${fmt(data.total)} RON (${data.filesUsed}/${data.checked} fișiere) — probleme: ${data.errors.join(' · ')}`, 'error');
+      } else {
+        toast(`✅ Sameday încasat: ${fmt(data.total)} RON (din ${data.filesUsed} fișiere)`, 'success');
+      }
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      setComputingSameday(false);
     }
   };
 
@@ -721,7 +745,7 @@ export default function DocumentePage() {
         </div>
         <div className="doc-kpis">
           <StatField label="📦 GLS încasat" value={stat?.glsIncasat} onChange={v => saveStat('glsIncasat', v)} onCompute={computeGlsStat} computing={computingGls} />
-          <StatField label="🚀 Sameday încasat" value={stat?.sdIncasat} onChange={v => saveStat('sdIncasat', v)} />
+          <StatField label="🚀 Sameday încasat" value={stat?.sdIncasat} onChange={v => saveStat('sdIncasat', v)} onCompute={computeSamedayStat} computing={computingSameday} />
           <StatField label="📘 Meta spend" value={stat?.metaSpend} onChange={v => saveStat('metaSpend', v)} onCompute={computeMetaStat} computing={computingMeta} />
           <StatField label="🎵 TikTok spend" value={stat?.tiktokSpend} onChange={v => saveStat('tiktokSpend', v)} />
           <StatField label="🔍 Google spend" value={stat?.googleSpend} onChange={v => saveStat('googleSpend', v)} />
