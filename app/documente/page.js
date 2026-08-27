@@ -484,6 +484,53 @@ export default function DocumentePage() {
     document.head.appendChild(s);
   });
 
+  /**
+   * PDF text extraction happens here, in the browser, NOT on the server.
+   * Confirmed live, twice: pdf.js has no real Worker threads available in
+   * Node/Vercel's serverless functions, and every fallback it tries there
+   * (an ancient bundled version throwing on a technically-malformed but
+   * real xref table, then a "fake worker" trying to require() a relative
+   * path that doesn't survive webpack bundling) broke in a different way.
+   * A real browser tab has genuine Worker support pdf.js can just use —
+   * none of that class of problem exists here. Same reasoning that put
+   * the xlsx→PDF conversion client-side already.
+   */
+  const loadPdfJsLib = () => new Promise((resolve, reject) => {
+    if (typeof window !== 'undefined' && window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(window.pdfjsLib);
+    };
+    s.onerror = () => reject(new Error('Nu s-a putut încărca PDF.js'));
+    document.head.appendChild(s);
+  });
+
+  const extractTextFromPdf = async (file) => {
+    const pdfjsLib = await loadPdfJsLib();
+    const buf = await file.arrayBuffer();
+    const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    let text = '';
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(it => it.str).join(' ') + '\n';
+    }
+    return text;
+  };
+
+  /** Mirrors lib/mail/invoice-awb-link.ts's extractInvoiceNumberFromText —
+   * matches "Factura SX6193524801" (NIR wording) and generic "Invoice No: X". */
+  const extractInvoiceNumberFromTextClient = (text) => {
+    const patterns = [/Factur[ăa]\s+([A-Za-z0-9-]{5,})/i, /Invoice\s*(?:No\.?|Number)?[:\s]+([A-Za-z0-9-]{5,})/i];
+    for (const p of patterns) {
+      const m = (text || '').match(p);
+      if (m) return m[1];
+    }
+    return null;
+  };
+
   /** Recepție only ever holds PDFs — an .xlsx (the transport commercial
    * invoice) is rendered to a PDF client-side before upload; the original
    * filename (which sometimes encodes the invoice number + AWB) is kept
@@ -611,12 +658,24 @@ export default function DocumentePage() {
           let filename = file.name;
           let contentInvoiceNumber = null;
           let contentAwb = null;
+          let clientPdfTextSample = null;
+          let clientPdfTextLength = null;
+          let clientPdfError = null;
           if (file.name.toLowerCase().endsWith('.xlsx')) {
             const converted = await convertXlsxToPdf(file);
             blob = converted.blob;
             filename = converted.filename;
             contentInvoiceNumber = converted.invoiceNumber;
             contentAwb = converted.awb;
+          } else if (file.name.toLowerCase().endsWith('.pdf')) {
+            try {
+              const text = await extractTextFromPdf(file);
+              clientPdfTextLength = text.length;
+              clientPdfTextSample = text.slice(0, 400);
+              contentInvoiceNumber = extractInvoiceNumberFromTextClient(text);
+            } catch (e) {
+              clientPdfError = e.message;
+            }
           }
           const form = new FormData();
           form.append('file', blob, filename);
@@ -627,7 +686,7 @@ export default function DocumentePage() {
           const res = await fetch('/api/mail/manual-upload-receptie', { method: 'POST', body: form });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || 'eroare');
-          debugRows.push({ filename, contentInvoiceNumber, contentAwb, ...data });
+          debugRows.push({ filename, contentInvoiceNumber, contentAwb, clientPdfTextSample, clientPdfTextLength, clientPdfError, ...data });
           if (data.status === 'duplicate') duplicate++;
           else if (data.awb) { uploaded++; reconciled += data.reconciled || 0; }
           else pending++;
@@ -948,13 +1007,13 @@ export default function DocumentePage() {
                   {r.awb && <> · AWB: {r.awb}</>}
                   {r.status === 'duplicate' && <> · deja există (fișier deja clasificat cu succes)</>}
                   {r.debug?.path && <div>&nbsp;&nbsp;traseu: {r.debug.path}</div>}
-                  {r.debug?.pdfParseError && <div style={{ color: '#f43f5e' }}>&nbsp;&nbsp;eroare la citirea PDF-ului: {r.debug.pdfParseError}</div>}
-                  {r.debug && typeof r.debug.pdfTextLength === 'number' && (
+                  {r.clientPdfError && <div style={{ color: '#f43f5e' }}>&nbsp;&nbsp;eroare la citirea PDF-ului în browser: {r.clientPdfError}</div>}
+                  {typeof r.clientPdfTextLength === 'number' && (
                     <div>
-                      &nbsp;&nbsp;text extras din PDF: {r.debug.pdfTextLength} caractere
-                      {r.debug.pdfTextLength === 0
+                      &nbsp;&nbsp;text extras din PDF în browser: {r.clientPdfTextLength} caractere
+                      {r.clientPdfTextLength === 0
                         ? ' — GOL (probabil PDF scanat/poză, fără strat de text selectabil)'
-                        : ` — "${r.debug.pdfTextSample}"`}
+                        : ` — "${r.clientPdfTextSample}"`}
                     </div>
                   )}
                 </div>

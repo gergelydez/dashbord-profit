@@ -20,15 +20,25 @@
  *     the NIR that only knows the invoice number would never resolve. When
  *     the client sends that extracted invoiceNumber alongside, record the
  *     link here too, same as step 1.
- *  3. PDF text mentions an invoice number (NIR: "Factura SX6193524801", or
- *     generic "Invoice No: X") and a link for it already exists — file under
- *     the linked AWB.
+ *  3. Neither pattern matched the filename, but the client sent an
+ *     invoiceNumber it found by reading the PDF's text in the browser
+ *     (NIR: "Factura SX6193524801", or generic "Invoice No: X") and a link
+ *     for it already exists — file under the linked AWB.
  *  4. Invoice number found but no link yet (e.g. the NIR arrived before the
  *     transport invoice) — filed as unclassified with the invoice number in
  *     the subject, so step 1/2 above can reconcile it retroactively once the
  *     transport invoice does show up (see the reconcile step below).
  *  5. Nothing found — plain Neclasificate, same as the email pipeline's
  *     default when a sender/pattern isn't recognized.
+ *
+ * PDF text extraction happens client-side (app/documente/page.js), NOT on
+ * the server — confirmed live, twice, that pdf.js has no reliable way to
+ * run in this Vercel serverless environment (first an ancient bundled
+ * pdf.js throwing on a technically-malformed-but-real xref table, then a
+ * "fake worker" trying to require() a path that doesn't survive webpack
+ * bundling). A real browser tab has genuine Worker support and none of
+ * that class of problem, so the invoiceNumber this route uses for PDFs
+ * comes entirely from the client's `invoiceNumber` form field now.
  *
  * Re-uploading the SAME filename (confirmed real usage: retrying a file
  * stuck in "AWB negăsit" after a code fix, without deleting it first) must
@@ -44,8 +54,7 @@ import { decrypt } from '@/lib/security/crypt';
 import { getAuthorizedClient } from '@/lib/google/oauth';
 import { getOrCreateMonthPath, uploadFile, moveFile } from '@/lib/google/drive';
 import { extractAwb } from '@/lib/mail/classify';
-import { extractInvoiceAwbFromFilename, extractInvoiceNumberFromText, recordInvoiceAwbLink, lookupAwbByInvoiceNumber } from '@/lib/mail/invoice-awb-link';
-import { extractPdfText } from '@/lib/mail/pdf-text';
+import { extractInvoiceAwbFromFilename, recordInvoiceAwbLink, lookupAwbByInvoiceNumber } from '@/lib/mail/invoice-awb-link';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -93,9 +102,6 @@ export async function POST(request: Request) {
     // unresolved file shows exactly WHY, instead of guessing from screenshots
     // (the same instrumentation approach that root-caused the GLS parser bug).
     let path = 'none';
-    let pdfTextSample: string | null = null;
-    let pdfTextLength: number | null = null;
-    let pdfParseError: string | null = null;
 
     const transportMatch = extractInvoiceAwbFromFilename(filename);
     if (transportMatch) {
@@ -128,28 +134,16 @@ export async function POST(request: Request) {
         await recordInvoiceAwbLink(invoiceNumber, awb);
         newlyLinked = true;
         path = 'form-awb+form-invoiceNumber';
+      } else if (formInvoiceNumber) {
+        // Neither pattern matched the filename, but the client found an
+        // invoice number by reading the PDF's text in the browser (NIR
+        // wording, or generic "Invoice No: X") — a lookup failure here is
+        // a real system error (e.g. a missing table) and must surface.
+        invoiceNumber = formInvoiceNumber;
+        awb = await lookupAwbByInvoiceNumber(invoiceNumber);
+        path = awb ? 'form-invoiceNumber (din textul PDF, extras în browser)+link-gasit' : 'form-invoiceNumber (din textul PDF, extras în browser), dar niciun link salvat pentru el';
       } else {
-        // Only PDF text extraction is allowed to fail silently for ROUTING
-        // purposes (falls through to Neclasificate below, same as "nothing
-        // recognizable") — a lookup failure is a real system error (e.g. a
-        // missing table) and must surface as one. The actual parse error (if
-        // any) is still captured for the debug panel, since "extracted zero
-        // characters" and "pdf-parse threw" look identical otherwise, and a
-        // scanned/photographed PDF (no text layer at all — pdf-parse can't
-        // OCR) is a real, different failure mode from a genuine bug.
-        const text = await extractPdfText(buffer).catch((e) => {
-          pdfParseError = (e as Error).message;
-          return '';
-        });
-        pdfTextLength = text.length;
-        pdfTextSample = text.slice(0, 400);
-        invoiceNumber = extractInvoiceNumberFromText(text) || formInvoiceNumber;
-        if (invoiceNumber) {
-          awb = await lookupAwbByInvoiceNumber(invoiceNumber);
-          path = awb ? 'pdf-text-invoiceNumber+link-gasit' : 'pdf-text-invoiceNumber, dar niciun link salvat pentru el';
-        } else {
-          path = 'nimic gasit (nici filename, nici form, nici text PDF)';
-        }
+        path = 'nimic gasit (nici filename, nici form)';
       }
     }
 
@@ -158,7 +152,7 @@ export async function POST(request: Request) {
     const subject = invoiceNumber && !awb
       ? `Așteaptă asociere AWB pentru factura ${invoiceNumber}`
       : (invoiceNumber ? `Factură: ${invoiceNumber}` : filename);
-    const debug = { path, formInvoiceNumber, formAwb, pdfTextSample, pdfTextLength, pdfParseError };
+    const debug = { path, formInvoiceNumber, formAwb };
 
     if (existing) {
       // Retrying a file that's still stuck as unclassified. If it's still
