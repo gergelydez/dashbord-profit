@@ -26,12 +26,29 @@
  * a Y change starts a new line) so callers written against pdf-parse's
  * line-based output (lib/mail/parse-meta-invoice.ts) keep working
  * unchanged.
+ *
+ * Node has no real Worker threads for pdf.js to hand parsing off to, so it
+ * falls back to a "fake worker" that just does `require(this.workerSrc)`
+ * — and the default workerSrc is a path like "./pdf.worker.js", relative
+ * to wherever pdf.js itself happens to live. Confirmed live on Vercel:
+ * once webpack bundles everything into unrelated chunk files, that
+ * relative path doesn't exist anymore ("Cannot find module
+ * './pdf.worker.js'"). Statically importing the worker module ourselves
+ * (so webpack bundles it as a real dependency, not a string pdf.js tries
+ * to require() dynamically at runtime) and registering it on
+ * `globalThis.pdfjsWorker` sidesteps that lookup entirely — pdf.js checks
+ * for exactly that global before ever trying to require() anything.
  */
+import * as pdfjsWorkerEntry from 'pdfjs-dist/legacy/build/pdf.worker.js';
+
 type PdfjsModule = typeof import('pdfjs-dist/legacy/build/pdf.js');
 
 let pdfjsLib: PdfjsModule | null = null;
 async function getPdfjs(): Promise<PdfjsModule> {
-  if (!pdfjsLib) pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js');
+  if (!pdfjsLib) {
+    pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js');
+    (globalThis as unknown as { pdfjsWorker?: unknown }).pdfjsWorker = pdfjsWorkerEntry;
+  }
   return pdfjsLib;
 }
 
