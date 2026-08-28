@@ -2386,15 +2386,15 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             )}
 
             {(glsOrders.length > 0 || sdOrders.length > 0) && (
-              <div className="courier-grid" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
-                <div style={{background:'#0f1419',border:`1px solid ${glsError?'#f43f5e':glsDone?'#10b981':'#f97316'}`,borderRadius:10,padding:'12px 14px'}}>
+              <div className="courier-grid" style={{flexWrap:'wrap'}}>
+                <div style={{background:'#0f1419',border:`1px solid ${glsError?'#f43f5e':glsDone?'#10b981':'#f97316'}`,borderRadius:10,padding:'12px 14px',minWidth:0}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <span style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
                       📦 GLS
                       {glsDone?<span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {Object.keys(glsAwbMap).length} AWB</span>
                               :<span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ fără export</span>}
                     </span>
-                    <div style={{display:'flex',gap:5,alignItems:'center'}}>
+                    <div style={{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap',rowGap:4}}>
                       {glsDone&&<button onClick={clearGlsData} style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#4a5568',borderRadius:5,padding:'2px 6px',cursor:'pointer'}}>✕</button>}
                       <button onClick={fetchGlsLive} disabled={glsLiveLoading}
                         style={{fontSize:9,background:'rgba(16,185,129,.15)',border:'1px solid #10b981',color:'#10b981',borderRadius:5,padding:'2px 8px',cursor:glsLiveLoading?'default':'pointer',whiteSpace:'nowrap'}}>
@@ -2432,14 +2432,14 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     </div>
                   ))}
                 </div>
-                <div style={{background:'#0f1419',border:`1px solid ${sdError?'#f43f5e':sdDone?'#10b981':'#3b82f6'}`,borderRadius:10,padding:'12px 14px'}}>
+                <div style={{background:'#0f1419',border:`1px solid ${sdError?'#f43f5e':sdDone?'#10b981':'#3b82f6'}`,borderRadius:10,padding:'12px 14px',minWidth:0}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <span style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
                       🚀 Sameday
                       {sdDone?<span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {Object.keys(sdAwbMap).length} AWB</span>
                               :<span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ fără export</span>}
                     </span>
-                    <div style={{display:'flex',gap:5,alignItems:'center'}}>
+                    <div style={{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap',rowGap:4}}>
                       {sdDone&&<button onClick={clearSamedayData} style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#4a5568',borderRadius:5,padding:'2px 6px',cursor:'pointer'}}>✕</button>}
                       <button onClick={fetchSamedayLive} disabled={sdLiveLoading}
                         style={{fontSize:9,background:'rgba(16,185,129,.15)',border:'1px solid #10b981',color:'#10b981',borderRadius:5,padding:'2px 8px',cursor:sdLiveLoading?'default':'pointer',whiteSpace:'nowrap'}}>
@@ -2483,7 +2483,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   ))}
                 </div>
 
-                <div style={{background:'#0f1419',border:'1px solid #a855f7',borderRadius:10,padding:'12px 14px'}}>
+                <div style={{background:'#0f1419',border:'1px solid #a855f7',borderRadius:10,padding:'12px 14px',minWidth:0}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <span style={{fontSize:10,color:'#a855f7',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
                       🛍️ eMAG
@@ -2503,7 +2503,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   ))}
                 </div>
 
-                <div style={{background:'#0f1419',border:'1px solid #f97316',borderRadius:10,padding:'12px 14px'}}>
+                <div style={{background:'#0f1419',border:'1px solid #f97316',borderRadius:10,padding:'12px 14px',minWidth:0}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <span style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>📊 Total comenzi</span>
                   </div>

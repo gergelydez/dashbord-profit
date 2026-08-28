@@ -67,18 +67,22 @@ export async function POST(req) {
       return NextResponse.json({ ok: false, error: `Auth GLS: ${authErr.ErrorDescription}` }, { headers: CORS });
     }
 
-    const parcels = (data?.ParcelList || []).map(p => ({
+    // GetParcelListResponse.PrintDataInfoList (NU "ParcelList" — nu există în API-ul
+    // real, confirmat din documentația oficială MyGLS). Fiecare PrintDataInfo are
+    // ParcelNumber/ParcelId/ClientReference direct pe el, dar restul detaliilor
+    // (adresă, ramburs, servicii) sunt în obiectul nested "Parcel".
+    const parcels = (data?.PrintDataInfoList || []).map(p => ({
       parcelNumber:  p.ParcelNumber,
       parcelId:      p.ParcelId,
-      clientRef:     p.ClientReference,
-      pickupDate:    p.PickupDate,
-      deliveryName:  p.DeliveryAddress?.Name,
-      deliveryCity:  p.DeliveryAddress?.City,
-      deliveryZip:   p.DeliveryAddress?.ZipCode,
-      cod:           p.CODAmount || 0,
-      codCurrency:   p.CODCurrency,
-      count:         p.Count || 1,
-      services:      (p.ServiceList || []).map(s => s.Code),
+      clientRef:     p.ClientReference || p.Parcel?.ClientReference,
+      pickupDate:    p.Parcel?.PickupDate,
+      deliveryName:  p.Parcel?.DeliveryAddress?.Name,
+      deliveryCity:  p.Parcel?.DeliveryAddress?.City,
+      deliveryZip:   p.Parcel?.DeliveryAddress?.ZipCode,
+      cod:           p.Parcel?.CODAmount || 0,
+      codCurrency:   p.Parcel?.CODCurrency,
+      count:         p.Parcel?.Count || 1,
+      services:      (p.Parcel?.ServiceList || []).map(s => s.Code),
     }));
 
     return NextResponse.json({

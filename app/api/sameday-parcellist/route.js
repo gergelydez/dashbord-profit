@@ -17,7 +17,11 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 200, headers: CORS });
 }
 
-// Cache token în memorie (valabil ~1 oră la Sameday) — același tipar ca celelalte rute Sameday.
+// Cache token în memorie (valabil ~1 oră la Sameday). Autentificare prin
+// headere X-AUTH-USERNAME/X-AUTH-PASSWORD — la fel ca în /api/tracking, unde
+// această formă chiar funcționează în producție (varianta cu username/parolă
+// în body JSON, folosită în /api/sameday-awb, întorcea aici un răspuns fără
+// "message" clar, ajungând să afișeze "[object Object]").
 let _tokenCache = null;
 async function sdAuth(user, pass) {
   if (_tokenCache && _tokenCache.user === user && Date.now() - _tokenCache.ts < 50 * 60 * 1000) {
@@ -25,16 +29,23 @@ async function sdAuth(user, pass) {
   }
   const res = await fetch(`${SD_BASE}/api/authenticate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-AUTH-TOKEN': '' },
-    body: JSON.stringify({ username: user, password: pass }),
+    headers: {
+      'X-AUTH-USERNAME': user,
+      'X-AUTH-PASSWORD': pass,
+      'Content-Type': 'application/json',
+    },
     cache: 'no-store',
   });
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch {
-    throw new Error(`Auth răspuns invalid (${res.status}): ${text.slice(0, 100)}`);
+    throw new Error(`Auth răspuns invalid (${res.status}): ${text.slice(0, 200)}`);
   }
-  if (!res.ok) throw new Error(data?.message || data?.error || `Auth ${res.status}: ${JSON.stringify(data).slice(0, 200)}`);
+  if (!res.ok) {
+    const msg = data?.message || (typeof data?.error === 'string' ? data.error : data?.error?.message)
+      || `Auth ${res.status}: ${JSON.stringify(data).slice(0, 200)}`;
+    throw new Error(msg);
+  }
   const token = data.token || data.Token;
   if (!token) throw new Error('Token lipsă în răspuns Sameday');
   _tokenCache = { token, user, ts: Date.now() };
