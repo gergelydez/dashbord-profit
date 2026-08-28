@@ -258,6 +258,14 @@ export default function Dashboard() {
   const [trackingResults, setTrackingResults] = useState({}); // { orderId: { status, statusRaw, lastUpdate, location } }
   const [lastTrackingCheck, setLastTrackingCheck] = useState(null);
   const [glsFiles, setGlsFiles]   = useState(() => { try { return JSON.parse(ls.get('gls_files') || '[]'); } catch { return []; } });
+
+  // ── Live: citire directă din API-urile MyGLS / Sameday (fără Excel) ──
+  const [glsLiveLoading, setGlsLiveLoading] = useState(false);
+  const [sdLiveLoading, setSdLiveLoading]   = useState(false);
+  const [glsLiveAwbs, setGlsLiveAwbs] = useState([]); // AWB-uri MyGLS descoperite la ultima sincronizare live (perioada curentă)
+  const [sdLiveAwbs, setSdLiveAwbs]   = useState([]); // AWB-uri Sameday descoperite la ultima sincronizare live (perioada curentă)
+  const [sdLiveDebug, setSdLiveDebug] = useState(null); // status-sync Sameday e un endpoint netestat pe acest cont — păstrăm răspunsul brut ca să putem verifica/ajusta
+
   const [courierFilter, setCourierFilter] = useState('toate');
   const [showTranzitPanel, setShowTranzitPanel] = useState(false);
   const [showLivrateModal, setShowLivrateModal] = useState(false);
@@ -703,6 +711,116 @@ export default function Dashboard() {
     const awb = (order.trackingNo || '').trim();
     if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
     return order.ts !== 'pending' ? order.ts : null;
+  };
+
+  // Aceeași clasificare ca la comenzile Shopify (vezi procOrder mai sus) —
+  // reused ca să nu inventăm un al doilea vocabular de statusuri pentru
+  // AWB-urile citite live din conturile curierilor.
+  const mapLiveStatus = (ss, lastUpdate) => {
+    if (ss === 'delivered') return 'livrat';
+    if (['failure','failed_attempt','returned','failed_delivery','return_in_progress'].includes(ss)) return 'retur';
+    if (ss === 'out_for_delivery') return 'outfor';
+    if (['in_transit','confirmed'].includes(ss)) {
+      if (lastUpdate) {
+        const daysSince = (new Date() - new Date(lastUpdate)) / (1000 * 60 * 60 * 24);
+        return daysSince > 10 ? 'livrat' : 'incurs';
+      }
+      return 'incurs';
+    }
+    return 'incurs';
+  };
+
+  // Interoghează /api/tracking (deja folosit în restul aplicației) în loturi
+  // mici — un AWB list de 100-200 bucăți dintr-o singură cerere ar risca
+  // timeout-ul funcției serverless; loturi de 15 țin fiecare cerere scurtă.
+  const fetchTrackingBatch = async (awbs, courier) => {
+    const map = new Map();
+    const CHUNK = 15;
+    for (let i = 0; i < awbs.length; i += CHUNK) {
+      const chunk = awbs.slice(i, i + CHUNK);
+      const res = await fetch('/api/tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orders: chunk.map(awb => ({ id: awb, awb, courier })) }),
+      });
+      const data = await res.json();
+      for (const r of (data.results || [])) {
+        if (r?.awb) map.set(String(r.awb).trim(), { status: r.status, lastUpdate: r.lastUpdate });
+      }
+    }
+    return map;
+  };
+
+  // "Live": citește direct din MyGLS toate coletele din perioada selectată
+  // (indiferent dacă au plecat dintr-o comandă Shopify sau au fost adăugate
+  // manual/telefonic direct în contul GLS), apoi le ia statusul de livrare
+  // din /api/tracking — exact ce completa până acum Excel-ul importat manual.
+  const fetchGlsLive = async () => {
+    setGlsLiveLoading(true); setGlsError('');
+    try {
+      const { from, to } = getRange(preset, customFrom, customTo);
+      const days = Math.max(1, Math.ceil((new Date(to + 'T23:59:59') - new Date(from + 'T00:00:00')) / 86400000));
+      const res = await fetch('/api/gls-parcellist', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days }),
+      });
+      const data = await res.json();
+      if (!data.ok) { setGlsError(data.error || 'Eroare MyGLS'); return; }
+      const awbs = Array.from(new Set((data.parcels || []).map(p => String(p.parcelNumber || '').trim()).filter(Boolean)));
+      if (!awbs.length) { setGlsError('Niciun colet găsit în contul MyGLS pentru perioada selectată.'); return; }
+      const statusMap = await fetchTrackingBatch(awbs, 'gls');
+      const newMap = { ...glsAwbMap };
+      for (const awb of awbs) {
+        const t = statusMap.get(awb);
+        newMap[awb] = t?.status ? mapLiveStatus(t.status, t.lastUpdate) : (newMap[awb] || 'incurs');
+      }
+      const label = `🔄 Live MyGLS (${awbs.length} AWB, ${new Date().toLocaleString('ro-RO')})`;
+      const newFiles = [...glsFiles.filter(f => !f.startsWith('🔄 Live MyGLS')), label];
+      setGlsAwbMap(newMap); setGlsLiveAwbs(awbs); setGlsDone(true); setGlsFiles(newFiles);
+      ls.set('gls_awb_map', JSON.stringify(newMap));
+      ls.set('gls_files', JSON.stringify(newFiles));
+    } catch (e) {
+      setGlsError('Eroare live MyGLS: ' + e.message);
+    } finally {
+      setGlsLiveLoading(false);
+    }
+  };
+
+  // "Live" Sameday: la fel ca la GLS, dar descoperirea AWB-urilor trece prin
+  // /api/sameday-parcellist (endpoint status-sync Sameday, netestat pe acest
+  // cont până acum) — statusul de livrare vine tot din /api/tracking, deja
+  // verificat. sdLiveDebug păstrează răspunsul brut ca să putem verifica
+  // împreună forma reală după primul test în producție.
+  const fetchSamedayLive = async () => {
+    setSdLiveLoading(true); setSdError('');
+    try {
+      const { from, to } = getRange(preset, customFrom, customTo);
+      const days = Math.max(1, Math.ceil((new Date(to + 'T23:59:59') - new Date(from + 'T00:00:00')) / 86400000));
+      const res = await fetch('/api/sameday-parcellist', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days }),
+      });
+      const data = await res.json();
+      setSdLiveDebug(data.debug || null);
+      if (!data.ok) { setSdError(data.error || 'Eroare Sameday'); return; }
+      const awbs = data.awbs || [];
+      if (!awbs.length) { setSdError('Niciun AWB descoperit din status-sync Sameday — vezi debug mai jos.'); return; }
+      const statusMap = await fetchTrackingBatch(awbs, 'sameday');
+      const newMap = { ...sdAwbMap };
+      for (const awb of awbs) {
+        const t = statusMap.get(awb);
+        newMap[awb] = t?.status ? mapLiveStatus(t.status, t.lastUpdate) : (newMap[awb] || 'incurs');
+      }
+      const label = `🔄 Live Sameday (${awbs.length} AWB, ${new Date().toLocaleString('ro-RO')})`;
+      const newFiles = [...sdFiles.filter(f => !f.startsWith('🔄 Live Sameday')), label];
+      setSdAwbMap(newMap); setSdLiveAwbs(awbs); setSdDone(true); setSdFiles(newFiles);
+      ls.set('sd_awb_map', JSON.stringify(newMap));
+      ls.set('sd_files', JSON.stringify(newFiles));
+    } catch (e) {
+      setSdError('Eroare live Sameday: ' + e.message);
+    } finally {
+      setSdLiveLoading(false);
+    }
   };
 
   const openInvoiceModal = (order) => {
@@ -1243,6 +1361,21 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const sdRetur   = sdOrders.filter(o => getSdStatus(o) === 'retur').length;
   const sdOutfor  = sdOrders.filter(o => getSdStatus(o) === 'outfor').length;
   const sdIncurs  = sdOrders.filter(o => { const s = getSdStatus(o); return s === 'incurs' || s === null; }).length;
+
+  // ── Shopify vs manual/telefon vs eMAG — derivat din ultima sincronizare Live ──
+  // "Manual" = AWB existent în contul curierului dar care nu corespunde
+  // niciunei comenzi Shopify din perioada curentă (confirmat de client:
+  // 100 comenzi Shopify + GLS livrate, dar 110 transporturi în MyGLS → 10
+  // sunt telefonice). eMAG = AWB Sameday al cărui număr conține "EMG".
+  const shopifyTrackingSet = new Set(orders.map(o => (o.trackingNo || '').trim()).filter(Boolean));
+  const emagLiveAwbs      = sdLiveAwbs.filter(awb => awb.toUpperCase().includes('EMG'));
+  const sdNonEmagLiveAwbs = sdLiveAwbs.filter(awb => !awb.toUpperCase().includes('EMG'));
+  const glsManualCount    = glsLiveAwbs.filter(awb => !shopifyTrackingSet.has(awb)).length;
+  const sdManualCount     = sdNonEmagLiveAwbs.filter(awb => !shopifyTrackingSet.has(awb)).length;
+  const glsShopifyLiveCount = glsLiveAwbs.length - glsManualCount;
+  const sdShopifyLiveCount  = sdNonEmagLiveAwbs.length - sdManualCount;
+  const emagCount   = emagLiveAwbs.length;
+  const totalComenzi = n + glsManualCount + sdManualCount + emagCount;
 
   const noInvoicePaid = orders.filter(o => o.fin==='paid' && !o.hasInvoice);
   const sdReturDetectat = orders.filter(o => o.courier==='sameday' && getSdStatus(o) === 'retur' && o.ts !== 'retur');
@@ -2263,6 +2396,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     </span>
                     <div style={{display:'flex',gap:5,alignItems:'center'}}>
                       {glsDone&&<button onClick={clearGlsData} style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#4a5568',borderRadius:5,padding:'2px 6px',cursor:'pointer'}}>✕</button>}
+                      <button onClick={fetchGlsLive} disabled={glsLiveLoading}
+                        style={{fontSize:9,background:'rgba(16,185,129,.15)',border:'1px solid #10b981',color:'#10b981',borderRadius:5,padding:'2px 8px',cursor:glsLiveLoading?'default':'pointer',whiteSpace:'nowrap'}}>
+                        {glsLiveLoading?'⟳':'🔴 Live'}
+                      </button>
                       <label style={{fontSize:9,background:glsDone?'transparent':'rgba(249,115,22,.15)',border:`1px solid ${glsDone?'#243040':'#f97316'}`,color:glsDone?'#94a3b8':'#f97316',borderRadius:5,padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap'}}>
                         {glsLoading?'⟳':glsDone?'+ Excel':'📊 Import MyGLS'}
                         <input type="file" accept=".xlsx,.xls,.csv" multiple onChange={parseGlsExcel} style={{display:'none'}} />
@@ -2274,11 +2411,15 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   {!glsDone&&glsOrders.length>0&&!glsError&&(
                     <div style={{fontSize:9,color:'#f59e0b',marginBottom:6,lineHeight:1.5,background:'rgba(245,158,11,.07)',borderRadius:5,padding:'5px 7px'}}>
                       ⚠️ Fără export MyGLS, statusurile vin doar din xConnector.<br/>
-                      <strong>MyGLS → Parcels → Export Excel</strong>
+                      <strong>🔴 Live</strong> citește direct din contul MyGLS.
                     </div>
                   )}
                   {[
                     ['Total', glsOrders.length, '#e8edf2'],
+                    ...(glsLiveAwbs.length>0 ? [
+                      ['🛒 Shopify', glsShopifyLiveCount, '#94a3b8'],
+                      ['📞 Manual/telefon', glsManualCount, glsManualCount>0?'#eab308':'#94a3b8'],
+                    ] : []),
                     ['✅ Livrate', glsLivrate, '#10b981'],
                     ['🚚 Tranzit', glsIncurs, '#3b82f6'],
                     ['🚛 În livrare', glsInLivrare, '#a855f7'],
@@ -2300,6 +2441,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     </span>
                     <div style={{display:'flex',gap:5,alignItems:'center'}}>
                       {sdDone&&<button onClick={clearSamedayData} style={{fontSize:9,background:'transparent',border:'1px solid #243040',color:'#4a5568',borderRadius:5,padding:'2px 6px',cursor:'pointer'}}>✕</button>}
+                      <button onClick={fetchSamedayLive} disabled={sdLiveLoading}
+                        style={{fontSize:9,background:'rgba(16,185,129,.15)',border:'1px solid #10b981',color:'#10b981',borderRadius:5,padding:'2px 8px',cursor:sdLiveLoading?'default':'pointer',whiteSpace:'nowrap'}}>
+                        {sdLiveLoading?'⟳':'🔴 Live'}
+                      </button>
                       <label style={{fontSize:9,background:sdDone?'transparent':'rgba(59,130,246,.15)',border:`1px solid ${sdDone?'#243040':'#3b82f6'}`,color:sdDone?'#94a3b8':'#3b82f6',borderRadius:5,padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap'}}>
                         {sdLoading?'⟳':sdDone?'+ Excel':'📊 Import Excel'}
                         <input type="file" accept=".xlsx,.xls" multiple onChange={parseSamedayExcel} style={{display:'none'}} />
@@ -2310,11 +2455,21 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   {sdError&&<div style={{fontSize:9,color:'#f43f5e',marginBottom:5}}>{sdError}</div>}
                   {!sdDone&&sdOrders.length>0&&!sdError&&(
                     <div style={{fontSize:9,color:'#f59e0b',marginBottom:6,lineHeight:1.5,background:'rgba(245,158,11,.07)',borderRadius:5,padding:'5px 7px'}}>
-                      ⚠️ Fără export, refuzurile nu sunt detectate.<br/><strong>eAWB → Listă AWB → Export Excel</strong>
+                      ⚠️ Fără export, refuzurile nu sunt detectate.<br/><strong>🔴 Live</strong> citește direct din contul Sameday.
                     </div>
+                  )}
+                  {sdLiveDebug && (
+                    <details style={{fontSize:8,color:'#4a5568',marginBottom:6}}>
+                      <summary style={{cursor:'pointer',color:'#64748b'}}>🔍 Debug status-sync (endpoint netestat până acum)</summary>
+                      <pre style={{whiteSpace:'pre-wrap',wordBreak:'break-all',maxHeight:150,overflow:'auto',fontSize:8,marginTop:4,background:'#080d12',padding:6,borderRadius:4}}>{JSON.stringify(sdLiveDebug,null,1)}</pre>
+                    </details>
                   )}
                   {[
                     ['Total SD', sdOrders.length, '#e8edf2'],
+                    ...(sdLiveAwbs.length>0 ? [
+                      ['🛒 Shopify', sdShopifyLiveCount, '#94a3b8'],
+                      ['📞 Manual/telefon', sdManualCount, sdManualCount>0?'#eab308':'#94a3b8'],
+                    ] : []),
                     ['✅ Livrate', sdLivrate, '#10b981'],
                     ['🚚 Tranzit', sdIncurs, '#3b82f6'],
                     ['📬 La curier', sdOutfor, '#a855f7'],
@@ -2324,6 +2479,44 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     <div key={lbl} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
                       <span style={{color:'#94a3b8'}}>{lbl}</span>
                       <span style={{color:col,fontFamily:'monospace',fontWeight:val>0&&lbl.includes('Refuz')?700:400}}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{background:'#0f1419',border:'1px solid #a855f7',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                    <span style={{fontSize:10,color:'#a855f7',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
+                      🛍️ eMAG
+                      {sdLiveAwbs.length>0
+                        ? <span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ live</span>
+                        : <span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ necesită 🔴 Live Sameday</span>}
+                    </span>
+                  </div>
+                  <div style={{fontSize:9,color:'#4a5568',marginBottom:6,lineHeight:1.5}}>
+                    Comenzi eMAG expediate prin Sameday — recunoscute după AWB care conține „EMG".
+                  </div>
+                  {[['📦 Comenzi eMAG', emagCount, '#a855f7']].map(([lbl,val,col])=>(
+                    <div key={lbl} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}>
+                      <span style={{color:'#94a3b8'}}>{lbl}</span>
+                      <span style={{color:col,fontFamily:'monospace',fontWeight:700}}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{background:'#0f1419',border:'1px solid #f97316',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                    <span style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>📊 Total comenzi</span>
+                  </div>
+                  {[
+                    ['🛒 Shopify', n, '#e8edf2'],
+                    ['📞 Manual GLS', glsManualCount, '#94a3b8'],
+                    ['📞 Manual Sameday', sdManualCount, '#94a3b8'],
+                    ['🛍️ eMAG', emagCount, '#a855f7'],
+                    ['Σ Total', totalComenzi, '#10b981'],
+                  ].map(([lbl,val,col],i,arr)=>(
+                    <div key={lbl} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3,...(i===arr.length-1?{borderTop:'1px solid #1e2a35',paddingTop:4,marginTop:2}:{})}}>
+                      <span style={{color:i===arr.length-1?'#e8edf2':'#94a3b8',fontWeight:i===arr.length-1?700:400}}>{lbl}</span>
+                      <span style={{color:col,fontFamily:'monospace',fontWeight:700}}>{val}</span>
                     </div>
                   ))}
                 </div>
