@@ -591,8 +591,42 @@ export default function DocumentePage() {
    * full-grid, merge-aware extraction doesn't depend on which of those is
    * calling it, only on the parsed sheet.
    */
+  /**
+   * Root-caused against the user's live Drive files (confirmed correct when
+   * opened directly in Drive, so the stored data was never the problem):
+   * `sheet['!ref']` is only a hint the file's own writer computed when it
+   * was generated, and automated export tools (like GLS's own report
+   * generator) frequently under-declare it — e.g. claiming a used range of
+   * just column A when columns B-G genuinely have data too. The GLS stats
+   * parser (lib/mail/parse-gls-rambursuri.ts) never had this problem
+   * because it reads fixed column letters directly and ignores !ref
+   * entirely. This does the equivalent for the general-purpose grid: scans
+   * every actual cell key SheetJS parsed (which exist regardless of what
+   * !ref claims) and unions that with the declared range, so the read
+   * range can only ever be as small as reality, never smaller.
+   */
+  const computeActualRange = (XLSX, sheet) => {
+    let minR = Infinity, minC = Infinity, maxR = -1, maxC = -1;
+    for (const key of Object.keys(sheet)) {
+      if (key[0] === '!') continue;
+      const addr = XLSX.utils.decode_cell(key);
+      if (addr.r < minR) minR = addr.r;
+      if (addr.c < minC) minC = addr.c;
+      if (addr.r > maxR) maxR = addr.r;
+      if (addr.c > maxC) maxC = addr.c;
+    }
+    return maxR === -1 ? null : { s: { r: minR, c: minC }, e: { r: maxR, c: maxC } };
+  };
+
   const buildXlsxGridRows = (XLSX, sheet) => {
-    const range = XLSX.utils.decode_range(sheet['!ref']);
+    const declared = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : null;
+    const actual = computeActualRange(XLSX, sheet);
+    const range = actual
+      ? {
+          s: { r: Math.min(actual.s.r, declared?.s.r ?? actual.s.r), c: Math.min(actual.s.c, declared?.s.c ?? actual.s.c) },
+          e: { r: Math.max(actual.e.r, declared?.e.r ?? actual.e.r), c: Math.max(actual.e.c, declared?.e.c ?? actual.e.c) },
+        }
+      : declared;
     const merges = sheet['!merges'] || [];
     const covered = new Set();
     const spanAt = new Map();
@@ -849,9 +883,12 @@ export default function DocumentePage() {
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const gridRows = buildXlsxGridRows(XLSX, sheet);
         const nonEmptyCells = gridRows.reduce((n, row) => n + row.filter(c => (typeof c === 'object' ? c.content : c) !== '').length, 0);
+        const actualRange = computeActualRange(XLSX, sheet);
         debugRows.push({
           filename: d.filename, byteLength: buf.byteLength, hex,
-          sheetNames: wb.SheetNames, ref: sheet['!ref'], rowCount: gridRows.length, nonEmptyCells,
+          sheetNames: wb.SheetNames, ref: sheet['!ref'],
+          actualRange: actualRange ? `${XLSX.utils.encode_cell(actualRange.s)}:${XLSX.utils.encode_cell(actualRange.e)}` : null,
+          rowCount: gridRows.length, nonEmptyCells,
         });
         if (renderedAny) pdfDoc.addPage();
         pdfDoc.setFontSize(9);
@@ -1334,7 +1371,7 @@ export default function DocumentePage() {
               <div key={i} style={{ marginBottom: 6, color: r.error ? '#f43f5e' : (r.nonEmptyCells > 5 ? '#10b981' : '#f59e0b') }}>
                 {r.error ? '✗' : '✓'} {r.filename}
                 {r.error && <> · eroare: {r.error}</>}
-                {!r.error && <> · {r.byteLength} bytes · hex:{r.hex} (valid xlsx = 504b0304) · foi: {r.sheetNames.join(', ')} · range: {r.ref} · {r.rowCount} rânduri · {r.nonEmptyCells} celule cu conținut</>}
+                {!r.error && <> · {r.byteLength} bytes · hex:{r.hex} (valid xlsx = 504b0304) · foi: {r.sheetNames.join(', ')} · interval declarat: {r.ref} · interval real: {r.actualRange} · {r.rowCount} rânduri · {r.nonEmptyCells} celule cu conținut</>}
               </div>
             ))}
           </div>
