@@ -207,6 +207,8 @@ export default function DocumentePage() {
   const [uploadingExtras, setUploadingExtras] = useState(false);
   const [extrasProgress, setExtrasProgress] = useState(null);
   const [combineDebug, setCombineDebug] = useState(null);
+  const [combiningXlsx, setCombiningXlsx] = useState(false);
+  const [combiningPdf, setCombiningPdf] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null); // { done, total }
   const [backfillFor, setBackfillFor] = useState(null); // mailAccountId
   const [backfillDate, setBackfillDate] = useState('');
@@ -616,6 +618,26 @@ export default function DocumentePage() {
     return maxR === -1 ? null : { s: { r: minR, c: minC }, e: { r: maxR, c: maxC } };
   };
 
+  /** Sets column widths wide enough to show each column's longest actual
+   * value, instead of whatever narrow widths the source report happened
+   * to be generated with. Call this AFTER any !ref fix, so it measures the
+   * full real range rather than whatever the file under-declared. */
+  const autoFitColumns = (XLSX, sheet) => {
+    if (!sheet['!ref']) return;
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    const cols = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      let maxLen = 8;
+      for (let r = range.s.r; r <= range.e.r; r++) {
+        const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+        const text = cell ? String(cell.w ?? cell.v ?? '') : '';
+        if (text.length > maxLen) maxLen = text.length;
+      }
+      cols.push({ wch: Math.min(maxLen + 2, 60) });
+    }
+    sheet['!cols'] = cols;
+  };
+
   const buildXlsxGridRows = (XLSX, sheet) => {
     const declared = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : null;
     const actual = computeActualRange(XLSX, sheet);
@@ -870,6 +892,8 @@ export default function DocumentePage() {
    * the source file is opened directly (confirmed by the user against
    * their own Drive-stored file), because it IS that same sheet data. */
   const combineExcelFilesAsXlsx = async (docs, label = month) => {
+    setCombiningXlsx(true);
+    try {
     const XLSX = await loadXLSXLib();
     const combinedWb = XLSX.utils.book_new();
     const usedNames = new Set();
@@ -920,6 +944,15 @@ export default function DocumentePage() {
               e: { r: Math.max(actual.e.r, declared.e.r), c: Math.max(actual.e.c, declared.e.c) },
             });
           }
+          // The source file's own column widths are usually sized for a
+          // machine-generated report, not for reading/printing — confirmed
+          // real: address/name columns showed truncated ("Nume des...",
+          // "Judet dest...") because the original !cols was too narrow.
+          // Recomputing it from the actual content this sheet now has
+          // (post !ref-fix, so the full range is covered) fixes both
+          // on-screen viewing and print output, which wouldn't otherwise
+          // rewrap already-truncated columns.
+          autoFitColumns(XLSX, sheet);
           const name = sheetName(multiSheet ? `${baseName}_${srcSheetName}` : baseName);
           XLSX.utils.book_append_sheet(combinedWb, sheet, name);
           debugRows.push({ filename: `${d.filename} [${srcSheetName}]`, sheetName: name, refOriginal: originalRef, refFixed: sheet['!ref'] });
@@ -944,6 +977,9 @@ export default function DocumentePage() {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     toast(`✅ ${docs.length} fișiere combinate într-un singur .xlsx`, 'success');
+    } finally {
+      setCombiningXlsx(false);
+    }
   };
 
   /** PDF alternative to combineExcelFilesAsXlsx, kept alongside it (not a
@@ -952,6 +988,8 @@ export default function DocumentePage() {
    * has the same !ref-correction fix as the xlsx path, so this benefits
    * from it too instead of repeating the earlier trust-!ref bug. */
   const combineExcelFilesAsPdf = async (docs, label = month) => {
+    setCombiningPdf(true);
+    try {
     const XLSX = await loadXLSXLib();
     const { jsPDF } = await import('jspdf');
     await import('jspdf-autotable');
@@ -1001,6 +1039,9 @@ export default function DocumentePage() {
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } finally {
+      setCombiningPdf(false);
+    }
   };
 
   const commitStat = async () => {
@@ -1129,11 +1170,19 @@ export default function DocumentePage() {
         )}
         {xlsxFiles.length >= 2 && (
           <>
-            <button className="doc-btn doc-btn-blue" onClick={() => combineExcelFilesAsXlsx(xlsxFiles, `${category}${subcategory ? `_${subcategory}` : ''}_${month}`)}>
-              📊 Combină Excel (.xlsx, {xlsxFiles.length} fișiere)
+            <button
+              className="doc-btn doc-btn-blue"
+              disabled={combiningXlsx || combiningPdf}
+              onClick={() => combineExcelFilesAsXlsx(xlsxFiles, `${category}${subcategory ? `_${subcategory}` : ''}_${month}`)}
+            >
+              {combiningXlsx ? <span className="doc-spin">↻</span> : '📊'} Combină Excel (.xlsx, {xlsxFiles.length} fișiere)
             </button>
-            <button className="doc-btn doc-btn-green" onClick={() => combineExcelFilesAsPdf(xlsxFiles, `${category}${subcategory ? `_${subcategory}` : ''}_${month}`)}>
-              🖨️ Combină Excel (PDF, {xlsxFiles.length} fișiere)
+            <button
+              className="doc-btn doc-btn-green"
+              disabled={combiningXlsx || combiningPdf}
+              onClick={() => combineExcelFilesAsPdf(xlsxFiles, `${category}${subcategory ? `_${subcategory}` : ''}_${month}`)}
+            >
+              {combiningPdf ? <span className="doc-spin">↻</span> : '🖨️'} Combină Excel (PDF, {xlsxFiles.length} fișiere)
             </button>
           </>
         )}
@@ -1474,8 +1523,12 @@ export default function DocumentePage() {
                 </a>
               )}
               {allXlsxDocs.length >= 2 && (
-                <button className="doc-btn doc-btn-blue" onClick={() => combineExcelFilesAsXlsx(allXlsxDocs, month)}>
-                  📊 Combină TOATE Excel-urile lunii (.xlsx, {allXlsxDocs.length} — GLS, Sameday, orice categorie)
+                <button
+                  className="doc-btn doc-btn-blue"
+                  disabled={combiningXlsx || combiningPdf}
+                  onClick={() => combineExcelFilesAsXlsx(allXlsxDocs, month)}
+                >
+                  {combiningXlsx ? <span className="doc-spin">↻</span> : '📊'} Combină TOATE Excel-urile lunii (.xlsx, {allXlsxDocs.length} — GLS, Sameday, orice categorie)
                 </button>
               )}
             </div>
