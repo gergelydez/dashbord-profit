@@ -869,7 +869,7 @@ export default function DocumentePage() {
    * itself renders it exactly the way it already renders correctly when
    * the source file is opened directly (confirmed by the user against
    * their own Drive-stored file), because it IS that same sheet data. */
-  const combineExcelFilesAsXlsx = async (docs) => {
+  const combineExcelFilesAsXlsx = async (docs, label = month) => {
     const XLSX = await loadXLSXLib();
     const combinedWb = XLSX.utils.book_new();
     const usedNames = new Set();
@@ -929,12 +929,62 @@ export default function DocumentePage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Excel_combinat_${month}.xlsx`;
+    a.download = `Excel_combinat_${label}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     toast(`✅ ${docs.length} fișiere combinate într-un singur .xlsx`, 'success');
+  };
+
+  /** PDF alternative to combineExcelFilesAsXlsx, kept alongside it (not a
+   * replacement) — useful when a printable single file matters more than
+   * an editable spreadsheet. Reuses buildXlsxGridRows, which by now already
+   * has the same !ref-correction fix as the xlsx path, so this benefits
+   * from it too instead of repeating the earlier trust-!ref bug. */
+  const combineExcelFilesAsPdf = async (docs, label = month) => {
+    const XLSX = await loadXLSXLib();
+    const { jsPDF } = await import('jspdf');
+    await import('jspdf-autotable');
+    const pdfDoc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+    let renderedAny = false;
+    const debugRows = [];
+    for (const d of docs) {
+      try {
+        const res = await fetch(`/api/mail/download-file?id=${d.id}`);
+        if (!res.ok) { debugRows.push({ filename: d.filename, error: `HTTP ${res.status}` }); continue; }
+        const buf = await res.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const gridRows = buildXlsxGridRows(XLSX, sheet);
+        const nonEmptyCells = gridRows.reduce((n, row) => n + row.filter(c => (typeof c === 'object' ? c.content : c) !== '').length, 0);
+        debugRows.push({ filename: d.filename, ref: sheet['!ref'], rowCount: gridRows.length, nonEmptyCells });
+        if (renderedAny) pdfDoc.addPage();
+        pdfDoc.setFontSize(9);
+        pdfDoc.text(d.filename, 6, 6);
+        pdfDoc.autoTable({
+          startY: 10,
+          body: gridRows,
+          theme: 'grid',
+          styles: { fontSize: 7, cellPadding: 1.2, overflow: 'linebreak', font: 'helvetica' },
+          margin: { top: 8, left: 6, right: 6, bottom: 8 },
+        });
+        renderedAny = true;
+      } catch (e) {
+        debugRows.push({ filename: d.filename, error: e.message });
+        toast(`❌ ${d.filename}: ${e.message}`, 'error');
+      }
+    }
+    setCombineDebug(debugRows);
+    if (!renderedAny) { toast('❌ Niciun fișier Excel nu a putut fi combinat', 'error'); return; }
+    const url = URL.createObjectURL(pdfDoc.output('blob'));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Excel_combinat_${label}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
   const commitStat = async () => {
@@ -1062,9 +1112,14 @@ export default function DocumentePage() {
           </a>
         )}
         {xlsxFiles.length >= 2 && (
-          <button className="doc-btn doc-btn-blue" onClick={() => combineExcelFilesAsXlsx(xlsxFiles)}>
-            📊 Combină Excel (.xlsx, {xlsxFiles.length} fișiere)
-          </button>
+          <>
+            <button className="doc-btn doc-btn-blue" onClick={() => combineExcelFilesAsXlsx(xlsxFiles, `${category}${subcategory ? `_${subcategory}` : ''}_${month}`)}>
+              📊 Combină Excel (.xlsx, {xlsxFiles.length} fișiere)
+            </button>
+            <button className="doc-btn doc-btn-green" onClick={() => combineExcelFilesAsPdf(xlsxFiles, `${category}${subcategory ? `_${subcategory}` : ''}_${month}`)}>
+              🖨️ Combină Excel (PDF, {xlsxFiles.length} fișiere)
+            </button>
+          </>
         )}
       </div>
     );
@@ -1380,7 +1435,8 @@ export default function DocumentePage() {
               <div key={i} style={{ marginBottom: 6, color: r.error ? '#f43f5e' : '#10b981' }}>
                 {r.error ? '✗' : '✓'} {r.filename}
                 {r.error && <> · eroare: {r.error}</>}
-                {!r.error && <> · adăugat ca foaie „{r.sheetName}" · interval original: {r.refOriginal} · interval corectat: {r.refFixed}</>}
+                {!r.error && r.sheetName && <> · adăugat ca foaie „{r.sheetName}" · interval original: {r.refOriginal} · interval corectat: {r.refFixed}</>}
+                {!r.error && !r.sheetName && <> · interval: {r.ref} · {r.rowCount} rânduri · {r.nonEmptyCells} celule cu conținut</>}
               </div>
             ))}
           </div>
@@ -1388,15 +1444,24 @@ export default function DocumentePage() {
 
         {(() => {
           const allPdfCount = documents.filter(d => /\.pdf$/i.test(d.filename)).length;
-          return allPdfCount >= 2 && (
+          const allXlsxDocs = documents.filter(d => /\.xlsx$/i.test(d.filename));
+          if (allPdfCount < 2 && allXlsxDocs.length < 2) return null;
+          return (
             <div className="doc-actions" style={{ margin: '4px 0 20px' }}>
-              <a
-                className="doc-btn doc-btn-green"
-                href={`/api/mail/combine-pdfs?month=${month}`}
-                target="_blank" rel="noopener noreferrer"
-              >
-                🖨️ Combină + printează TOATE PDF-urile lunii ({allPdfCount})
-              </a>
+              {allPdfCount >= 2 && (
+                <a
+                  className="doc-btn doc-btn-green"
+                  href={`/api/mail/combine-pdfs?month=${month}`}
+                  target="_blank" rel="noopener noreferrer"
+                >
+                  🖨️ Combină + printează TOATE PDF-urile lunii ({allPdfCount})
+                </a>
+              )}
+              {allXlsxDocs.length >= 2 && (
+                <button className="doc-btn doc-btn-blue" onClick={() => combineExcelFilesAsXlsx(allXlsxDocs, month)}>
+                  📊 Combină TOATE Excel-urile lunii (.xlsx, {allXlsxDocs.length} — GLS, Sameday, orice categorie)
+                </button>
+              )}
             </div>
           );
         })()}
