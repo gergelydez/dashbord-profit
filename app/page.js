@@ -605,6 +605,7 @@ export default function Dashboard() {
 
   const clearSamedayData = () => {
     setSdAwbMap({}); setSdFiles([]); setSdDone(false); setSdError('');
+    setSdLiveAwbs([]); setSdLiveDebug(null);
     ls.del('sd_awb_map'); ls.del('sd_files');
   };
 
@@ -697,6 +698,7 @@ export default function Dashboard() {
 
   const clearGlsData = () => {
     setGlsAwbMap({}); setGlsFiles([]); setGlsDone(false); setGlsError('');
+    setGlsLiveAwbs([]); setGlsLiveDebug(null);
     ls.del('gls_awb_map'); ls.del('gls_files');
   };
 
@@ -760,10 +762,9 @@ export default function Dashboard() {
     setGlsLiveLoading(true); setGlsError('');
     try {
       const { from, to } = getRange(preset, customFrom, customTo);
-      const days = Math.max(1, Math.ceil((new Date(to + 'T23:59:59') - new Date(from + 'T00:00:00')) / 86400000));
       const res = await fetch('/api/gls-parcellist', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days }),
+        body: JSON.stringify({ from, to }),
       });
       const data = await res.json();
       setGlsLiveDebug(data.debug || null);
@@ -797,10 +798,9 @@ export default function Dashboard() {
     setSdLiveLoading(true); setSdError('');
     try {
       const { from, to } = getRange(preset, customFrom, customTo);
-      const days = Math.max(1, Math.ceil((new Date(to + 'T23:59:59') - new Date(from + 'T00:00:00')) / 86400000));
       const res = await fetch('/api/sameday-parcellist', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days }),
+        body: JSON.stringify({ from, to }),
       });
       const data = await res.json();
       setSdLiveDebug(data.debug || null);
@@ -2393,7 +2393,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <span style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
                       📦 GLS
-                      {glsDone?<span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {Object.keys(glsAwbMap).length} AWB</span>
+                      {glsDone?<span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {glsLiveAwbs.length>0?glsLiveAwbs.length:Object.keys(glsAwbMap).length} AWB</span>
                               :<span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ fără export</span>}
                     </span>
                     <div style={{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap',rowGap:4}}>
@@ -2444,7 +2444,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                     <span style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,fontFamily:'monospace'}}>
                       🚀 Sameday
-                      {sdDone?<span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {Object.keys(sdAwbMap).length} AWB</span>
+                      {sdDone?<span style={{color:'#10b981',marginLeft:4,fontWeight:700,fontSize:8}}>✓ {sdLiveAwbs.length>0?sdLiveAwbs.length:Object.keys(sdAwbMap).length} AWB</span>
                               :<span style={{color:'#f59e0b',marginLeft:4,fontSize:8}}>⚠ fără export</span>}
                     </span>
                     <div style={{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap',rowGap:4}}>

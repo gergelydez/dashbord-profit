@@ -40,11 +40,21 @@ export async function POST(req) {
       ClientNumberList: [parseInt(client)],
     };
 
-    // Date range: last N days (default 30)
-    const days = parseInt(body.days || 30);
-    const dateFrom = new Date();
-    dateFrom.setDate(dateFrom.getDate() - days);
-    const dateTo = new Date();
+    // Interval de dată: preferăm from/to calendaristic explicit (YYYY-MM-DD,
+    // exact ce arată filtrul din pagină) — un calcul "ultimele N zile de
+    // acum" (folosit doar ca fallback pentru compatibilitate) alunecă față
+    // de granița reală a lunii în funcție de ora curentă, ratând/adăugând
+    // câte un colet de la marginile intervalului.
+    let dateFrom, dateTo;
+    if (body.from && body.to) {
+      dateFrom = new Date(`${body.from}T00:00:00`);
+      dateTo   = new Date(`${body.to}T23:59:59`);
+    } else {
+      const days = parseInt(body.days || 30);
+      dateFrom = new Date();
+      dateFrom.setDate(dateFrom.getDate() - days);
+      dateTo = new Date();
+    }
 
     // API-ul WCF al MyGLS foloseşte formatul .NET JSON pentru DateTime
     // ("\/Date(ms)\/" — vezi exemplele din Appendix E ale documentaţiei

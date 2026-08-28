@@ -135,9 +135,20 @@ export async function POST(req) {
       return NextResponse.json({ ok: false, error: 'Credențiale Sameday lipsă (SAMEDAY_USERNAME/SAMEDAY_PASSWORD).' }, { headers: CORS });
     }
 
-    const days = Math.min(parseInt(body.days) || 30, MAX_DAYS);
-    const endTimestamp = Math.floor(Date.now() / 1000);
-    const startTimestamp = endTimestamp - days * 86400;
+    // Interval calendaristic explicit (YYYY-MM-DD, exact ce arată filtrul din
+    // pagină) când e disponibil — un calcul "ultimele N zile de acum" alunecă
+    // față de granița reală a lunii în funcție de ora curentă din momentul
+    // cererii, ratând/adăugând câte un AWB de la marginile intervalului.
+    let startTimestamp, endTimestamp;
+    if (body.from && body.to) {
+      startTimestamp = Math.floor(new Date(`${body.from}T00:00:00`).getTime() / 1000);
+      endTimestamp   = Math.floor(new Date(`${body.to}T23:59:59`).getTime() / 1000);
+    } else {
+      const days = Math.min(parseInt(body.days) || 30, MAX_DAYS);
+      endTimestamp = Math.floor(Date.now() / 1000);
+      startTimestamp = endTimestamp - days * 86400;
+    }
+    if (endTimestamp - startTimestamp > MAX_DAYS * 86400) startTimestamp = endTimestamp - MAX_DAYS * 86400;
 
     const windows = [];
     for (let winEnd = endTimestamp; winEnd > startTimestamp; winEnd -= WINDOW_SECONDS) {
