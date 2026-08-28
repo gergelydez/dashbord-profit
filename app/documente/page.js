@@ -206,6 +206,7 @@ export default function DocumentePage() {
   const [receptieDebug, setReceptieDebug] = useState(null);
   const [uploadingExtras, setUploadingExtras] = useState(false);
   const [extrasProgress, setExtrasProgress] = useState(null);
+  const [combineDebug, setCombineDebug] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null); // { done, total }
   const [backfillFor, setBackfillFor] = useState(null); // mailAccountId
   const [backfillDate, setBackfillDate] = useState('');
@@ -836,14 +837,22 @@ export default function DocumentePage() {
     await import('jspdf-autotable');
     const pdfDoc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
     let renderedAny = false;
+    const debugRows = [];
     for (const d of docs) {
       try {
         const res = await fetch(`/api/mail/download-file?id=${d.id}`);
-        if (!res.ok) continue;
+        if (!res.ok) { debugRows.push({ filename: d.filename, error: `HTTP ${res.status}` }); continue; }
         const buf = await res.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        const hex = Array.from(bytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('');
         const wb = XLSX.read(buf, { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const gridRows = buildXlsxGridRows(XLSX, sheet);
+        const nonEmptyCells = gridRows.reduce((n, row) => n + row.filter(c => (typeof c === 'object' ? c.content : c) !== '').length, 0);
+        debugRows.push({
+          filename: d.filename, byteLength: buf.byteLength, hex,
+          sheetNames: wb.SheetNames, ref: sheet['!ref'], rowCount: gridRows.length, nonEmptyCells,
+        });
         if (renderedAny) pdfDoc.addPage();
         pdfDoc.setFontSize(9);
         pdfDoc.text(d.filename, 6, 6);
@@ -856,9 +865,11 @@ export default function DocumentePage() {
         });
         renderedAny = true;
       } catch (e) {
+        debugRows.push({ filename: d.filename, error: e.message });
         toast(`❌ ${d.filename}: ${e.message}`, 'error');
       }
     }
+    setCombineDebug(debugRows);
     if (!renderedAny) { toast('❌ Niciun fișier Excel nu a putut fi combinat', 'error'); return; }
     const url = URL.createObjectURL(pdfDoc.output('blob'));
     window.open(url, '_blank');
@@ -1299,6 +1310,19 @@ export default function DocumentePage() {
             </div>
           );
         })}
+
+        {combineDebug && (
+          <div className="doc-errbox" style={{ marginBottom: 12, fontFamily: 'monospace', fontSize: 10, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+            <div style={{ marginBottom: 6, fontWeight: 700 }}>Debug ultima combinare Excel ({combineDebug.length} fișier{combineDebug.length === 1 ? '' : 'e'}):</div>
+            {combineDebug.map((r, i) => (
+              <div key={i} style={{ marginBottom: 6, color: r.error ? '#f43f5e' : (r.nonEmptyCells > 5 ? '#10b981' : '#f59e0b') }}>
+                {r.error ? '✗' : '✓'} {r.filename}
+                {r.error && <> · eroare: {r.error}</>}
+                {!r.error && <> · {r.byteLength} bytes · hex:{r.hex} (valid xlsx = 504b0304) · foi: {r.sheetNames.join(', ')} · range: {r.ref} · {r.rowCount} rânduri · {r.nonEmptyCells} celule cu conținut</>}
+              </div>
+            ))}
+          </div>
+        )}
 
         {(() => {
           const allPdfCount = documents.filter(d => /\.pdf$/i.test(d.filename)).length;
