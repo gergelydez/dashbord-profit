@@ -873,8 +873,8 @@ export default function DocumentePage() {
     const XLSX = await loadXLSXLib();
     const combinedWb = XLSX.utils.book_new();
     const usedNames = new Set();
-    const sheetName = (filename) => {
-      let base = filename.replace(/\.[^.]+$/, '').replace(/[\\/?*[\]:]/g, '_').slice(0, 31) || 'Sheet';
+    const sheetName = (label) => {
+      let base = label.replace(/[\\/?*[\]:]/g, '_').slice(0, 31) || 'Sheet';
       let name = base;
       let i = 1;
       while (usedNames.has(name)) {
@@ -893,29 +893,38 @@ export default function DocumentePage() {
         if (!res.ok) { debugRows.push({ filename: d.filename, error: `HTTP ${res.status}` }); continue; }
         const buf = await res.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const originalRef = sheet['!ref'];
-        // Confirmed real bug: copying the sheet as-is also copies its
-        // declared dimension tag straight into the combined file's XML —
-        // Google Drive's own preview ignores that tag and scans real cells
-        // (why "Vezi" looked fine), but a real spreadsheet app (Excel/WPS)
-        // honors it and only shows what it claims, which is worse than the
-        // PDF version: not even empty bordered cells, nothing at all past
-        // the declared range. Same fix as the PDF path (computeActualRange)
-        // — correcting the dimension before writing means every app,
-        // trusting or not, sees the same real data.
-        const actual = computeActualRange(XLSX, sheet);
-        if (actual) {
-          const declared = originalRef ? XLSX.utils.decode_range(originalRef) : actual;
-          sheet['!ref'] = XLSX.utils.encode_range({
-            s: { r: Math.min(actual.s.r, declared.s.r), c: Math.min(actual.s.c, declared.s.c) },
-            e: { r: Math.max(actual.e.r, declared.e.r), c: Math.max(actual.e.c, declared.e.c) },
-          });
+        // Confirmed real bug: only ever reading wb.SheetNames[0] silently
+        // dropped every tab past the first — fine for GLS (one sheet per
+        // file) but real data loss for Sameday exports, which carry
+        // multiple sheets in the same file. Every sheet gets its own tab
+        // in the combined workbook now, not just the first.
+        const baseName = d.filename.replace(/\.[^.]+$/, '');
+        const multiSheet = wb.SheetNames.length > 1;
+        for (const srcSheetName of wb.SheetNames) {
+          const sheet = wb.Sheets[srcSheetName];
+          const originalRef = sheet['!ref'];
+          // Confirmed real bug: copying the sheet as-is also copies its
+          // declared dimension tag straight into the combined file's XML —
+          // Google Drive's own preview ignores that tag and scans real cells
+          // (why "Vezi" looked fine), but a real spreadsheet app (Excel/WPS)
+          // honors it and only shows what it claims, which is worse than the
+          // PDF version: not even empty bordered cells, nothing at all past
+          // the declared range. Same fix as the PDF path (computeActualRange)
+          // — correcting the dimension before writing means every app,
+          // trusting or not, sees the same real data.
+          const actual = computeActualRange(XLSX, sheet);
+          if (actual) {
+            const declared = originalRef ? XLSX.utils.decode_range(originalRef) : actual;
+            sheet['!ref'] = XLSX.utils.encode_range({
+              s: { r: Math.min(actual.s.r, declared.s.r), c: Math.min(actual.s.c, declared.s.c) },
+              e: { r: Math.max(actual.e.r, declared.e.r), c: Math.max(actual.e.c, declared.e.c) },
+            });
+          }
+          const name = sheetName(multiSheet ? `${baseName}_${srcSheetName}` : baseName);
+          XLSX.utils.book_append_sheet(combinedWb, sheet, name);
+          debugRows.push({ filename: `${d.filename} [${srcSheetName}]`, sheetName: name, refOriginal: originalRef, refFixed: sheet['!ref'] });
+          addedAny = true;
         }
-        const name = sheetName(d.filename);
-        XLSX.utils.book_append_sheet(combinedWb, sheet, name);
-        debugRows.push({ filename: d.filename, sheetName: name, refOriginal: originalRef, refFixed: sheet['!ref'] });
-        addedAny = true;
       } catch (e) {
         debugRows.push({ filename: d.filename, error: e.message });
         toast(`❌ ${d.filename}: ${e.message}`, 'error');
@@ -955,21 +964,28 @@ export default function DocumentePage() {
         if (!res.ok) { debugRows.push({ filename: d.filename, error: `HTTP ${res.status}` }); continue; }
         const buf = await res.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const gridRows = buildXlsxGridRows(XLSX, sheet);
-        const nonEmptyCells = gridRows.reduce((n, row) => n + row.filter(c => (typeof c === 'object' ? c.content : c) !== '').length, 0);
-        debugRows.push({ filename: d.filename, ref: sheet['!ref'], rowCount: gridRows.length, nonEmptyCells });
-        if (renderedAny) pdfDoc.addPage();
-        pdfDoc.setFontSize(9);
-        pdfDoc.text(d.filename, 6, 6);
-        pdfDoc.autoTable({
-          startY: 10,
-          body: gridRows,
-          theme: 'grid',
-          styles: { fontSize: 7, cellPadding: 1.2, overflow: 'linebreak', font: 'helvetica' },
-          margin: { top: 8, left: 6, right: 6, bottom: 8 },
-        });
-        renderedAny = true;
+        // Same fix as combineExcelFilesAsXlsx: every sheet gets its own
+        // page, not just the first — a multi-sheet file (Sameday) was
+        // silently losing every tab past the first one.
+        const multiSheet = wb.SheetNames.length > 1;
+        for (const srcSheetName of wb.SheetNames) {
+          const sheet = wb.Sheets[srcSheetName];
+          const gridRows = buildXlsxGridRows(XLSX, sheet);
+          const nonEmptyCells = gridRows.reduce((n, row) => n + row.filter(c => (typeof c === 'object' ? c.content : c) !== '').length, 0);
+          const pageLabel = multiSheet ? `${d.filename} [${srcSheetName}]` : d.filename;
+          debugRows.push({ filename: pageLabel, ref: sheet['!ref'], rowCount: gridRows.length, nonEmptyCells });
+          if (renderedAny) pdfDoc.addPage();
+          pdfDoc.setFontSize(9);
+          pdfDoc.text(pageLabel, 6, 6);
+          pdfDoc.autoTable({
+            startY: 10,
+            body: gridRows,
+            theme: 'grid',
+            styles: { fontSize: 7, cellPadding: 1.2, overflow: 'linebreak', font: 'helvetica' },
+            margin: { top: 8, left: 6, right: 6, bottom: 8 },
+          });
+          renderedAny = true;
+        }
       } catch (e) {
         debugRows.push({ filename: d.filename, error: e.message });
         toast(`❌ ${d.filename}: ${e.message}`, 'error');
