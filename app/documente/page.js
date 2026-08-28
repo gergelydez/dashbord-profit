@@ -611,6 +611,42 @@ export default function DocumentePage() {
     // both spellings, drops CJK - jsPDF's default fonts can't render it).
     const clean = v => (v === null || v === undefined ? '' : String(v).replace(/[^ -~ -ɏ]/g, '').trim());
 
+    /**
+     * Confirmed real bug (GLS rambursuri xlsx): label rows like "Nume
+     * Client: GLAMX SRL" aren't merged cells at all in the source file —
+     * Excel just lets that text visually overflow into the empty
+     * neighbouring cells (extremely common, no merge underneath). A
+     * bordered grid theme draws a box around every cell regardless,
+     * so those genuinely-empty neighbours showed up as a trailing row
+     * of empty boxes instead of just... not being there. Collapsing a
+     * run of empty cells into the non-empty cell right before it
+     * mimics that overflow visually, without touching real, isolated
+     * blank cells that sit between two non-empty ones (e.g. a blank
+     * unit-header cell between "Sumă ramburs" and "Postal Address") —
+     * those have no preceding run to merge into on their right side,
+     * so they're left exactly as they were: their own empty cell.
+     */
+    const collapseEmptyRuns = (row) => {
+      const out = [];
+      for (const cell of row) {
+        const isObj = cell !== null && typeof cell === 'object';
+        const text = isObj ? cell.content : cell;
+        if (text === '' && out.length > 0) {
+          const prev = out[out.length - 1];
+          if (typeof prev === 'object') {
+            prev.colSpan = (prev.colSpan || 1) + 1;
+            continue;
+          }
+          if (prev !== '') {
+            out[out.length - 1] = { content: prev, colSpan: 2, rowSpan: 1 };
+            continue;
+          }
+        }
+        out.push(cell);
+      }
+      return out;
+    };
+
     const gridRows = [];
     for (let r = range.s.r; r <= range.e.r; r++) {
       const rowCells = [];
@@ -624,7 +660,7 @@ export default function DocumentePage() {
         const span = spanAt.get(key);
         rowCells.push(span ? { content: text, colSpan: span.colSpan, rowSpan: span.rowSpan } : text);
       }
-      if (rowHasContent) gridRows.push(rowCells);
+      if (rowHasContent) gridRows.push(collapseEmptyRuns(rowCells));
     }
     return gridRows;
   };
