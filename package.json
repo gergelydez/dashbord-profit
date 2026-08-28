@@ -28,6 +28,7 @@
     "jspdf-autotable": "^3.8.2",
     "mailparser": "^3.9.15",
     "next": "14.2.0",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^3.11.174",
     "react": "^18",
     "react-dom": "^18",

@@ -100,7 +100,33 @@ const CSS = `
   .doc-toast{background:#131c28;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:10px 16px;font-size:12px;font-weight:600;color:#e2e8f0;max-width:320px;}
   .doc-toast.success{border-color:rgba(16,185,129,.3);background:rgba(16,185,129,.08);color:#10b981;}
   .doc-toast.error{border-color:rgba(244,63,94,.3);background:rgba(244,63,94,.08);color:#f43f5e;}
+
+  .doc-section{background:#0c1018;border:1px solid rgba(255,255,255,.06);border-radius:14px;margin-bottom:10px;overflow:hidden;}
+  .doc-section-hdr{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;cursor:pointer;user-select:none;}
+  .doc-section-hdr-title{font-size:12px;font-weight:800;color:#e2e8f0;text-transform:uppercase;letter-spacing:.6px;display:flex;align-items:center;gap:8px;}
+  .doc-section-hdr-count{font-size:10px;color:#475569;font-weight:700;text-transform:none;letter-spacing:0;}
+  .doc-section-chevron{color:#475569;font-size:12px;transition:transform .15s;flex-shrink:0;}
+  .doc-section-body{padding:0 16px 16px;}
+  .doc-combine-row{display:flex;gap:6px;flex-wrap:wrap;padding:8px 16px;border-top:1px solid #161d24;}
 `;
+
+/** Collapsible panel used to keep the page scannable — most maintenance
+ * sections (accounts, rules, manual uploads) default closed; the ones
+ * checked daily (Neclasificate, Foldere) default open. */
+function Section({ title, icon, count, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="doc-section">
+      <div className="doc-section-hdr" onClick={() => setOpen(v => !v)}>
+        <div className="doc-section-hdr-title">
+          {icon} {title} {typeof count === 'number' && <span className="doc-section-hdr-count">({count})</span>}
+        </div>
+        <span className="doc-section-chevron">{open ? '▲' : '▼'}</span>
+      </div>
+      {open && <div className="doc-section-body">{children}</div>}
+    </div>
+  );
+}
 
 // Must match lib/mail/classify.ts's AWB_SUBCATEGORY exactly — a rule saved
 // with this subcategory value gets its real subcategory (AWB-<number>)
@@ -178,6 +204,8 @@ export default function DocumentePage() {
   const [uploadingReceptie, setUploadingReceptie] = useState(false);
   const [receptieProgress, setReceptieProgress] = useState(null);
   const [receptieDebug, setReceptieDebug] = useState(null);
+  const [uploadingExtras, setUploadingExtras] = useState(false);
+  const [extrasProgress, setExtrasProgress] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null); // { done, total }
   const [backfillFor, setBackfillFor] = useState(null); // mailAccountId
   const [backfillDate, setBackfillDate] = useState('');
@@ -556,6 +584,51 @@ export default function DocumentePage() {
    * so filename-only extraction silently loses the invoice-AWB link for
    * those. The caller sends these back to the server explicitly.
    */
+  /**
+   * Shared by convertXlsxToPdf (single-file Recepție upload) and
+   * combineExcelFiles (the "un fișier per pagină A4" combine button) — the
+   * full-grid, merge-aware extraction doesn't depend on which of those is
+   * calling it, only on the parsed sheet.
+   */
+  const buildXlsxGridRows = (XLSX, sheet) => {
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    const merges = sheet['!merges'] || [];
+    const covered = new Set();
+    const spanAt = new Map();
+    for (const m of merges) {
+      const rowSpan = m.e.r - m.s.r + 1;
+      const colSpan = m.e.c - m.s.c + 1;
+      if (rowSpan < 2 && colSpan < 2) continue;
+      spanAt.set(`${m.s.r},${m.s.c}`, { rowSpan, colSpan });
+      for (let r = m.s.r; r <= m.e.r; r++) {
+        for (let c = m.s.c; c <= m.e.c; c++) {
+          if (r === m.s.r && c === m.s.c) continue;
+          covered.add(`${r},${c}`);
+        }
+      }
+    }
+    // Printable ASCII + Latin-1/Extended-A/B (keeps Romanian diacritics in
+    // both spellings, drops CJK - jsPDF's default fonts can't render it).
+    const clean = v => (v === null || v === undefined ? '' : String(v).replace(/[^ -~ -ɏ]/g, '').trim());
+
+    const gridRows = [];
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      const rowCells = [];
+      let rowHasContent = false;
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const key = `${r},${c}`;
+        if (covered.has(key)) continue;
+        const cellObj = sheet[XLSX.utils.encode_cell({ r, c })];
+        const text = clean(cellObj ? (cellObj.w !== undefined ? cellObj.w : cellObj.v) : '');
+        if (text) rowHasContent = true;
+        const span = spanAt.get(key);
+        rowCells.push(span ? { content: text, colSpan: span.colSpan, rowSpan: span.rowSpan } : text);
+      }
+      if (rowHasContent) gridRows.push(rowCells);
+    }
+    return gridRows;
+  };
+
   const convertXlsxToPdf = async (file) => {
     const XLSX = await loadXLSXLib();
     const buf = await file.arrayBuffer();
@@ -595,42 +668,7 @@ export default function DocumentePage() {
       if (fm) awb = fm[1];
     }
 
-    // --- full-grid, merge-aware render ---
-    const range = XLSX.utils.decode_range(sheet['!ref']);
-    const merges = sheet['!merges'] || [];
-    const covered = new Set();
-    const spanAt = new Map();
-    for (const m of merges) {
-      const rowSpan = m.e.r - m.s.r + 1;
-      const colSpan = m.e.c - m.s.c + 1;
-      if (rowSpan < 2 && colSpan < 2) continue;
-      spanAt.set(`${m.s.r},${m.s.c}`, { rowSpan, colSpan });
-      for (let r = m.s.r; r <= m.e.r; r++) {
-        for (let c = m.s.c; c <= m.e.c; c++) {
-          if (r === m.s.r && c === m.s.c) continue;
-          covered.add(`${r},${c}`);
-        }
-      }
-    }
-    // Printable ASCII + Latin-1/Extended-A/B (keeps Romanian diacritics in
-    // both spellings, drops CJK - jsPDF's default fonts can't render it).
-    const clean = v => (v === null || v === undefined ? '' : String(v).replace(/[^ -~ -ɏ]/g, '').trim());
-
-    const gridRows = [];
-    for (let r = range.s.r; r <= range.e.r; r++) {
-      const rowCells = [];
-      let rowHasContent = false;
-      for (let c = range.s.c; c <= range.e.c; c++) {
-        const key = `${r},${c}`;
-        if (covered.has(key)) continue;
-        const cellObj = sheet[XLSX.utils.encode_cell({ r, c })];
-        const text = clean(cellObj ? (cellObj.w !== undefined ? cellObj.w : cellObj.v) : '');
-        if (text) rowHasContent = true;
-        const span = spanAt.get(key);
-        rowCells.push(span ? { content: text, colSpan: span.colSpan, rowSpan: span.rowSpan } : text);
-      }
-      if (rowHasContent) gridRows.push(rowCells);
-    }
+    const gridRows = buildXlsxGridRows(XLSX, sheet);
 
     const { jsPDF } = await import('jspdf');
     await import('jspdf-autotable');
@@ -707,6 +745,87 @@ export default function DocumentePage() {
       setUploadingReceptie(false);
       setReceptieProgress(null);
     }
+  };
+
+  /** Bank statements — pure archival, no parsing/matching like Recepție's
+   * AWB linking. .xlsx still gets converted to PDF client-side first, same
+   * reasoning as Recepție: keeps the category PDF-only and reuses the
+   * full-grid renderer instead of a second, different conversion path. */
+  const handleExtrasUpload = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setUploadingExtras(true);
+    setExtrasProgress({ done: 0, total: files.length });
+    try {
+      let uploaded = 0, duplicate = 0;
+      for (const file of files) {
+        try {
+          let blob = file;
+          let filename = file.name;
+          if (file.name.toLowerCase().endsWith('.xlsx')) {
+            const converted = await convertXlsxToPdf(file);
+            blob = converted.blob;
+            filename = converted.filename;
+          }
+          const form = new FormData();
+          form.append('file', blob, filename);
+          form.append('filename', filename);
+          form.append('month', month);
+          const res = await fetch('/api/mail/manual-upload-extras', { method: 'POST', body: form });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'eroare');
+          if (data.status === 'duplicate') duplicate++; else uploaded++;
+        } catch (e) {
+          toast(`❌ ${file.name}: ${e.message}`, 'error');
+        }
+        setExtrasProgress(p => ({ done: (p?.done || 0) + 1, total: files.length }));
+      }
+      toast(`✅ Extras: ${uploaded} urcate${duplicate ? `, ${duplicate} deja existente` : ''}`, 'success');
+      loadDocuments();
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      setUploadingExtras(false);
+      setExtrasProgress(null);
+    }
+  };
+
+  /** "Combină Excel (o pagină/fișier)" — downloads each xlsx's raw bytes
+   * (via /api/mail/download-file, since the server never keeps a parsed
+   * copy) and appends its full grid as a new page on one shared jsPDF doc,
+   * so N source files become one N(+)-page PDF instead of N separate ones. */
+  const combineExcelFiles = async (docs) => {
+    const XLSX = await loadXLSXLib();
+    const { jsPDF } = await import('jspdf');
+    await import('jspdf-autotable');
+    const pdfDoc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+    let renderedAny = false;
+    for (const d of docs) {
+      try {
+        const res = await fetch(`/api/mail/download-file?id=${d.id}`);
+        if (!res.ok) continue;
+        const buf = await res.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const gridRows = buildXlsxGridRows(XLSX, sheet);
+        if (renderedAny) pdfDoc.addPage();
+        pdfDoc.setFontSize(9);
+        pdfDoc.text(d.filename, 6, 6);
+        pdfDoc.autoTable({
+          startY: 10,
+          body: gridRows,
+          theme: 'grid',
+          styles: { fontSize: 7, cellPadding: 1.2, overflow: 'linebreak', font: 'helvetica' },
+          margin: { top: 8, left: 6, right: 6, bottom: 8 },
+        });
+        renderedAny = true;
+      } catch (e) {
+        toast(`❌ ${d.filename}: ${e.message}`, 'error');
+      }
+    }
+    if (!renderedAny) { toast('❌ Niciun fișier Excel nu a putut fi combinat', 'error'); return; }
+    const url = URL.createObjectURL(pdfDoc.output('blob'));
+    window.open(url, '_blank');
   };
 
   const commitStat = async () => {
@@ -817,6 +936,31 @@ export default function DocumentePage() {
 
   const toggleCat = (cat) => setOpenCats(p => ({ ...p, [cat]: !p[cat] }));
 
+  /** Only worth offering when there's more than one file to actually combine. */
+  const renderCombineRow = (files, category, subcategory) => {
+    const pdfFiles = files.filter(f => /\.pdf$/i.test(f.filename));
+    const xlsxFiles = files.filter(f => /\.xlsx$/i.test(f.filename));
+    if (pdfFiles.length < 2 && xlsxFiles.length < 2) return null;
+    return (
+      <div className="doc-combine-row">
+        {pdfFiles.length >= 2 && (
+          <a
+            className="doc-btn doc-btn-green"
+            href={`/api/mail/combine-pdfs?month=${month}&category=${encodeURIComponent(category)}${subcategory ? `&subcategory=${encodeURIComponent(subcategory)}` : ''}`}
+            target="_blank" rel="noopener noreferrer"
+          >
+            🖨️ Combină + printează PDF-uri ({pdfFiles.length})
+          </a>
+        )}
+        {xlsxFiles.length >= 2 && (
+          <button className="doc-btn doc-btn-blue" onClick={() => combineExcelFiles(xlsxFiles)}>
+            📊 Combină Excel, o pagină/fișier ({xlsxFiles.length})
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
@@ -839,8 +983,7 @@ export default function DocumentePage() {
           </div>
         </div>
 
-        <div className="doc-section-title">Conturi conectate</div>
-        <div className="doc-panel">
+        <Section title="Conturi conectate" icon="🔌" count={accounts.length}>
           {loadingAccounts ? (
             <div className="doc-empty">Se încarcă...</div>
           ) : accounts.length === 0 ? (
@@ -897,12 +1040,10 @@ export default function DocumentePage() {
               </div>
             </div>
           )}
-        </div>
+        </Section>
 
         {unclassified.length > 0 && (
-          <>
-            <div className="doc-section-title">⚠️ Neclasificate ({unclassified.length})</div>
-            <div className="doc-panel">
+          <Section title="Neclasificate" icon="⚠️" count={unclassified.length} defaultOpen={true}>
               {unclassified.map(doc => {
                 const a = assign[doc.id] || { category: '', customCategory: '', subcategory: '', customSubcategory: '', createRule: true };
                 const preset = CATEGORY_PRESETS.find(c => c.category === a.category);
@@ -949,12 +1090,10 @@ export default function DocumentePage() {
                   </div>
                 );
               })}
-            </div>
-          </>
+          </Section>
         )}
 
-        <div className="doc-section-title">Încărcare manuală facturi Meta Ads</div>
-        <div className="doc-panel">
+        <Section title="Încărcare manuală facturi Meta Ads" icon="📘">
           <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
             Meta nu trimite facturile pe email — descarci exportul „Transactions" (zip sau PDF-uri individuale) din Ads Manager → Billing, îl încarci aici. Se verifică automat statusul din fiecare PDF: doar cele <b style={{ color: '#10b981' }}>Paid</b> ajung pe Drive (folder Facebook) și intră în calculul „Meta spend"; cele <b style={{ color: '#f43f5e' }}>Failed</b> sunt ignorate complet.
           </div>
@@ -973,12 +1112,11 @@ export default function DocumentePage() {
               </span>
             )}
           </div>
-        </div>
+        </Section>
 
-        <div className="doc-section-title">Încărcare manuală Recepție (facturi transport, NIR, furnizor)</div>
-        <div className="doc-panel">
+        <Section title="Încărcare manuală Recepție" icon="📥">
           <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
-            Încarci PDF-uri (sau .xlsx pentru factura de transport — se convertește automat în PDF). Fiecare fișier ajunge automat în <b>Recepție/AWB-&lt;număr&gt;</b>: dacă numele conține „Invoice_...tracking..." (factura de transport), reține legătura factură↔AWB pentru viitor; dacă numele conține direct un AWB, îl folosește pe acela; altfel caută numărul facturii în textul PDF-ului (NIR, factură furnizor) și caută AWB-ul asociat. Dacă nu găsește nimic încă, fișierul așteaptă în „Neclasificate" până apare factura de transport corespunzătoare — apoi se mută automat.
+            (facturi transport, NIR, furnizor) — Încarci PDF-uri (sau .xlsx pentru factura de transport — se convertește automat în PDF). Fiecare fișier ajunge automat în <b>Recepție/AWB-&lt;număr&gt;</b>: dacă numele conține „Invoice_...tracking..." (factura de transport), reține legătura factură↔AWB pentru viitor; dacă numele conține direct un AWB, îl folosește pe acela; altfel caută numărul facturii în textul PDF-ului (NIR, factură furnizor) și caută AWB-ul asociat. Dacă nu găsește nimic încă, fișierul așteaptă în „Neclasificate" până apare factura de transport corespunzătoare — apoi se mută automat.
           </div>
           <div className="doc-actions">
             <label className="doc-btn doc-btn-primary" style={{ cursor: 'pointer' }}>
@@ -1020,7 +1158,28 @@ export default function DocumentePage() {
               ))}
             </div>
           )}
-        </div>
+        </Section>
+
+        <Section title="Încărcare extrase bancare" icon="🏦">
+          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+            Încarci extrasul de cont (PDF sau .xlsx) direct aici — nu vine pe email. Fiecare fișier ajunge în <b>Extras/{monthLabel(month)}</b>, fără nicio prelucrare automată — doar arhivare.
+          </div>
+          <div className="doc-actions">
+            <label className="doc-btn doc-btn-primary" style={{ cursor: 'pointer' }}>
+              {uploadingExtras ? <span className="doc-spin">↻</span> : '📤'} Alege PDF-uri sau .xlsx
+              <input
+                type="file" accept=".pdf,.xlsx" multiple style={{ display: 'none' }}
+                disabled={uploadingExtras}
+                onChange={e => { handleExtrasUpload(e.target.files); e.target.value = ''; }}
+              />
+            </label>
+            {extrasProgress && (
+              <span style={{ fontSize: 11, color: '#94a3b8', alignSelf: 'center' }}>
+                Procesez {extrasProgress.done}/{extrasProgress.total}...
+              </span>
+            )}
+          </div>
+        </Section>
 
         <div className="doc-section-title">Statistici lunare</div>
         <div className="doc-month-nav">
@@ -1091,10 +1250,12 @@ export default function DocumentePage() {
               {open && (
                 <div className="doc-cat-body">
                   {cat.files.map(f => <FileRow key={f.id} doc={f} />)}
+                  {renderCombineRow(cat.files, cat.category, null)}
                   {Object.entries(cat.subcats).map(([sub, files]) => (
                     <div key={sub}>
                       <div style={{ fontSize: 10, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', marginTop: 8 }}>{sub}</div>
                       {files.map(f => <FileRow key={f.id} doc={f} />)}
+                      {renderCombineRow(files, cat.category, sub)}
                     </div>
                   ))}
                 </div>
@@ -1103,8 +1264,7 @@ export default function DocumentePage() {
           );
         })}
 
-        <div className="doc-section-title">Reguli de sortare</div>
-        <div className="doc-panel">
+        <Section title="Reguli de sortare" icon="⚙️" count={rules.length}>
           {rules.length === 0 ? (
             <div className="doc-empty">Nicio regulă încă — cele create din „Neclasificate" apar aici.</div>
           ) : rules.map(r => (
@@ -1146,7 +1306,7 @@ export default function DocumentePage() {
               </button>
             </div>
           </div>
-        </div>
+        </Section>
       </div>
 
       <div className="doc-toasts">
