@@ -832,15 +832,6 @@ export default function DocumentePage() {
    * copy) and appends its full grid as a new page on one shared jsPDF doc,
    * so N source files become one N(+)-page PDF instead of N separate ones. */
   const combineExcelFiles = async (docs) => {
-    // Confirmed real bug: calling window.open() only AFTER the fetch/parse
-    // work below finishes made mobile Chrome treat it as a script-triggered
-    // popup (not a direct response to the tap) and silently block it most
-    // of the time — "worked" only once the browser had, through repeated
-    // blocked attempts, been nudged into always-allowing popups for the
-    // site. Opening the tab synchronously, right here at the top of the
-    // click handler, keeps it tied to the actual tap; the tab starts blank
-    // and gets pointed at the finished PDF once it's ready.
-    const targetWindow = window.open('', '_blank');
     const XLSX = await loadXLSXLib();
     const { jsPDF } = await import('jspdf');
     await import('jspdf-autotable');
@@ -881,12 +872,23 @@ export default function DocumentePage() {
     setCombineDebug(debugRows);
     if (!renderedAny) {
       toast('❌ Niciun fișier Excel nu a putut fi combinat', 'error');
-      if (targetWindow) targetWindow.close();
       return;
     }
+    // A real download instead of window.open()-ing a blob URL in a new tab —
+    // confirmed more reliable on mobile Chrome: opening a blank tab and then
+    // pointing it at a blob: URL produced a blank page (blob URLs don't
+    // always navigate cleanly across that tab boundary), whereas a
+    // programmatic <a download> click triggers the browser's normal
+    // download flow every time, with the full PDF, ready to open and print
+    // from wherever the phone saves it.
     const url = URL.createObjectURL(pdfDoc.output('blob'));
-    if (targetWindow) targetWindow.location.href = url;
-    else window.open(url, '_blank'); // pre-open itself got blocked — fall back, though unlikely since it was synchronous
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Excel_combinat_${month}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
   const commitStat = async () => {
