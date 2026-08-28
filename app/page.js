@@ -265,6 +265,7 @@ export default function Dashboard() {
   const [glsLiveAwbs, setGlsLiveAwbs] = useState([]); // AWB-uri MyGLS descoperite la ultima sincronizare live (perioada curentă)
   const [sdLiveAwbs, setSdLiveAwbs]   = useState([]); // AWB-uri Sameday descoperite la ultima sincronizare live (perioada curentă)
   const [sdLiveDebug, setSdLiveDebug] = useState(null); // status-sync Sameday e un endpoint netestat pe acest cont — păstrăm răspunsul brut ca să putem verifica/ajusta
+  const [glsLiveDebug, setGlsLiveDebug] = useState(null); // ultimul răspuns brut GetParcelList — util dacă tot vine listă goală
 
   const [courierFilter, setCourierFilter] = useState('toate');
   const [showTranzitPanel, setShowTranzitPanel] = useState(false);
@@ -765,6 +766,7 @@ export default function Dashboard() {
         body: JSON.stringify({ days }),
       });
       const data = await res.json();
+      setGlsLiveDebug(data.debug || null);
       if (!data.ok) { setGlsError(data.error || 'Eroare MyGLS'); return; }
       const awbs = Array.from(new Set((data.parcels || []).map(p => String(p.parcelNumber || '').trim()).filter(Boolean)));
       if (!awbs.length) { setGlsError('Niciun colet găsit în contul MyGLS pentru perioada selectată.'); return; }
@@ -2413,6 +2415,12 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                       ⚠️ Fără export MyGLS, statusurile vin doar din xConnector.<br/>
                       <strong>🔴 Live</strong> citește direct din contul MyGLS.
                     </div>
+                  )}
+                  {glsLiveDebug && (
+                    <details style={{fontSize:8,color:'#4a5568',marginBottom:6}}>
+                      <summary style={{cursor:'pointer',color:'#64748b'}}>🔍 Debug GetParcelList</summary>
+                      <pre style={{whiteSpace:'pre-wrap',wordBreak:'break-all',maxHeight:150,overflow:'auto',fontSize:8,marginTop:4,background:'#080d12',padding:6,borderRadius:4}}>{JSON.stringify(glsLiveDebug,null,1)}</pre>
+                    </details>
                   )}
                   {[
                     ['Total', glsOrders.length, '#e8edf2'],

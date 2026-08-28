@@ -46,13 +46,20 @@ export async function POST(req) {
     dateFrom.setDate(dateFrom.getDate() - days);
     const dateTo = new Date();
 
+    // API-ul WCF al MyGLS foloseşte formatul .NET JSON pentru DateTime
+    // ("\/Date(ms)\/" — vezi exemplele din Appendix E ale documentaţiei
+    // oficiale, ex. DDSParameter.Value). Un string ISO8601 simplu era
+    // acceptat silenţios ca dată invalidă/nulă, ceea ce întorcea mereu o
+    // listă goală fără nicio eroare vizibilă.
+    const wcfDate = (d) => `/Date(${d.getTime()})/`;
+
     const res = await fetch(`${GLS_BASE}/GetParcelList`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
         ...baseReq,
-        PickupDateFrom: dateFrom.toISOString(),
-        PickupDateTo:   dateTo.toISOString(),
+        PickupDateFrom: wcfDate(dateFrom),
+        PickupDateTo:   wcfDate(dateTo),
       }),
       cache: 'no-store',
     });
@@ -61,10 +68,14 @@ export async function POST(req) {
     let data;
     try { data = JSON.parse(raw); } catch { throw new Error('Raspuns invalid GLS'); }
 
+    // Orice eroare raportată de GLS (nu doar cele de autentificare) trebuie
+    // să ajungă vizibilă — altfel o listă goală arată identic cu "n-ai
+    // colete", indiferent dacă motivul real e un interval de date invalid,
+    // un cont neautorizat sau altceva.
     const errs = data?.GetParcelListErrors || [];
-    const authErr = errs.find(e => [14, 15, 27].includes(e.ErrorCode));
-    if (authErr) {
-      return NextResponse.json({ ok: false, error: `Auth GLS: ${authErr.ErrorDescription}` }, { headers: CORS });
+    if (errs.length) {
+      const msg = errs.map(e => `${e.ErrorCode}: ${e.ErrorDescription}`).join('; ');
+      return NextResponse.json({ ok: false, error: `Eroare GLS: ${msg}` }, { headers: CORS });
     }
 
     // GetParcelListResponse.PrintDataInfoList (NU "ParcelList" — nu există în API-ul
@@ -89,6 +100,7 @@ export async function POST(req) {
       ok: true,
       count: parcels.length,
       parcels,
+      debug: { envelopeKeys: Object.keys(data || {}), rawSample: data?.PrintDataInfoList?.[0] || null },
     }, { headers: CORS });
 
   } catch (e) {
