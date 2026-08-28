@@ -586,10 +586,8 @@ export default function DocumentePage() {
    * those. The caller sends these back to the server explicitly.
    */
   /**
-   * Shared by convertXlsxToPdf (single-file Recepție upload) and
-   * combineExcelFiles (the "un fișier per pagină A4" combine button) — the
-   * full-grid, merge-aware extraction doesn't depend on which of those is
-   * calling it, only on the parsed sheet.
+   * Used by convertXlsxToPdf (single-file Recepție upload, where a PDF is
+   * required by that flow — Recepție only ever holds PDFs).
    */
   /**
    * Root-caused against the user's live Drive files (confirmed correct when
@@ -861,71 +859,64 @@ export default function DocumentePage() {
     }
   };
 
-  /** "Combină Excel (o pagină/fișier)" — downloads each xlsx's raw bytes
+  /** "Combină Excel (un fișier .xlsx)" — downloads each file's raw bytes
    * (via /api/mail/download-file, since the server never keeps a parsed
-   * copy) and appends its full grid as a new page on one shared jsPDF doc,
-   * so N source files become one N(+)-page PDF instead of N separate ones. */
-  const combineExcelFiles = async (docs) => {
+   * copy) and appends its sheet, UNCHANGED, as its own tab in one combined
+   * workbook. Deliberately not a PDF: re-rendering each sheet into a grid
+   * for jsPDF turned out fragile in ways a straight sheet-to-sheet copy
+   * never can be (colSpan/page-fit quirks, trusting a sheet's often-wrong
+   * !ref) — copying the original sheet object wholesale means Excel/Sheets
+   * itself renders it exactly the way it already renders correctly when
+   * the source file is opened directly (confirmed by the user against
+   * their own Drive-stored file), because it IS that same sheet data. */
+  const combineExcelFilesAsXlsx = async (docs) => {
     const XLSX = await loadXLSXLib();
-    const { jsPDF } = await import('jspdf');
-    await import('jspdf-autotable');
-    const pdfDoc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
-    let renderedAny = false;
+    const combinedWb = XLSX.utils.book_new();
+    const usedNames = new Set();
+    const sheetName = (filename) => {
+      let base = filename.replace(/\.[^.]+$/, '').replace(/[\\/?*[\]:]/g, '_').slice(0, 31) || 'Sheet';
+      let name = base;
+      let i = 1;
+      while (usedNames.has(name)) {
+        const suffix = `_${i++}`;
+        name = base.slice(0, 31 - suffix.length) + suffix;
+      }
+      usedNames.add(name);
+      return name;
+    };
+
+    let addedAny = false;
     const debugRows = [];
     for (const d of docs) {
       try {
         const res = await fetch(`/api/mail/download-file?id=${d.id}`);
         if (!res.ok) { debugRows.push({ filename: d.filename, error: `HTTP ${res.status}` }); continue; }
         const buf = await res.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        const hex = Array.from(bytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('');
         const wb = XLSX.read(buf, { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
-        const gridRows = buildXlsxGridRows(XLSX, sheet);
-        const nonEmptyCells = gridRows.reduce((n, row) => n + row.filter(c => (typeof c === 'object' ? c.content : c) !== '').length, 0);
-        const actualRange = computeActualRange(XLSX, sheet);
-        debugRows.push({
-          filename: d.filename, byteLength: buf.byteLength, hex,
-          sheetNames: wb.SheetNames, ref: sheet['!ref'],
-          actualRange: actualRange ? `${XLSX.utils.encode_cell(actualRange.s)}:${XLSX.utils.encode_cell(actualRange.e)}` : null,
-          rowCount: gridRows.length, nonEmptyCells,
-        });
-        if (renderedAny) pdfDoc.addPage();
-        pdfDoc.setFontSize(9);
-        pdfDoc.text(d.filename, 6, 6);
-        pdfDoc.autoTable({
-          startY: 10,
-          body: gridRows,
-          theme: 'grid',
-          styles: { fontSize: 7, cellPadding: 1.2, overflow: 'linebreak', font: 'helvetica' },
-          margin: { top: 8, left: 6, right: 6, bottom: 8 },
-        });
-        renderedAny = true;
+        const name = sheetName(d.filename);
+        XLSX.utils.book_append_sheet(combinedWb, sheet, name);
+        debugRows.push({ filename: d.filename, sheetName: name, ref: sheet['!ref'] });
+        addedAny = true;
       } catch (e) {
         debugRows.push({ filename: d.filename, error: e.message });
         toast(`❌ ${d.filename}: ${e.message}`, 'error');
       }
     }
     setCombineDebug(debugRows);
-    if (!renderedAny) {
-      toast('❌ Niciun fișier Excel nu a putut fi combinat', 'error');
-      return;
-    }
-    // A real download instead of window.open()-ing a blob URL in a new tab —
-    // confirmed more reliable on mobile Chrome: opening a blank tab and then
-    // pointing it at a blob: URL produced a blank page (blob URLs don't
-    // always navigate cleanly across that tab boundary), whereas a
-    // programmatic <a download> click triggers the browser's normal
-    // download flow every time, with the full PDF, ready to open and print
-    // from wherever the phone saves it.
-    const url = URL.createObjectURL(pdfDoc.output('blob'));
+    if (!addedAny) { toast('❌ Niciun fișier Excel nu a putut fi combinat', 'error'); return; }
+
+    const wbout = XLSX.write(combinedWb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Excel_combinat_${month}.pdf`;
+    a.download = `Excel_combinat_${month}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast(`✅ ${docs.length} fișiere combinate într-un singur .xlsx`, 'success');
   };
 
   const commitStat = async () => {
@@ -1053,8 +1044,8 @@ export default function DocumentePage() {
           </a>
         )}
         {xlsxFiles.length >= 2 && (
-          <button className="doc-btn doc-btn-blue" onClick={() => combineExcelFiles(xlsxFiles)}>
-            📊 Combină Excel, o pagină/fișier ({xlsxFiles.length})
+          <button className="doc-btn doc-btn-blue" onClick={() => combineExcelFilesAsXlsx(xlsxFiles)}>
+            📊 Combină Excel (.xlsx, {xlsxFiles.length} fișiere)
           </button>
         )}
       </div>
@@ -1368,10 +1359,10 @@ export default function DocumentePage() {
           <div className="doc-errbox" style={{ marginBottom: 12, fontFamily: 'monospace', fontSize: 10, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
             <div style={{ marginBottom: 6, fontWeight: 700 }}>Debug ultima combinare Excel ({combineDebug.length} fișier{combineDebug.length === 1 ? '' : 'e'}):</div>
             {combineDebug.map((r, i) => (
-              <div key={i} style={{ marginBottom: 6, color: r.error ? '#f43f5e' : (r.nonEmptyCells > 5 ? '#10b981' : '#f59e0b') }}>
+              <div key={i} style={{ marginBottom: 6, color: r.error ? '#f43f5e' : '#10b981' }}>
                 {r.error ? '✗' : '✓'} {r.filename}
                 {r.error && <> · eroare: {r.error}</>}
-                {!r.error && <> · {r.byteLength} bytes · hex:{r.hex} (valid xlsx = 504b0304) · foi: {r.sheetNames.join(', ')} · interval declarat: {r.ref} · interval real: {r.actualRange} · {r.rowCount} rânduri · {r.nonEmptyCells} celule cu conținut</>}
+                {!r.error && <> · adăugat ca foaie „{r.sheetName}" · interval: {r.ref}</>}
               </div>
             ))}
           </div>
