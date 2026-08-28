@@ -91,6 +91,17 @@ function normalizeRoDiacritics(s: string): string {
   return s.replace(/ş/g, 'ș').replace(/Ş/g, 'Ș').replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț');
 }
 
+/** month = "2026-08". Returns just the month folder's id (Year/Month, no category) — the level reconcileDriveMonth walks from. */
+export async function getMonthFolderId(auth: OAuth2Client, month: string): Promise<string> {
+  const [yearStr, monthStr] = month.split('-');
+  const monthNum = parseInt(monthStr, 10);
+  const monthLabel = `${monthStr} - ${MONTH_NAMES_RO[monthNum - 1] || monthStr}`;
+
+  const rootId = await getRootFolderId(auth);
+  const yearId = await ensureFolderCached(auth, yearStr, rootId, `${rootId}/${yearStr}`);
+  return ensureFolderCached(auth, monthLabel, yearId, `${yearId}/${monthLabel}`);
+}
+
 /** month = "2026-08". Returns the final folder id, creating any missing folder along the path. */
 export async function getOrCreateMonthPath(
   auth: OAuth2Client,
@@ -98,15 +109,10 @@ export async function getOrCreateMonthPath(
   category: string,
   subcategory?: string | null,
 ): Promise<string> {
-  const [yearStr, monthStr] = month.split('-');
-  const monthNum = parseInt(monthStr, 10);
-  const monthLabel = `${monthStr} - ${MONTH_NAMES_RO[monthNum - 1] || monthStr}`;
   const cat = normalizeRoDiacritics(category);
   const subcat = subcategory ? normalizeRoDiacritics(subcategory) : subcategory;
 
-  const rootId = await getRootFolderId(auth);
-  const yearId = await ensureFolderCached(auth, yearStr, rootId, `${rootId}/${yearStr}`);
-  const monthId = await ensureFolderCached(auth, monthLabel, yearId, `${yearId}/${monthLabel}`);
+  const monthId = await getMonthFolderId(auth, month);
   const catId = await ensureFolderCached(auth, cat, monthId, `${monthId}/${cat}`);
   if (!subcat) return catId;
   return ensureFolderCached(auth, subcat, catId, `${catId}/${subcat}`);
@@ -155,6 +161,34 @@ export async function trashFile(auth: OAuth2Client, fileId: string): Promise<voi
   const drive = google.drive({ version: 'v3', auth });
   await drive.files.update({ fileId, requestBody: { trashed: true } });
 }
+
+export interface DriveChild {
+  id: string;
+  name: string;
+  mimeType: string;
+}
+
+/** Lists the direct (non-trashed) children of a folder — both files and subfolders. Used by reconcileDriveMonth to walk the actual Drive tree, since manual edits on Drive (upload/delete outside the app) never touch the DB on their own. */
+export async function listChildren(auth: OAuth2Client, folderId: string): Promise<DriveChild[]> {
+  const drive = google.drive({ version: 'v3', auth });
+  const out: DriveChild[] = [];
+  let pageToken: string | undefined;
+  do {
+    const res = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'nextPageToken, files(id,name,mimeType)',
+      pageSize: 1000,
+      pageToken,
+    });
+    for (const f of res.data.files || []) {
+      if (f.id && f.name && f.mimeType) out.push({ id: f.id, name: f.name, mimeType: f.mimeType });
+    }
+    pageToken = res.data.nextPageToken || undefined;
+  } while (pageToken);
+  return out;
+}
+
+export const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
 /** Moves a file to a new parent folder (e.g. reclassifying a "Neclasificate" document) — removes it from all current parents first. */
 export async function moveFile(auth: OAuth2Client, fileId: string, newParentId: string): Promise<void> {

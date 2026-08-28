@@ -209,6 +209,7 @@ export default function DocumentePage() {
   const [combineDebug, setCombineDebug] = useState(null);
   const [combiningXlsx, setCombiningXlsx] = useState(false);
   const [combiningPdf, setCombiningPdf] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null); // { done, total }
   const [backfillFor, setBackfillFor] = useState(null); // mailAccountId
   const [backfillDate, setBackfillDate] = useState('');
@@ -288,6 +289,29 @@ export default function DocumentePage() {
       toast('Eroare sincronizare: ' + e.message, 'error');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  /** "Sincronizează cu Drive" — unlike runSync (which reads new email), this
+   * reconciles the DB against whatever is ACTUALLY on Drive right now for
+   * the selected month: a file dropped onto Drive by hand gets picked up
+   * as a document, and a document whose file (or whole folder, like the
+   * duplicate "Recepție" the user deleted directly) no longer exists on
+   * Drive gets its stale DB row removed instead of lingering in the app. */
+  const reconcileDrive = async () => {
+    setReconciling(true);
+    try {
+      const res = await fetch('/api/mail/reconcile-drive', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'eroare');
+      toast(`✅ Sincronizat cu Drive: ${data.imported} adăugate, ${data.removed} eliminate (nu mai există pe Drive)`, 'success');
+      loadDocuments();
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -1459,6 +1483,14 @@ export default function DocumentePage() {
         <div className="doc-section-title">Foldere — {monthLabel(month)}</div>
         <div className="doc-actions" style={{ marginBottom: 10 }}>
           <a className="doc-btn doc-btn-green" href={`/api/mail/download-month?month=${month}`}>📦 Descarcă tot (zip)</a>
+          <button
+            className="doc-btn doc-btn-ghost"
+            disabled={reconciling}
+            onClick={reconcileDrive}
+            title="Adaugă în aplicație fișierele urcate manual pe Drive și șterge din aplicație fișierele/folderele șterse manual de pe Drive"
+          >
+            {reconciling ? <span className="doc-spin">↻</span> : '🔄'} Sincronizează cu Drive
+          </button>
         </div>
         {loadingDocs ? (
           <div className="doc-empty">Se încarcă...</div>
