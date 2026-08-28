@@ -894,9 +894,27 @@ export default function DocumentePage() {
         const buf = await res.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
+        const originalRef = sheet['!ref'];
+        // Confirmed real bug: copying the sheet as-is also copies its
+        // declared dimension tag straight into the combined file's XML —
+        // Google Drive's own preview ignores that tag and scans real cells
+        // (why "Vezi" looked fine), but a real spreadsheet app (Excel/WPS)
+        // honors it and only shows what it claims, which is worse than the
+        // PDF version: not even empty bordered cells, nothing at all past
+        // the declared range. Same fix as the PDF path (computeActualRange)
+        // — correcting the dimension before writing means every app,
+        // trusting or not, sees the same real data.
+        const actual = computeActualRange(XLSX, sheet);
+        if (actual) {
+          const declared = originalRef ? XLSX.utils.decode_range(originalRef) : actual;
+          sheet['!ref'] = XLSX.utils.encode_range({
+            s: { r: Math.min(actual.s.r, declared.s.r), c: Math.min(actual.s.c, declared.s.c) },
+            e: { r: Math.max(actual.e.r, declared.e.r), c: Math.max(actual.e.c, declared.e.c) },
+          });
+        }
         const name = sheetName(d.filename);
         XLSX.utils.book_append_sheet(combinedWb, sheet, name);
-        debugRows.push({ filename: d.filename, sheetName: name, ref: sheet['!ref'] });
+        debugRows.push({ filename: d.filename, sheetName: name, refOriginal: originalRef, refFixed: sheet['!ref'] });
         addedAny = true;
       } catch (e) {
         debugRows.push({ filename: d.filename, error: e.message });
@@ -1362,7 +1380,7 @@ export default function DocumentePage() {
               <div key={i} style={{ marginBottom: 6, color: r.error ? '#f43f5e' : '#10b981' }}>
                 {r.error ? '✗' : '✓'} {r.filename}
                 {r.error && <> · eroare: {r.error}</>}
-                {!r.error && <> · adăugat ca foaie „{r.sheetName}" · interval: {r.ref}</>}
+                {!r.error && <> · adăugat ca foaie „{r.sheetName}" · interval original: {r.refOriginal} · interval corectat: {r.refFixed}</>}
               </div>
             ))}
           </div>
