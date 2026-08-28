@@ -1264,6 +1264,21 @@ export default function DocumentePage() {
           );
         })}
 
+        {(() => {
+          const allPdfCount = documents.filter(d => /\.pdf$/i.test(d.filename)).length;
+          return allPdfCount >= 2 && (
+            <div className="doc-actions" style={{ margin: '4px 0 20px' }}>
+              <a
+                className="doc-btn doc-btn-green"
+                href={`/api/mail/combine-pdfs?month=${month}`}
+                target="_blank" rel="noopener noreferrer"
+              >
+                🖨️ Combină + printează TOATE PDF-urile lunii ({allPdfCount})
+              </a>
+            </div>
+          );
+        })()}
+
         <Section title="Reguli de sortare" icon="⚙️" count={rules.length}>
           {rules.length === 0 ? (
             <div className="doc-empty">Nicio regulă încă — cele create din „Neclasificate" apar aici.</div>
