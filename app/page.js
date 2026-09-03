@@ -283,6 +283,13 @@ export default function Dashboard() {
   const [addrValidating, setAddrValidating] = useState(false);
   const [liveTrackingData, setLiveTrackingData] = useState({}); // { orderId: {statusCode, desc, location, lastUpdate, loading} }
 
+  // Refresh-ul din panoul "Colete în tranzit" arăta un status live corect
+  // (ex. "Livrat") dar nu scria nicăieri rezultatul — coletul rămânea în
+  // continuare "în tranzit" pentru totdeauna, indiferent ce spunea eticheta.
+  // Acum aplică aceeași reclasificare ca refreshTracking (inclusiv
+  // hasReturnCode — un refuz oriunde în istoric contează, chiar dacă ultimul
+  // status pare "delivered"), ca respingerea/livrarea reală să chiar scoată
+  // coletul din listă.
   const fetchLiveTracking = async (orders) => {
     for (const o of orders) {
       if (!o.trackingNo) continue;
@@ -290,14 +297,31 @@ export default function Dashboard() {
       try {
         const r = await fetch(`/api/tracking?awb=${o.trackingNo}&courier=${o.courier||'gls'}`);
         const d = await r.json();
+
+        const liveTs =
+          d.hasReturnCode                   ? 'retur' :
+          d.status === 'delivered'          ? 'livrat' :
+          d.status === 'out_for_delivery'   ? 'outfor' :
+          d.status === 'easybox'            ? 'easybox' :
+          d.status === 'in_transit'         ? 'incurs' :
+          d.status === 'failed_attempt'     ? 'outfor' :
+          (d.status === 'returned' || d.status === 'failure') ? 'retur' : null;
+        if (liveTs && liveTs !== o.ts) {
+          const ovData = { ts: liveTs, statusRaw: d.statusRaw, lastUpdate: d.lastUpdate, location: d.location };
+          trackingOverrides.update(o.id, ovData);
+          setAllOrders(prev => prev.map(x => x.id === o.id
+            ? { ...x, ts: liveTs, trackingStatus: d.statusRaw||'', trackingLastUpdate: d.lastUpdate||'', trackingLocation: d.location||'' }
+            : x));
+        }
+
         setLiveTrackingData(prev => {
           const next = {...prev, [o.id]: {
             loading: false,
             statusCode: d.statusRaw,
-            desc: d.statusDescription || d.statusRaw || '—',
+            desc: d.hasReturnCode ? 'Refuzat/Retur' : (d.statusDescription || d.statusRaw || '—'),
             location: d.location || '',
             lastUpdate: d.lastUpdate ? new Date(d.lastUpdate).toLocaleString('ro-RO',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '',
-            glsStatus: d.status,
+            glsStatus: d.hasReturnCode ? 'returned' : d.status,
           }};
           try { localStorage.setItem('glamx_live_tracking', JSON.stringify(next)); } catch {}
           return next;
@@ -1146,6 +1170,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
           if (!t || !t.status) return o;
 
           const liveTs =
+            t.hasReturnCode                  ? 'retur' :
             t.status === 'delivered'         ? 'livrat' :
             t.status === 'out_for_delivery'  ? 'outfor' :
             t.status === 'easybox'           ? 'easybox' :
