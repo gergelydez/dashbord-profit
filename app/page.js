@@ -733,8 +733,16 @@ export default function Dashboard() {
     return null; // null = folosim statusul din Shopify
   };
 
+  // Un singur citit din trackingOverrides pe randare — refolosit de
+  // getSdStatus/getGlsStatusFinal mai jos (un colet e verificat individual,
+  // deci trackingOverrides e mereu mai proaspăt decât un glsAwbMap/sdAwbMap
+  // populat cândva printr-un import/sincronizare pe altă perioadă).
+  const trackingOverridesMap = trackingOverrides.get();
+
   const getSdStatus = (order) => {
     if (!order) return null;
+    const ov = trackingOverridesMap[order.id];
+    if (ov?.ts) return ov.ts;
     const awb = (order.trackingNo || '').trim();
     if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
     return order.ts !== 'pending' ? order.ts : null;
@@ -1254,6 +1262,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   // Nu mai recalculăm — o.ts e deja corect după applyTrackingOverrides
   // GLS status: prioritizăm Excel din MyGLS > Shopify/xConnector
   const getGlsStatusFinal = (o) => {
+    const ov = trackingOverridesMap[o.id];
+    if (ov?.ts) return ov.ts;
     const awb = (o.trackingNo || '').trim();
     if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
     return o.ts;
