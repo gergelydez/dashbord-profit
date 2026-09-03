@@ -733,6 +733,20 @@ export default function Dashboard() {
     return 'incurs';
   };
 
+  // GLS refolosește codul de status 5 ("The parcel has been delivered") atât
+  // pentru livrare la client CÂT ȘI pentru predarea coletului retur înapoi la
+  // depozit — /api/tracking nu poate distinge cele două (are doar istoricul
+  // de status al unui singur AWB). Aceeași ambiguitate era deja rezolvată la
+  // importul din Excel (parseGlsExcel/normalizeGlsStatus): un colet cu
+  // ramburs efectiv sau serviciu COD care ajunge "delivered" a fost predat
+  // clientului; fără niciuna dintre ele, "delivered" înseamnă că s-a întors
+  // la expeditor. GetParcelList (sursa AWB-urilor Live) are exact aceste
+  // câmpuri, deci putem aplica aceeași regulă și aici.
+  const isGlsActuallyDelivered = (cod, services) => {
+    if (Number(cod) > 0) return true;
+    return (services || []).some(s => String(s).toUpperCase().includes('COD'));
+  };
+
   // Interoghează /api/tracking (deja folosit în restul aplicației) în loturi
   // mici — un AWB list de 100-200 bucăți dintr-o singură cerere ar risca
   // timeout-ul funcției serverless; loturi de 15 țin fiecare cerere scurtă.
@@ -769,13 +783,21 @@ export default function Dashboard() {
       const data = await res.json();
       setGlsLiveDebug(data.debug || null);
       if (!data.ok) { setGlsError(data.error || 'Eroare MyGLS'); return; }
+      const parcelByAwb = new Map((data.parcels || []).map(p => [String(p.parcelNumber || '').trim(), p]));
       const awbs = Array.from(new Set((data.parcels || []).map(p => String(p.parcelNumber || '').trim()).filter(Boolean)));
       if (!awbs.length) { setGlsError('Niciun colet găsit în contul MyGLS pentru perioada selectată.'); return; }
       const statusMap = await fetchTrackingBatch(awbs, 'gls');
       const newMap = { ...glsAwbMap };
       for (const awb of awbs) {
         const t = statusMap.get(awb);
-        newMap[awb] = t?.status ? mapLiveStatus(t.status, t.lastUpdate) : (newMap[awb] || 'incurs');
+        if (t?.status === 'delivered') {
+          const p = parcelByAwb.get(awb);
+          newMap[awb] = isGlsActuallyDelivered(p?.cod, p?.services) ? 'livrat' : 'retur';
+        } else if (t?.status) {
+          newMap[awb] = mapLiveStatus(t.status, t.lastUpdate);
+        } else {
+          newMap[awb] = newMap[awb] || 'incurs';
+        }
       }
       const label = `🔄 Live MyGLS (${awbs.length} AWB, ${new Date().toLocaleString('ro-RO')})`;
       const newFiles = [...glsFiles.filter(f => !f.startsWith('🔄 Live MyGLS')), label];
