@@ -1270,9 +1270,21 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   };
 
   const getFinalStatus = (o) => {
-    if (o.courier === 'gls') return getGlsStatusFinal(o);
-    if (o.courier === 'sameday') return getSdStatus(o) || o.ts;
-    return o.ts;
+    const s = o.courier === 'gls' ? getGlsStatusFinal(o)
+            : o.courier === 'sameday' ? (getSdStatus(o) || o.ts)
+            : o.ts;
+    // Regula "peste 30 zile blocat = anulat" există deja în
+    // applyTrackingOverrides (mai sus, pe o.ts), dar glsAwbMap/sdAwbMap sau
+    // un trackingOverride mai vechi pot întoarce tot 'incurs'/'outfor' pentru
+    // un AWB pe care curierul însuși l-a abandonat cu luni în urmă (înregistrat
+    // dar niciodată ridicat, adresă greșită nerezolvată etc.) — fără ea, un
+    // colet mort rămâne etern în "Colete în tranzit". O aplicăm aici, la
+    // final, ca să conteze indiferent din ce sursă vine statusul.
+    if (['incurs','outfor','easybox'].includes(s) && o.createdAt) {
+      const daysSince = (new Date() - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
+      if (daysSince > 30) return 'anulat';
+    }
+    return s;
   };
 
   const cnt = s => orders.filter(o=>getFinalStatus(o)===s).length;
