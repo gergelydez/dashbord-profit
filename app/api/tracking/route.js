@@ -18,6 +18,14 @@ function hashPassword(password) {
   );
 }
 
+// Coduri GLS care înseamnă explicit refuz/retur la expeditor (Appendix G):
+// 17=refuz primire, 23=returnat la expeditor, 34=refuz din cauza întârzierii,
+// 35=refuzat (marfă necomandată), 40=returnat la expeditor. Un colet poate
+// primi un status ulterior ambiguu (ex. 5="delivered", refolosit și pentru
+// predarea coletului retur înapoi în depozit) care ascunde refuzul dacă ne
+// uităm doar la ultimul status din istoric — de-aia verificăm tot istoricul.
+const GLS_RETURN_CODES = [17, 23, 34, 35, 40];
+
 // GLS Status Codes → status intern (din Appendix G documentație MyGLS)
 function mapGLSStatus(statusCode) {
   const code = parseInt(statusCode);
@@ -90,6 +98,7 @@ async function trackGLS(awb) {
     // Ultimul status = primul din listă (cel mai recent)
     const last = statusList[0];
     const mapped = mapGLSStatus(last.StatusCode);
+    const hasReturnCode = statusList.some(s => GLS_RETURN_CODES.includes(parseInt(s.StatusCode)));
 
     // Parsăm data GLS: /Date(1774645401000+0100)/ → timestamp
     const parseGLSDate = (dateStr) => {
@@ -105,6 +114,7 @@ async function trackGLS(awb) {
       statusDescription: last.StatusDescription || '',
       lastUpdate: parseGLSDate(last.StatusDate),
       location: last.DepotCity || '',
+      hasReturnCode,
     };
 
     trackingCache.set(cacheKey, { data: result, ts: Date.now() });

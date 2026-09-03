@@ -762,7 +762,7 @@ export default function Dashboard() {
       });
       const data = await res.json();
       for (const r of (data.results || [])) {
-        if (r?.awb) map.set(String(r.awb).trim(), { status: r.status, lastUpdate: r.lastUpdate });
+        if (r?.awb) map.set(String(r.awb).trim(), { status: r.status, lastUpdate: r.lastUpdate, hasReturnCode: r.hasReturnCode });
       }
     }
     return map;
@@ -790,7 +790,12 @@ export default function Dashboard() {
       const newMap = { ...glsAwbMap };
       for (const awb of awbs) {
         const t = statusMap.get(awb);
-        if (t?.status === 'delivered') {
+        if (t?.hasReturnCode) {
+          // A existat un refuz/retur oriunde în istoricul AWB-ului — contează
+          // indiferent ce arată ultimul status (poate fi "delivered" pentru
+          // predarea coletului retur înapoi în depozit).
+          newMap[awb] = 'retur';
+        } else if (t?.status === 'delivered') {
           const p = parcelByAwb.get(awb);
           newMap[awb] = isGlsActuallyDelivered(p?.cod, p?.services) ? 'livrat' : 'retur';
         } else if (t?.status) {
