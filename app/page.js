@@ -1610,24 +1610,44 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
 
             {/* Panel tranzit live — cu filtrare pe status și curier + export */}
             {showTranzitPanel && tranzitOrders.length > 0 && (() => {
+              // Traduse din Appendix G al documentației oficiale MyGLS (nu ghicite) —
+              // versiunea anterioară avea etichete greșite pentru mai multe coduri
+              // (ex. 14 nu e "Refuzat", e "recepție închisă"; adevăratul cod de
+              // refuz e 17, care lipsea complet din listă).
               const GLS_CODES = {
-                1:'Preluat de curier', 2:'Plecat din depozit', 3:'Ajuns în depozit',
-                4:'În livrare azi', 5:'Livrat', 6:'Stocat temporar', 7:'Stocat',
-                8:'Ridicare proprie', 9:'Reprogramat', 10:'Scanat în depozit',
-                11:'Adresă incorectă', 12:'Destinatar absent', 13:'În tranzit hub',
-                14:'Refuzat', 15:'Deteriorat', 16:'Pierdut', 17:'Retur inițiat',
-                18:'Adresă incompletă', 19:'Cod poștal incorect', 20:'Zonă neacoperită',
-                21:'Eroare sortare', 22:'Trimis la sortare', 23:'Retur la expeditor',
-                24:'Redirecționat', 25:'Transferat alt depot', 26:'Ajuns depot destinație',
-                27:'Confirmat în centru', 29:'Plecat spre livrare', 32:'Ieșit pentru livrare',
-                40:'Retur primit', 41:'Redirecționat hub', 46:'Plecat hub',
-                47:'Plecat depozit', 51:'Date înregistrate', 52:'Ramburs înregistrat',
-                53:'Tranzit depozit', 54:'Livrat (confirmat)', 55:'Livrat la vecin',
-                56:'Scanat ieșire', 58:'Livrat la recepție', 80:'Pickup înregistrat',
-                83:'Pickup preluat', 84:'Pickup confirmat', 85:'Expediat', 86:'Preluat curier',
-                87:'Tentativă eșuată 1', 88:'Tentativă eșuată 2', 89:'Tentativă eșuată 3',
-                90:'Returnare inițiată', 92:'Livrat (semnătură)', 93:'Livrat (foto)',
-                97:'Procesare', 99:'În tranzit',
+                1:'Predat la GLS', 2:'Plecat din depozit', 3:'Ajuns în depozit',
+                4:'În livrare azi', 5:'Livrat', 6:'Stocat în depozit', 7:'Stocat în depozit',
+                8:'Stocat — ridicare proprie', 9:'Stocat — reprogramat',
+                10:'Scanare normală', 11:'Nelivrat — destinatar în concediu',
+                12:'Nelivrat — destinatar absent', 13:'Eroare sortare depozit',
+                14:'Nelivrat — recepție închisă', 15:'Nelivrat — lipsă timp',
+                16:'Nelivrat — fără numerar disponibil', 17:'Nelivrat — refuzat de destinatar',
+                18:'Nelivrat — informații adresă necesare', 19:'Nelivrat — condiții meteo',
+                20:'Nelivrat — adresă greșită/incompletă', 21:'Eroare sortare (redirecționat)',
+                22:'Trimis spre sortare', 23:'Retur la expeditor',
+                24:'Opțiune livrare schimbată', 25:'Redirecționat greșit',
+                26:'Ajuns în depozit', 27:'Ajuns în depozit', 28:'Eliminat/dispus',
+                29:'În verificare', 30:'Deteriorat la intrare', 31:'Complet deteriorat',
+                32:'Livrare seara', 33:'Nelivrat — interval depășit',
+                34:'Nelivrat — refuzat din cauza întârzierii', 35:'Refuzat — marfă necomandată',
+                36:'Destinatar absent — fără card contact', 37:'Schimbare la cererea expeditorului',
+                38:'Nelivrat — lipsă aviz livrare', 39:'Aviz de livrare nesemnat',
+                40:'Retur la expeditor', 41:'Redirecționat normal',
+                42:'Eliminat la cererea expeditorului', 43:'Colet negăsit',
+                44:'Exclus din T&C', 46:'Adresă de livrare schimbată',
+                47:'Plecat din depozit', 51:'Date înregistrate — nepredat încă la GLS',
+                52:'Date ramburs înregistrate', 53:'Tranzit depozit',
+                54:'Livrat în cutie poștală', 55:'Livrat la ParcelShop',
+                56:'Stocat la ParcelShop', 57:'Timp maxim depozitare ParcelShop atins',
+                58:'Livrat la vecin', 59:'Ridicat de la ParcelShop',
+                68:'Nelivrat — refuzat plata taxelor', 69:'Stocat — colet incomplet',
+                80:'Redirecționat la adresa dorită', 83:'Date ridicare înregistrate',
+                84:'Etichetă ridicare generată', 85:'Șofer trimis la ridicare',
+                86:'Ajuns în depozit', 87:'Ridicare anulată — fără marfă',
+                88:'Ridicare eșuată — colet neambalat', 89:'Ridicare eșuată — client neinformat',
+                90:'Ridicare anulată — trimis altfel', 91:'Pick&Ship/Return anulat',
+                92:'Livrat', 93:'Semnătură confirmată',
+                97:'Plasat în parcellocker', 99:'Notificare email trimisă',
               };
               const SD_CODES = {
                 1:'Expediere înregistrată', 2:'Preluat de curier', 3:'Ajuns în depozit',
@@ -1669,6 +1689,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 95:'Blocat clearance', 96:'Redistribuit curier',
                 97:'Verificare conținut', 98:'Reținut depozit',
                 99:'Returnat la expeditor final',
+                // Sameday nu are documentație publică (spre deosebire de GLS) — lista
+                // asta e completată pe măsură ce apar coduri necunoscute confirmate
+                // de tine, nu ghicită integral. 147 = predat la easybox (confirmat).
+                147:'Predat la easybox',
               };
               const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
 
@@ -2165,7 +2189,15 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     const live = liveTrackingData[o.id];
                     const code = live?.statusCode ? parseInt(live.statusCode) : null;
                     const COURIER_CODES = o.courier === 'sameday' ? SD_CODES : GLS_CODES;
-                    const codeDesc = code ? (COURIER_CODES[code] || live?.desc || live?.statusDescription || `Cod ${code}`) : (live?.desc || live?.statusDescription || null);
+                    // Când codul lipsește din COURIER_CODES, API-ul curierului
+                    // întoarce uneori un statusDescription gol și "desc" ajunge
+                    // să fie chiar cifra codului repetată (arăta ca un bug: "#147
+                    // 147") — o afișăm explicit ca necunoscut, nu ca text duplicat.
+                    const rawDesc = live?.desc || live?.statusDescription;
+                    const isJustTheCode = rawDesc != null && String(rawDesc).trim() === String(code);
+                    const codeDesc = code
+                      ? (COURIER_CODES[code] || (rawDesc && !isJustTheCode ? rawDesc : null) || `Cod necunoscut #${code}`)
+                      : (live?.desc || live?.statusDescription || null);
                     const color = statusColor(live?.glsStatus);
                     const cat = classifyTranzitStatus(o, live);
                     const catColors = {inregistrat:'#f59e0b',ridicat:'#8b5cf6',centru:'#06b6d4',livrare:'#10b981'};
