@@ -307,11 +307,7 @@ export default function Dashboard() {
           d.status === 'failed_attempt'     ? 'outfor' :
           (d.status === 'returned' || d.status === 'failure') ? 'retur' : null;
         if (liveTs && liveTs !== o.ts) {
-          const ovData = { ts: liveTs, statusRaw: d.statusRaw, lastUpdate: d.lastUpdate, location: d.location };
-          trackingOverrides.update(o.id, ovData);
-          setAllOrders(prev => prev.map(x => x.id === o.id
-            ? { ...x, ts: liveTs, trackingStatus: d.statusRaw||'', trackingLastUpdate: d.lastUpdate||'', trackingLocation: d.location||'' }
-            : x));
+          applyOrderStatus(o.id, liveTs, d.statusRaw, d.lastUpdate, d.location);
         }
 
         setLiveTrackingData(prev => {
@@ -779,6 +775,20 @@ export default function Dashboard() {
     return (services || []).some(s => String(s).toUpperCase().includes('COD'));
   };
 
+  // Scrie o corecție de status atât în trackingOverrides (persistent, per
+  // comandă) cât și direct pe orderul din allOrders. Esențial pentru
+  // trackingLastUpdate: KPI-urile "Livrate azi/ieri" filtrează după data
+  // REALĂ de livrare — dar fulfilledAt e data la care Shopify a creat AWB-ul
+  // (adesea alta decât data livrării reale confirmate de curier). Fără să
+  // scriem trackingLastUpdate aici, "Livrate azi" numără orice comandă a
+  // cărei fulfillment Shopify a fost atinsă azi, nu cea livrată azi.
+  const applyOrderStatus = (orderId, ts, statusRaw, lastUpdate, location) => {
+    trackingOverrides.update(orderId, { ts, statusRaw, lastUpdate, location });
+    setAllOrders(prev => prev.map(x => x.id === orderId
+      ? { ...x, ts, trackingStatus: statusRaw || '', trackingLastUpdate: lastUpdate || '', trackingLocation: location || '' }
+      : x));
+  };
+
   // Interoghează /api/tracking (deja folosit în restul aplicației) în loturi
   // mici — un AWB list de 100-200 bucăți dintr-o singură cerere ar risca
   // timeout-ul funcției serverless; loturi de 15 țin fiecare cerere scurtă.
@@ -794,7 +804,7 @@ export default function Dashboard() {
       });
       const data = await res.json();
       for (const r of (data.results || [])) {
-        if (r?.awb) map.set(String(r.awb).trim(), { status: r.status, lastUpdate: r.lastUpdate, hasReturnCode: r.hasReturnCode });
+        if (r?.awb) map.set(String(r.awb).trim(), { status: r.status, statusRaw: r.statusRaw, location: r.location, lastUpdate: r.lastUpdate, hasReturnCode: r.hasReturnCode });
       }
     }
     return map;
@@ -819,21 +829,29 @@ export default function Dashboard() {
       const awbs = Array.from(new Set((data.parcels || []).map(p => String(p.parcelNumber || '').trim()).filter(Boolean)));
       if (!awbs.length) { setGlsError('Niciun colet găsit în contul MyGLS pentru perioada selectată.'); return; }
       const statusMap = await fetchTrackingBatch(awbs, 'gls');
+      const awbToOrder = new Map(allOrders.filter(o => o.trackingNo).map(o => [o.trackingNo.trim(), o]));
       const newMap = { ...glsAwbMap };
       for (const awb of awbs) {
         const t = statusMap.get(awb);
+        let finalStatus;
         if (t?.hasReturnCode) {
           // A existat un refuz/retur oriunde în istoricul AWB-ului — contează
           // indiferent ce arată ultimul status (poate fi "delivered" pentru
           // predarea coletului retur înapoi în depozit).
-          newMap[awb] = 'retur';
+          finalStatus = 'retur';
         } else if (t?.status === 'delivered') {
           const p = parcelByAwb.get(awb);
-          newMap[awb] = isGlsActuallyDelivered(p?.cod, p?.services) ? 'livrat' : 'retur';
+          finalStatus = isGlsActuallyDelivered(p?.cod, p?.services) ? 'livrat' : 'retur';
         } else if (t?.status) {
-          newMap[awb] = mapLiveStatus(t.status, t.lastUpdate);
-        } else {
-          newMap[awb] = newMap[awb] || 'incurs';
+          finalStatus = mapLiveStatus(t.status, t.lastUpdate);
+        }
+        // Fără status clar de la /api/tracking nu inventăm 'incurs' — lăsăm
+        // AWB-ul nesetat, ca getGlsStatusFinal să cadă pe o.ts (care are deja
+        // regula de "peste 30 zile fără update = anulat").
+        if (finalStatus) {
+          newMap[awb] = finalStatus;
+          const order = awbToOrder.get(awb);
+          if (order) applyOrderStatus(order.id, finalStatus, t?.statusRaw, t?.lastUpdate, t?.location);
         }
       }
       const label = `🔄 Live MyGLS (${awbs.length} AWB, ${new Date().toLocaleString('ro-RO')})`;
@@ -867,10 +885,15 @@ export default function Dashboard() {
       const awbs = data.awbs || [];
       if (!awbs.length) { setSdError('Niciun AWB descoperit din status-sync Sameday — vezi debug mai jos.'); return; }
       const statusMap = await fetchTrackingBatch(awbs, 'sameday');
+      const awbToOrder = new Map(allOrders.filter(o => o.trackingNo).map(o => [o.trackingNo.trim(), o]));
       const newMap = { ...sdAwbMap };
       for (const awb of awbs) {
         const t = statusMap.get(awb);
-        newMap[awb] = t?.status ? mapLiveStatus(t.status, t.lastUpdate) : (newMap[awb] || 'incurs');
+        if (!t?.status) continue; // fără status clar, nu inventăm 'incurs' — vezi fetchGlsLive
+        const finalStatus = t.hasReturnCode ? 'retur' : mapLiveStatus(t.status, t.lastUpdate);
+        newMap[awb] = finalStatus;
+        const order = awbToOrder.get(awb);
+        if (order) applyOrderStatus(order.id, finalStatus, t.statusRaw, t.lastUpdate, t.location);
       }
       const label = `🔄 Live Sameday (${awbs.length} AWB, ${new Date().toLocaleString('ro-RO')})`;
       const newFiles = [...sdFiles.filter(f => !f.startsWith('🔄 Live Sameday')), label];
@@ -1340,9 +1363,15 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const isToday  = preset === 'today' || preset === 'yesterday';
   const livrateOrders = allOrders.filter(o => {
     if (getFinalStatus(o) !== 'livrat') return false;
-    if (isToday && o.fulfilledAt) {
-      // Pentru Azi/Ieri: filtrăm după data livrării (fulfilledAt)
-      return new Date(o.fulfilledAt) >= kpiFromD && new Date(o.fulfilledAt) <= kpiToD;
+    if (isToday) {
+      // fulfilledAt e data la care Shopify a creat/atins AWB-ul — nu
+      // neapărat data reală de livrare. Când avem o confirmare live de la
+      // curier (trackingLastUpdate, scris de refreshTracking/Live GLS-Sameday/
+      // panoul de tranzit), aia e data adevărată de livrare; fulfilledAt
+      // rămâne fallback doar pentru comenzi nesincronizate încă live.
+      const deliveredAt = o.trackingLastUpdate || o.fulfilledAt;
+      if (!deliveredAt) return false;
+      return new Date(deliveredAt) >= kpiFromD && new Date(deliveredAt) <= kpiToD;
     }
     // Pentru toate celelalte: filtrăm după data plasării (createdAt) — consistent cu tabelul
     const created = new Date(o.createdAt);
