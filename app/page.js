@@ -1720,8 +1720,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                 99:'Returnat la expeditor final',
                 // Sameday nu are documentație publică (spre deosebire de GLS) — lista
                 // asta e completată pe măsură ce apar coduri necunoscute confirmate
-                // de tine, nu ghicită integral. 147 = predat la easybox (confirmat).
-                147:'Predat la easybox',
+                // de tine, nu ghicită integral.
+                145:'Ridicat de curier din punctul de predare', 147:'Predat la easybox',
               };
               const statusColor = (s) => s==='delivered'?'#10b981':s==='out_for_delivery'?'#a855f7':(s==='returned'||s==='failure')?'#f43f5e':s==='failed_attempt'?'#f59e0b':'#3b82f6';
 
