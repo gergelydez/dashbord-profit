@@ -124,7 +124,7 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     if (getFinalStatus(o, sdAwbMap) !== 'livrat') return;
     const created = new Date(o.createdAt);
     if (created < fromD || created > toD) return;   // ← filtrare perioadă
-    const livStr = (o.fulfilledAt || o.createdAt || '').slice(0, 10);
+    const livStr = (o.trackingLastUpdate || o.fulfilledAt || o.createdAt || '').slice(0, 10);
     if (!livStr) return;
     const courier = o.courier === 'sameday' ? 'sameday' : 'gls';
     const zile = courier === 'sameday' ? 1 : 2;
@@ -297,7 +297,7 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     const adr    = o.address || [o.address1 || (o.shipping_address && o.shipping_address.address1) || '', o.address2 || (o.shipping_address && o.shipping_address.address2) || ''].filter(Boolean).join(', ');
     const invRaw2 = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
     const inv    = invRaw2 && !invRaw2.startsWith('GLAMX') ? 'GLAMX' + invRaw2 : invRaw2;
-    const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
+    const livStr = (o.trackingLastUpdate||o.fulfilledAt||o.createdAt||'').slice(0,10);
     const ziInc  = addWorkDays(livStr, 2).split('-').reverse().join('.');
     const val    = +(fmtNum(o.total));
     rows2.push([new Date(o.createdAt).toLocaleDateString('ro-RO'), ziInc,
@@ -326,7 +326,7 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     const adr    = o.address || [o.address1 || (o.shipping_address && o.shipping_address.address1) || '', o.address2 || (o.shipping_address && o.shipping_address.address2) || ''].filter(Boolean).join(', ');
     const invRaw3 = o.invoiceNumber || o.invoiceNo || o.invoice || o.invoiceShort || '';
     const inv    = invRaw3 && !invRaw3.startsWith('GLAMX') ? 'GLAMX' + invRaw3 : invRaw3;
-    const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
+    const livStr = (o.trackingLastUpdate||o.fulfilledAt||o.createdAt||'').slice(0,10);
     const ziInc  = addWorkDays(livStr, 1).split('-').reverse().join('.');
     const val    = +(fmtNum(o.total));
     rows3.push([new Date(o.createdAt).toLocaleDateString('ro-RO'), ziInc,
@@ -440,7 +440,7 @@ async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, t
     if (getFinalStatus(o, sdAwbMap) !== 'livrat') return;
     const created = new Date(o.createdAt);
     if (created < fromD || created > toD) return;
-    const livStr = (o.fulfilledAt || o.createdAt || '').slice(0, 10);
+    const livStr = (o.trackingLastUpdate || o.fulfilledAt || o.createdAt || '').slice(0, 10);
     if (!livStr) return;
     const courier = o.courier === 'sameday' ? 'sameday' : 'gls';
     const zi = addWorkDays(livStr, courier === 'sameday' ? 1 : 2);
@@ -895,11 +895,15 @@ export default function Stats() {
       }
     };
 
+    // trackingLastUpdate (data reală confirmată de curier) e preferat peste
+    // fulfilledAt (data la care Shopify a creat/atins AWB-ul, adesea diferită
+    // de livrarea reală) — altfel o comandă veche, abia acum confirmată
+    // livrată de curier, apărea în ziua de încasare greșită.
     allLivrate.forEach(o => {
       const isOnline = isOnlinePayment(o, onlineIds);
       if (isOnline) return;
       if (o.courier==='sameday'&&getFinalStatus(o,sdAwbMap)!=='livrat') return;
-      const livStr = (o.fulfilledAt||o.createdAt||'').slice(0,10);
+      const livStr = (o.trackingLastUpdate||o.fulfilledAt||o.createdAt||'').slice(0,10);
       if (!livStr) return;
       if (o.courier==='gls')          addToZi(addWorkDays(livStr,2),'gls',o.total);
       else if (o.courier==='sameday') addToZi(addWorkDays(livStr,1),'sameday',o.total);
@@ -950,8 +954,9 @@ export default function Stats() {
     allLivrate.forEach(o=>{
       if(isOnlinePayment(o,onlineIds)) return;
       if(o.courier==='sameday'&&getFinalStatus(o,sdAwbMap)!=='livrat') return;
-      if(!o.fulfilledAt) return;
-      const livStr=o.fulfilledAt.slice(0,10);
+      const realDate = o.trackingLastUpdate || o.fulfilledAt;
+      if(!realDate) return;
+      const livStr = realDate.slice(0,10);
       if(o.courier==='gls')          addByDate(nextBD(livStr,2),'gls',o.total,o);
       else if(o.courier==='sameday') addByDate(nextBD(livStr,1),'sameday',o.total,o);
     });
