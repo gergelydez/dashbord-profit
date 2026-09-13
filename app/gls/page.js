@@ -25,6 +25,13 @@ const pad = n => String(n).padStart(2, '0');
 const fmtD = d => { if (!d) return '—'; try { const p = (d.split('T')[0]).split('-'); return `${p[2]}.${p[1]}.${p[0]}`; } catch { return d.slice(0, 10); } };
 const fmt = n => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Un număr de mobil românesc (9 cifre) poate ajunge stocat cu prefix diferit
+// în funcție de sursă — Shopify normalizează la +40769256331, cineva tastează
+// direct 0769256331. Un simplu strip de non-cifre le lasă diferite ("40..."
+// vs "0..."), așa că potrivirea clienților eșua mereu. Comparăm ultimele 9
+// cifre, indiferent de prefix (0 / 40 / +40 / 0040).
+const normPhone = p => (p || '').replace(/\D/g, '').slice(-9);
+
 // ── GLS Services catalog ─────────────────────────────────────────────────────
 const GLS_SERVICES = {
   SM1: { code: 'SM1', label: '📱 SMS Livrare',       desc: 'SMS trimis destinatarului la livrare',      param: 'phone',  group: 'Notificări' },
@@ -546,7 +553,7 @@ export default function GLSPage() {
     const map = new Map();
     const sorted = [...orders].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
     for (const o of sorted) {
-      const key = (o.phone || '').replace(/\D/g, '') || (o.client || '').toLowerCase().trim();
+      const key = normPhone(o.phone) || (o.client || '').toLowerCase().trim();
       if (!key) continue;
       const existing = map.get(key);
       if (!existing) {
@@ -605,9 +612,9 @@ export default function GLSPage() {
   // exact cu un client existent, completăm câmpurile goale (email inclusiv)
   // fără să suprascriem ce a scris deja utilizatorul.
   const tryAutoFillFromKnownClient = () => {
-    const digits = (manualAddr.phone || '').replace(/\D/g, '');
+    const digits = normPhone(manualAddr.phone);
     if (digits.length < 9) return;
-    const match = knownClients.find(c => (c.phone || '').replace(/\D/g, '') === digits);
+    const match = knownClients.find(c => normPhone(c.phone) === digits);
     if (!match) return;
     setManualAddr(p => ({
       name: p.name || match.name || '',
