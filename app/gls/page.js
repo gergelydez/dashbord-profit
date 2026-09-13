@@ -439,6 +439,9 @@ export default function GLSPage() {
   const [manualClientSearch, setManualClientSearch] = useState('');
   const [manualSelectedClient, setManualSelectedClient] = useState(null);
   const [manualAddr, setManualAddr] = useState({ name: '', phone: '', email: '', address: '', city: '', county: '', zip: '' });
+  const [manualCityOptions, setManualCityOptions] = useState([]); // sugestii localitate în timp ce se scrie orașul
+  const [manualStreetOptions, setManualStreetOptions] = useState([]); // străzi cu coduri poștale diferite pentru localitatea aleasă
+  const [manualZipNote, setManualZipNote] = useState('');
   const [manualProducts, setManualProducts] = useState([]);
   const [manualProductsLoading, setManualProductsLoading] = useState(false);
   const [manualProductsErr, setManualProductsErr] = useState('');
@@ -596,6 +599,82 @@ export default function GLSPage() {
   const clearManualClient = () => {
     setManualSelectedClient(null);
     setManualAddr({ name: '', phone: '', email: '', address: '', city: '', county: '', zip: '' });
+  };
+
+  // Client tastat direct (nu ales din căutare) — dacă telefonul se potrivește
+  // exact cu un client existent, completăm câmpurile goale (email inclusiv)
+  // fără să suprascriem ce a scris deja utilizatorul.
+  const tryAutoFillFromKnownClient = () => {
+    const digits = (manualAddr.phone || '').replace(/\D/g, '');
+    if (digits.length < 9) return;
+    const match = knownClients.find(c => (c.phone || '').replace(/\D/g, '') === digits);
+    if (!match) return;
+    setManualAddr(p => ({
+      name: p.name || match.name || '',
+      phone: p.phone,
+      email: p.email || match.email || '',
+      address: p.address || match.address || '',
+      city: p.city || match.city || '',
+      county: p.county || match.county || '',
+      zip: p.zip || match.zip || '',
+    }));
+  };
+
+  const [showManualCityDropdown, setShowManualCityDropdown] = useState(false);
+
+  // Sugestii de localitate în timp ce se scrie orașul (autocomplete pe RoPostalCode).
+  useEffect(() => {
+    const q = (manualAddr.city || '').trim();
+    if (q.length < 2) { setManualCityOptions([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        setManualCityOptions(data.localities || []);
+      } catch {}
+    }, 300);
+    return () => clearTimeout(t);
+  }, [manualAddr.city]);
+
+  // Odată ce avem oraș + județ, aflăm codul poștal exact — dacă localitatea
+  // are un singur cod, îl completăm automat; dacă are mai multe (străzi
+  // diferite), afișăm lista ca să aleagă strada corectă.
+  useEffect(() => {
+    const city = (manualAddr.city || '').trim();
+    const county = (manualAddr.county || '').trim();
+    if (city.length < 2 || county.length < 2) { setManualStreetOptions([]); setManualZipNote(''); return; }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(city)}&county=${encodeURIComponent(county)}`);
+        const data = await res.json();
+        if (!data.ok || !data.found) { setManualStreetOptions([]); setManualZipNote(''); return; }
+        if (data.streets?.length > 1) {
+          setManualStreetOptions(data.streets);
+          setManualZipNote(`📍 ${city} are mai multe coduri poștale — alege strada mai jos pentru codul corect.`);
+        } else {
+          setManualStreetOptions([]);
+          const zip = data.singleZip || data.zips?.[0];
+          if (zip) {
+            setManualZipNote(`✓ Cod poștal completat automat pentru ${city}.`);
+            setManualAddr(p => (p.zip ? p : { ...p, zip }));
+          } else {
+            setManualZipNote('');
+          }
+        }
+      } catch {}
+    }, 400);
+    return () => clearTimeout(t);
+  }, [manualAddr.city, manualAddr.county]);
+
+  const pickManualCity = (opt) => {
+    setManualAddr(p => ({ ...p, city: opt.localitate, county: opt.judet, zip: '' }));
+    setManualCityOptions([]);
+    setShowManualCityDropdown(false);
+  };
+
+  const pickManualStreet = (opt) => {
+    setManualAddr(p => ({ ...p, zip: opt.zip, address: p.address || opt.strada }));
+    setManualZipNote(`✓ Cod poștal ${opt.zip} pentru strada ${opt.strada}.`);
   };
 
   const pickManualProduct = (p) => {
@@ -1401,10 +1480,32 @@ export default function GLSPage() {
                     { key: 'county', label: 'Județ', placeholder: 'Ilfov' },
                     { key: 'zip', label: 'Cod poștal', placeholder: '123456', maxLength: 6 },
                   ].map(f => (
-                    <div key={f.key} className="gls-field">
+                    <div key={f.key} className="gls-field" style={f.key === 'city' ? { position: 'relative' } : undefined}>
                       <label className="gls-lbl">{f.label}</label>
                       <input className="gls-inp" value={manualAddr[f.key] || ''} maxLength={f.maxLength} placeholder={f.placeholder}
-                        onChange={e => { const v = e.target.value; setManualAddr(p => ({ ...p, [f.key]: v })); setManualSelectedClient(null); }} />
+                        onChange={e => {
+                          const v = e.target.value;
+                          setManualAddr(p => ({ ...p, [f.key]: v }));
+                          setManualSelectedClient(null);
+                          if (f.key === 'city') setShowManualCityDropdown(true);
+                        }}
+                        onFocus={f.key === 'city' ? () => setShowManualCityDropdown(true) : undefined}
+                        onBlur={
+                          f.key === 'phone' ? tryAutoFillFromKnownClient
+                          : f.key === 'city' ? () => setTimeout(() => setShowManualCityDropdown(false), 150)
+                          : undefined
+                        } />
+                      {f.key === 'city' && showManualCityDropdown && manualCityOptions.length > 0 && (
+                        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 5, marginTop: 2, border: '1px solid rgba(255,255,255,.08)', borderRadius: 8, overflow: 'hidden', maxHeight: 200, overflowY: 'auto', background: '#0b1119' }}>
+                          {manualCityOptions.map((opt, i) => (
+                            <div key={i} onMouseDown={() => pickManualCity(opt)}
+                              style={{ padding: '7px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.04)', fontSize: 12 }}>
+                              <span style={{ color: '#e2e8f0' }}>{opt.localitate}</span>
+                              <span style={{ color: '#475569' }}> · {opt.judet}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                   <div className="gls-field" style={{ gridColumn: '1/-1' }}>
@@ -1412,6 +1513,22 @@ export default function GLSPage() {
                     <input className="gls-inp" value={manualAddr.address || ''} placeholder="Str. Exemplu nr. 10"
                       onChange={e => { const v = e.target.value; setManualAddr(p => ({ ...p, address: v })); setManualSelectedClient(null); }} />
                   </div>
+                  {manualZipNote && (
+                    <div style={{ gridColumn: '1/-1', fontSize: 11, color: manualStreetOptions.length ? '#f59e0b' : '#10b981' }}>
+                      {manualZipNote}
+                    </div>
+                  )}
+                  {manualStreetOptions.length > 0 && (
+                    <div style={{ gridColumn: '1/-1', border: '1px solid rgba(255,255,255,.06)', borderRadius: 8, overflow: 'hidden', maxHeight: 180, overflowY: 'auto' }}>
+                      {manualStreetOptions.map((opt, i) => (
+                        <div key={i} onClick={() => pickManualStreet(opt)}
+                          style={{ padding: '7px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.04)', fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#e2e8f0' }}>{opt.strada}</span>
+                          <span style={{ color: '#f97316', fontFamily: 'monospace' }}>{opt.zip}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="gls-divider" />

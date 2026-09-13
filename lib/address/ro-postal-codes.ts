@@ -55,6 +55,21 @@ export async function lookupByLocation(judet: string, localitate: string, strada
   return db.roPostalCode.findMany({ where, take: 50 });
 }
 
+/** Autocomplete: localități al căror nume începe cu `prefix`, opțional filtrate pe județ. Pentru sugestii live în timp ce se scrie orașul. */
+export async function searchLocalities(prefix: string, judet?: string, limit = 15) {
+  const p = normalizeText(prefix);
+  if (!p) return [];
+  const where: { localitateNorm: { startsWith: string }; judetNorm?: string } = { localitateNorm: { startsWith: p } };
+  if (judet) where.judetNorm = normalizeText(judet);
+  return db.roPostalCode.findMany({
+    where,
+    distinct: ['judetNorm', 'localitateNorm'],
+    select: { judet: true, localitate: true },
+    orderBy: { localitate: 'asc' },
+    take: limit,
+  });
+}
+
 // ─── Validation ───────────────────────────────────────────────────────────────
 
 export interface RoAddressInput {
