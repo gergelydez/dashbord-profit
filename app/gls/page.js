@@ -1487,6 +1487,9 @@ export default function GLSPage() {
                       <div>
                         <div style={{ fontWeight: 700, color: '#e2e8f0' }}>{manualSelectedClient.name || 'Fără nume'}</div>
                         <div style={{ fontSize: 11, color: '#64748b' }}>{manualSelectedClient.phone} • {manualSelectedClient.city} • {manualSelectedClient.ordersCount} comenzi anterioare</div>
+                        <div style={{ fontSize: 11, marginTop: 2, color: manualSelectedClient.email ? '#64748b' : '#f59e0b' }}>
+                          {manualSelectedClient.email ? `✉️ ${manualSelectedClient.email}` : '⚠️ Fără email în comenzile anterioare din cache'}
+                        </div>
                       </div>
                       <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={clearManualClient}>✕ Schimbă</button>
                     </div>
