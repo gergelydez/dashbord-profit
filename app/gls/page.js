@@ -785,6 +785,41 @@ export default function GLSPage() {
     finally { setConfigLoading(false); }
   };
 
+  // ── Coduri poștale (autocomplete adresă la "Etichetă nouă") ──
+  const [postalStatus, setPostalStatus] = useState(null); // { count, total, complete }
+  const [postalStatusLoading, setPostalStatusLoading] = useState(false);
+  const [postalSeeding, setPostalSeeding] = useState(false);
+  const [postalSeedMsg, setPostalSeedMsg] = useState('');
+
+  const refreshPostalStatus = async () => {
+    setPostalStatusLoading(true);
+    try {
+      const r = await fetch('/api/postal-lookup/seed');
+      const data = await r.json();
+      setPostalStatus(data.ok ? data : null);
+    } catch { setPostalStatus(null); }
+    finally { setPostalStatusLoading(false); }
+  };
+
+  const seedPostalCodes = async () => {
+    setPostalSeeding(true); setPostalSeedMsg('');
+    try {
+      const res = await fetch('/api/postal-lookup/seed', { method: 'POST' });
+      const data = await res.json();
+      if (!data.ok) { setPostalSeedMsg('❌ ' + (data.error || 'Eroare')); return; }
+      setPostalStatus(data);
+      setPostalSeedMsg(data.done ? `✅ ${data.message}` : `⏳ ${data.message}`);
+    } catch (e) {
+      setPostalSeedMsg('❌ ' + e.message);
+    } finally {
+      setPostalSeeding(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'settings') refreshPostalStatus();
+  }, [tab]);
+
   const testConnection = async () => {
     if (!glsConfig?.configured) { toast('Configureaza GLS_USERNAME și GLS_PASSWORD în Vercel ENV', 'error'); return; }
     try {
@@ -1909,6 +1944,38 @@ export default function GLSPage() {
                   )}
                 </div>
               )}
+            </div>
+
+            {/* ── Coduri poștale (autocomplete adresă) ── */}
+            <div className="gls-panel" style={{ marginBottom: 12 }}>
+              <div className="gls-panel-hdr">
+                <div>
+                  <div className="gls-panel-title">🌍 Coduri poștale (autocomplete adresă)</div>
+                  <div className="gls-panel-sub">Folosite la "Etichetă nouă" — sugestii de localitate și cod poștal automat</div>
+                </div>
+                <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={refreshPostalStatus} disabled={postalStatusLoading}>
+                  {postalStatusLoading ? <span className="gls-spin">↻</span> : '↺ Refresh'}
+                </button>
+              </div>
+              <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {postalStatusLoading ? (
+                  <div style={{ color: '#475569', fontSize: 12 }}><span className="gls-spin">↻</span> Se verifică...</div>
+                ) : postalStatus?.complete ? (
+                  <div style={{ color: '#10b981', fontSize: 12 }}>✅ {postalStatus.count.toLocaleString('ro-RO')} coduri poștale disponibile.</div>
+                ) : postalStatus ? (
+                  <>
+                    <div style={{ color: '#f59e0b', fontSize: 12 }}>
+                      ⚠️ Baza e {postalStatus.count > 0 ? `parțial populată (${postalStatus.count}/${postalStatus.total})` : 'goală'} — sugestiile de adresă nu vor funcționa complet.
+                    </div>
+                    <button className="gls-btn gls-btn-primary" style={{ alignSelf: 'flex-start' }} onClick={seedPostalCodes} disabled={postalSeeding}>
+                      {postalSeeding ? <span className="gls-spin">↻</span> : '🌍 Populează acum'}
+                    </button>
+                  </>
+                ) : (
+                  <div style={{ color: '#f43f5e', fontSize: 12 }}>❌ Nu am putut verifica statusul.</div>
+                )}
+                {postalSeedMsg && <div style={{ fontSize: 11, color: '#94a3b8' }}>{postalSeedMsg}</div>}
+              </div>
             </div>
 
             {/* ── Instrucțiuni Vercel ── */}

@@ -1,65 +1,9 @@
 import { NextResponse } from 'next/server';
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { db } from '@/lib/db';
-import { normalizeText, normalizeStreet } from '@/lib/address/ro-postal-codes';
+import { loadPostalCodeRecords } from '@/lib/address/postal-seed-data';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
-
-/** Minimal RFC4180 CSV line parser — same as prisma/seed-postal-codes.ts. */
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false; }
-      else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === ',') { row.push(field); field = ''; }
-    else if (c === '\n') { row.push(field); field = ''; rows.push(row); row = []; }
-    else if (c === '\r') { /* skip */ }
-    else field += c;
-  }
-  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
-  return rows;
-}
-
-let cachedRecords = null;
-function loadRecords() {
-  if (cachedRecords) return cachedRecords;
-  const csvPath = join(process.cwd(), 'prisma', 'data', 'ro-postal-codes.csv');
-  const raw = readFileSync(csvPath, 'utf8').replace(/^﻿/, '');
-  const rows = parseCsv(raw);
-  const [header, ...dataRows] = rows;
-  const idx = {
-    judet: header.indexOf('judet'),
-    localitate: header.indexOf('localitate'),
-    strada: header.indexOf('strada'),
-    zip: header.indexOf('zip'),
-  };
-  if (Object.values(idx).some(i => i === -1)) {
-    throw new Error(`CSV header missing expected columns. Got: ${header.join(',')}`);
-  }
-  cachedRecords = dataRows
-    .filter(r => r.length >= 4 && r[idx.zip])
-    .map(r => {
-      const strada = r[idx.strada] || null;
-      return {
-        judet: r[idx.judet],
-        localitate: r[idx.localitate],
-        strada,
-        zip: r[idx.zip],
-        judetNorm: normalizeText(r[idx.judet]),
-        localitateNorm: normalizeText(r[idx.localitate]),
-        stradaNorm: strada ? (normalizeStreet(strada) || null) : null,
-      };
-    });
-  return cachedRecords;
-}
 
 /**
  * GET /api/admin/seed-postal-codes?secret=<CONNECTOR_SECRET>
@@ -102,7 +46,7 @@ export async function GET(request) {
     await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RoPostalCode_judetNorm_localitateNorm_idx" ON "RoPostalCode" ("judetNorm", "localitateNorm")`);
     await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RoPostalCode_judetNorm_localitateNorm_stradaNorm_idx" ON "RoPostalCode" ("judetNorm", "localitateNorm", "stradaNorm")`);
 
-    const records = loadRecords();
+    const records = loadPostalCodeRecords();
     const existing = await db.roPostalCode.count();
 
     if (existing >= records.length) {
