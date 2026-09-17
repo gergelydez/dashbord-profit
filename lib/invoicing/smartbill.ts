@@ -34,7 +34,7 @@ export function loadSmartBillConfig(): SmartBillConfig {
     cif:            process.env.SMARTBILL_CIF            || '',
     series:         process.env.SMARTBILL_SERIES         || '',
     paymentSeries:  process.env.SMARTBILL_PAYMENT_SERIES || undefined,
-    taxPercentage:  parseInt(process.env.SMARTBILL_TAX_PERCENTAGE || '19', 10),
+    taxPercentage:  parseInt(process.env.SMARTBILL_TAX_PERCENTAGE || '21', 10),
     useStock:       process.env.SMARTBILL_USE_STOCK === 'true',
     warehouseName:  process.env.SMARTBILL_WAREHOUSE      || undefined,
   };

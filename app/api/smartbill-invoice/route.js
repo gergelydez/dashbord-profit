@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 
 const BASE = 'https://ws.smartbill.ro/SBORO/api';
 
+// Cota de TVA aplicată la creare — implicit 21% (cota standard curentă în
+// România). Setabilă din SMARTBILL_TAX_PERCENTAGE dacă firma are altă cotă
+// (redusă) sau devine neplătitor de TVA din nou (caz în care s-ar seta 0).
+const TAX_PERCENTAGE = parseInt(process.env.SMARTBILL_TAX_PERCENTAGE || '21', 10);
+
 function makeAuth(email, token) {
   return Buffer.from(`${email.trim()}:${token.trim()}`).toString('base64');
 }
@@ -189,7 +194,7 @@ export async function POST(request) {
         price,
         isTaxIncluded:      true,
         taxName:            'Normala',
-        taxPercentage:      19,
+        taxPercentage:      TAX_PERCENTAGE,
         isService:          false,
         saveToDb:           false,
         // warehouseName la nivel de produs — corect conform documentației
@@ -213,7 +218,7 @@ export async function POST(request) {
         price:             parseFloat(order.total) || 0,
         isTaxIncluded:     true,
         taxName:           'Normala',
-        taxPercentage:     19,
+        taxPercentage:     TAX_PERCENTAGE,
         isService:         false,
         saveToDb:          false,
         ...(useStock && warehouse ? { warehouseName: warehouse } : {}),
