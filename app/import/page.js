@@ -191,11 +191,12 @@ export default function ImportCalc() {
   const curs = parseFloat(cursValutar) || 0;
   const cursT = parseFloat(cursTransport) || curs;
   const tRON = transportRON ? parseFloat(transportRON)||0 : (parseFloat(transportUSD)||0) * cursT;
-  // Comision DHL cu TVA inclus (71.39 = 59 + 12.39) — acesta se împarte la nr produse
+  // Comision DHL cu TVA inclus (71.39 = 59 + 12.39) — comRON e suma efectiv
+  // plătită (informativ); partea de TVA nu mai intră în cost, vezi mai jos.
   const comisionNetRON = parseFloat(comisionDHL) || 0;
   const comisionTVARON = comisionDHLTVA ? parseFloat(comisionDHLTVA)||0
     : comisionNetRON * (parseFloat(tvaPercent)||21) / 100;
-  const comRON = comisionNetRON + comisionTVARON; // total cu TVA
+  const comRON = comisionNetRON + comisionTVARON; // total cu TVA (informativ)
 
   const totalQty = products.reduce((s,p) => s + (parseFloat(p.qty)||0), 0);
   const totalUSD = products.reduce((s,p) => s + (parseFloat(p.qty)||0)*(parseFloat(p.unitPriceUSD)||0), 0);
@@ -212,14 +213,22 @@ export default function ImportCalc() {
     ? parseFloat(tvaRON_dvi)||0
     : (totalRON_f + tRON + taxaV_RON_global) * (parseFloat(tvaPercent)||21) / 100;
 
-  // Total sumar — folosit în preview și header sumar
-  const totalCosturiGlobal = tRON + taxaV_RON_global + comRON + tva_RON_global;
+  // De când suntem plătitori de TVA, TVA-ul plătit la vamă (DVI) ȘI TVA-ul de
+  // pe comisionul DHL sunt deductibile — se recuperează la decontul de TVA,
+  // nu mai sunt cost real al produsului (ca neplătitori, erau nerecuperabile
+  // și intrau corect în cost). Le calculăm în continuare — contabila are
+  // nevoie de suma exactă pentru decont — dar nu mai intră în costul unitar.
+  const totalTvaDeductibil = tva_RON_global + comisionTVARON;
+
+  // Total sumar — cost REAL (fără TVA deductibilă), folosit pentru costul produsului/marjă
+  const totalCosturiGlobal = tRON + taxaV_RON_global + comisionNetRON;
   const totalCostRON = totalRON_f + totalCosturiGlobal;
 
   // Cost per produs cu taxe din DVI per segment
   // Transport și comision se împart la totalQty (toți produsele)
   const transportPerBuc = totalQty > 0 ? tRON / totalQty : 0;
-  const comisionPerBuc  = totalQty > 0 ? comRON / totalQty : 0;
+  const comisionPerBuc  = totalQty > 0 ? comisionNetRON / totalQty : 0; // fără TVA — deductibilă, nu cost
+  const comisionTVAPerBuc = totalQty > 0 ? comisionTVARON / totalQty : 0;
 
   // Mapăm fiecare produs la segmentul DVI corect (fiecare segment = un tip de marfă din DVI).
   // Nu ne bazăm pe cuvinte hardcodate ("printer"/"server") — folosim semnale reale din date:
@@ -267,22 +276,26 @@ export default function ImportCalc() {
       // Folosim sumele exacte din DVI împărțite la cantitatea segmentului
       const segQty = seg.cantitate || qty;
       taxaVProd = (seg.taxaVamalaRON || 0) / segQty * qty;
-      // TVA din DVI per buc × cantitate
+      // TVA din DVI per buc × cantitate — informativ, deductibilă, NU e cost
       tvaProd = (seg.tvaRON || 0) / segQty * qty;
     } else {
       // Fallback: calcul din procente
       // Transportul NU intră în baza vamală, se împarte egal per bucată
       const tvPerc = p.taxaVamala !== '' ? parseFloat(p.taxaVamala)||0 : parseFloat(taxaVamalaGlobal)||0;
-      const prop = totalUSD > 0 ? valUSD / totalUSD : 0;
       taxaVProd = valRON * tvPerc / 100;
+      // Informativ, deductibilă, NU e cost
       tvaProd = (valRON + taxaVProd) * tvaPPerc / 100;
     }
 
-    // Transport și comision per bucată × cantitate
+    // Transport și comision (fără TVA) per bucată × cantitate
     const transportAlocat = transportPerBuc * qty;
     const comisionAlocat  = comisionPerBuc * qty;
+    // TVA deductibilă per produs (vamă + comision DHL) — informativ, nu e cost
+    const tvaDeductibilAlocat = tvaProd + comisionTVAPerBuc * qty;
 
-    const costuri = transportAlocat + taxaVProd + comisionAlocat + tvaProd;
+    // Cost REAL — fără TVA (deductibilă/recuperabilă la decont, nu mai e
+    // cost de când suntem plătitori de TVA)
+    const costuri = transportAlocat + taxaVProd + comisionAlocat;
     const totalP = valRON + costuri;
     const costUnit = qty > 0 ? totalP / qty : 0;
 
@@ -290,7 +303,8 @@ export default function ImportCalc() {
 
     return {name:p.name, sku:p.sku, qty, unitUSD, valUSD, valRON,
       prop: totalUSD > 0 ? valUSD/totalUSD : 0,
-      transportAlocat, taxaVProd, comisionAlocat, tvaProd,
+      transportPerBuc, comisionPerBuc,
+      transportAlocat, taxaVProd, comisionAlocat, tvaProd, tvaDeductibilAlocat,
       costuri, totalP, costUnit, tvPerc, tvaPPerc,
       dinDVI: !!seg};
   });
@@ -299,13 +313,17 @@ export default function ImportCalc() {
   const totalCostRON_real = dviSegmente.length > 0
     ? prods.reduce((s,p) => s + p.totalP, 0)
     : totalCostRON;
+  // TVA deductibilă reală = suma pe produse (mai exactă când avem segmente DVI)
+  const totalTvaDeductibilReal = dviSegmente.length > 0
+    ? prods.reduce((s,p) => s + p.tvaDeductibilAlocat, 0)
+    : totalTvaDeductibil;
 
   const exportJSON = () => {
     const data = {
       meta: {data: new Date().toISOString().slice(0,10), cursValutar:curs,
         taxaVamalaPercent: parseFloat(taxaVamalaGlobal)||0, taxaVamalaRON: taxaV_RON_global,
-        tvaPercent: parseFloat(tvaPercent)||21, tvaRON: tva_RON_global,
-        comisionDHL: comRON, transportRON: tRON, totalCostRON},
+        tvaPercent: parseFloat(tvaPercent)||21, tvaDeductibilRON: totalTvaDeductibilReal,
+        comisionDHL: comisionNetRON, transportRON: tRON, totalCostRON: totalCostRON_real},
       produse: prods.map(p => ({
         sku: p.sku || p.name.replace(/\s+/g,'_').toUpperCase(),
         name: p.name.trim(), qty: p.qty,
@@ -313,6 +331,7 @@ export default function ImportCalc() {
         pretFurnizorRON: +(p.unitUSD * curs).toFixed(2),
         costImportUnitarRON: +p.costUnit.toFixed(2),
         taxeAlocateRON: +(p.costuri / p.qty).toFixed(2),
+        tvaDeductibilRON: +p.tvaDeductibilAlocat.toFixed(2),
         totalProdusRON: +p.totalP.toFixed(2),
       })),
     };
@@ -325,10 +344,10 @@ export default function ImportCalc() {
   };
 
   const exportCSV = () => {
-    const rows = [['SKU','Produs','Cant','Pret USD','Pret RON','TaxaVam%','TVA%','Taxe/buc RON','Cost unitar RON (cu TVA)','Total RON']];
+    const rows = [['SKU','Produs','Cant','Pret USD','Pret RON','TaxaVam%','TVA%','Taxe/buc RON (fara TVA)','TVA deductibila/buc RON','Cost unitar RON (fara TVA)','Total RON (fara TVA)']];
     prods.forEach(p => rows.push([
       p.sku, `"${p.name}"`, p.qty, fmt(p.unitUSD), fmt(p.unitUSD*curs),
-      p.tvPerc, p.tvaPPerc, fmt(p.costuri/p.qty), fmt(p.costUnit), fmt(p.totalP)
+      p.tvPerc, p.tvaPPerc, fmt(p.costuri/p.qty), fmt(p.qty>0?p.tvaDeductibilAlocat/p.qty:0), fmt(p.costUnit), fmt(p.totalP)
     ]));
     const blob = new Blob(['\uFEFF'+rows.map(r=>r.join(',')).join('\n')], {type:'text/csv;charset=utf-8;'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'import-cost.csv'; a.click();
@@ -341,9 +360,9 @@ export default function ImportCalc() {
       // ── Sheet 1: Produse ──
       const dataSheet = [
         ['SKU', 'Produs', 'Cantitate', 'Pret furnizor USD', 'Pret furnizor RON',
-         'Taxa vamala %', 'Taxa vamala RON', 'TVA %', 'TVA RON',
-         'Transport/buc RON', 'Comision DHL/buc RON',
-         'Taxe totale/buc RON', 'Cost unitar RON (cu TVA)', 'Total produs RON'],
+         'Taxa vamala %', 'Taxa vamala RON', 'TVA %', 'TVA deductibila RON (nu e cost)',
+         'Transport/buc RON', 'Comision DHL/buc RON (fara TVA)',
+         'Taxe totale/buc RON (fara TVA)', 'Cost unitar RON (fara TVA)', 'Total produs RON (fara TVA)'],
       ];
       prods.forEach(p => dataSheet.push([
         p.sku,
@@ -354,7 +373,7 @@ export default function ImportCalc() {
         p.tvPerc,
         +p.taxaVProd.toFixed(2),
         p.tvaPPerc,
-        +p.tvaProd.toFixed(2),
+        +p.tvaDeductibilAlocat.toFixed(2),
         +(p.transportAlocat / p.qty).toFixed(4),
         +(p.comisionAlocat / p.qty).toFixed(4),
         +(p.costuri / p.qty).toFixed(2),
@@ -364,7 +383,7 @@ export default function ImportCalc() {
       // Rând TOTAL
       dataSheet.push([
         'TOTAL', '', totalQty, '', +totalRON_f.toFixed(2),
-        '', +taxaV_RON_global.toFixed(2), '', +tva_RON_global.toFixed(2),
+        '', +taxaV_RON_global.toFixed(2), '', +totalTvaDeductibilReal.toFixed(2),
         '', '', '',
         '',
         +(dviSegmente.length>0?totalCostRON_real:totalCostRON).toFixed(2),
@@ -394,12 +413,15 @@ export default function ImportCalc() {
         ['Valoare marfă furnizor (RON)', +totalRON_f.toFixed(2)],
         ['Transport DHL (RON)', +tRON.toFixed(2)],
         ['Taxă vamală (RON)', +taxaV_RON_global.toFixed(2)],
-        ['Comision procesare DHL (RON cu TVA)', +comRON.toFixed(2)],
-        ['TVA (RON)', +tva_RON_global.toFixed(2)],
+        ['Comision procesare DHL (RON, fără TVA)', +comisionNetRON.toFixed(2)],
         [''],
-        ['TOTAL COST IMPORT (RON)', +totalFinal.toFixed(2)],
-        ['Cost mediu / bucată (RON)', +(totalQty>0?totalFinal/totalQty:0).toFixed(2)],
+        ['TOTAL COST IMPORT (RON, fără TVA)', +totalFinal.toFixed(2)],
+        ['Cost mediu / bucată (RON, fără TVA)', +(totalQty>0?totalFinal/totalQty:0).toFixed(2)],
         ['Total bucăți', totalQty],
+        [''],
+        ['TVA deductibilă — vamă + comision DHL (RON)', +totalTvaDeductibilReal.toFixed(2)],
+        ['(recuperabilă la decontul de TVA, NU e cost de produs)', ''],
+        ['Total efectiv plătit, cu TVA inclus (RON)', +(totalFinal+totalTvaDeductibilReal).toFixed(2)],
       ];
       const ws2 = window.XLSX.utils.aoa_to_sheet(sumarSheet);
       ws2['!cols'] = [{wch:35},{wch:20}];
@@ -667,9 +689,9 @@ export default function ImportCalc() {
                   ['📄 Valoare marfă', fmtRON(totalRON_f), '#e8edf2'],
                   ['✈️ Transport', fmtRON(tRON), '#3b82f6'],
                   [`🛃 Taxe vamale${taxaVamalaRON?' (DVI)':' per produs'}`, fmtRON(taxaV_RON_global), '#f59e0b'],
-                  [`🏢 Comision DHL (cu TVA: ${comRON.toFixed(2)} RON)`, fmtRON(comRON), '#94a3b8'],
-                  [`💰 TVA${tvaRON_dvi?' (DVI)':` ${tvaPercent}%`}`, fmtRON(tva_RON_global), '#a855f7'],
-                  ['📦 TOTAL (cu TVA)', fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON), '#f97316'],
+                  [`🏢 Comision DHL (fără TVA — cu TVA: ${comRON.toFixed(2)} RON)`, fmtRON(comisionNetRON), '#94a3b8'],
+                  [`💰 TVA deductibilă${tvaRON_dvi?' (DVI)':` ${tvaPercent}%`} — vamă+comision, recuperabilă`, fmtRON(totalTvaDeductibil), '#a855f7'],
+                  ['📦 TOTAL cost real (fără TVA)', fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON), '#f97316'],
                 ].map(([l,v,c], i) => (
                   <div key={l} className="bdr" style={{fontWeight:i===5?800:400}}>
                     <span style={{color:i===5?'#f97316':'#64748b'}}>{l}</span>
@@ -698,8 +720,8 @@ export default function ImportCalc() {
                 ['📄 Valoare marfă furnizor', `$${fmt(totalUSD)} × ${cursValutar}`, fmtRON(totalRON_f), '#e8edf2'],
                 ['✈️ Transport DHL', '', fmtRON(tRON), '#3b82f6'],
                 [`🛃 Taxă vamală${taxaVamalaRON?' (DVI)':` ${taxaVamalaGlobal}%`}`, '', fmtRON(taxaV_RON_global), '#f59e0b'],
-                ['🏢 Comision procesare DHL', '', fmtRON(comRON), '#94a3b8'],
-                [`💰 TVA${tvaRON_dvi?' (DVI)':` ${tvaPercent}%`}`, '', fmtRON(tva_RON_global), '#a855f7'],
+                ['🏢 Comision procesare DHL', 'fără TVA', fmtRON(comisionNetRON), '#94a3b8'],
+                [`💰 TVA deductibilă${tvaRON_dvi?' (DVI)':` ${tvaPercent}%`}`, 'vamă+comision — recuperabilă la decont, NU e cost', fmtRON(totalTvaDeductibil), '#a855f7'],
               ].map(([l,sub,v,c]) => (
                 <div key={l} className="bdr">
                   <div>
@@ -710,7 +732,7 @@ export default function ImportCalc() {
                 </div>
               ))}
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:12,marginTop:6,borderTop:'2px solid rgba(249,115,22,.2)'}}>
-                <span style={{fontSize:16,fontWeight:800}}>TOTAL (cu TVA inclus)</span>
+                <span style={{fontSize:16,fontWeight:800}}>TOTAL cost real (fără TVA)</span>
                 <span style={{fontSize:22,fontWeight:900,color:'#f97316',fontFamily:'monospace'}}>{fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON)}</span>
               </div>
               <div style={{textAlign:'right',marginTop:6,fontSize:11,color:'#475569'}}>
@@ -720,7 +742,7 @@ export default function ImportCalc() {
 
             {/* PRODUSE CARDS */}
             <div style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:2,margin:'16px 0 12px'}}>
-              Cost per produs (TVA inclus)
+              Cost per produs (fără TVA — deductibilă)
             </div>
             {prods.map((p, idx) => (
               <div key={idx} style={{...sec, border:`1px solid ${showBD===idx?'rgba(249,115,22,.4)':'#1a2535'}`}}>
@@ -746,8 +768,8 @@ export default function ImportCalc() {
                 <div className="g3">
                   {[
                     {l:'Preț furnizor', sub:`$${fmt(p.unitUSD)}`, v:fmtRON(p.unitUSD*curs), c:'#e8edf2', bg:'#070d12'},
-                    {l:'Taxe/buc', sub:'transport+vamă+comision+TVA', v:fmtRON(p.qty>0?p.costuri/p.qty:0), c:'#f59e0b', bg:'rgba(245,158,11,.04)'},
-                    {l:'COST UNITAR', sub:'cu TVA inclus', v:fmtRON(p.costUnit), c:'#f97316', bg:'rgba(249,115,22,.08)', bold:true},
+                    {l:'Taxe/buc', sub:'transport+vamă+comision (fără TVA)', v:fmtRON(p.qty>0?p.costuri/p.qty:0), c:'#f59e0b', bg:'rgba(245,158,11,.04)'},
+                    {l:'COST UNITAR', sub:'fără TVA (deductibilă)', v:fmtRON(p.costUnit), c:'#f97316', bg:'rgba(249,115,22,.08)', bold:true},
                   ].map(({l,sub,v,c,bg,bold}) => (
                     <div key={l} style={{background:bg,border:`1px solid ${bold?'rgba(249,115,22,.25)':'#1a2535'}`,borderRadius:9,padding:'10px 12px',textAlign:'center'}}>
                       <div style={{fontSize:9,color:'#475569',textTransform:'uppercase',marginBottom:3}}>{l}</div>
@@ -763,10 +785,10 @@ export default function ImportCalc() {
                       ['Valoare marfă RON', fmtRON(p.valRON), false],
                       [`Transport (${fmtRON(p.transportPerBuc||0)}/buc × ${p.qty})`, fmtRON(p.transportAlocat), false],
                       [`Taxă vamală ${p.tvPerc}% din DVI`, fmtRON(p.taxaVProd), false],
-                      [`Comision DHL cu TVA (${fmtRON(p.comisionPerBuc||0)}/buc × ${p.qty})`, fmtRON(p.comisionAlocat), false],
-                      [`TVA ${p.tvaPPerc}% din DVI`, fmtRON(p.tvaProd), false],
-                      [`Total ${p.qty} buc (cu TVA inclus)`, fmtRON(p.totalP), true],
-                      ['Cost unitar RON (cu TVA)', fmtRON(p.costUnit), true],
+                      [`Comision DHL fără TVA (${fmtRON(p.comisionPerBuc||0)}/buc × ${p.qty})`, fmtRON(p.comisionAlocat), false],
+                      [`Total ${p.qty} buc (fără TVA — cost real)`, fmtRON(p.totalP), true],
+                      ['Cost unitar RON (fără TVA)', fmtRON(p.costUnit), true],
+                      [`TVA deductibilă ${p.tvaPPerc}% (vamă+comision) — recuperabilă, NU e cost`, fmtRON(p.tvaDeductibilAlocat), false],
                     ].map(([l,v,bold]) => (
                       <div key={l} className="bdr" style={{fontWeight:bold?700:400}}>
                         <span style={{color:bold?'#f97316':'#64748b'}}>{l}</span>
@@ -781,13 +803,13 @@ export default function ImportCalc() {
             {/* TABEL FINAL */}
             <div style={{...sec, padding:0, overflow:'hidden'}}>
               <div style={{padding:'12px 16px',borderBottom:'1px solid #1a2535',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <div style={{fontSize:13,fontWeight:700}}>📋 Lista produse — costuri finale cu TVA</div>
+                <div style={{fontSize:13,fontWeight:700}}>📋 Lista produse — costuri finale (fără TVA — deductibilă)</div>
               </div>
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
                   <thead>
                     <tr style={{background:'#070d12'}}>
-                      {['SKU','Produs','Cant','Preț USD','Preț RON','TV%','TVA%','Taxe/buc','Cost unitar (cu TVA)'].map(h => (
+                      {['SKU','Produs','Cant','Preț USD','Preț RON','TV%','TVA%','Taxe/buc (fără TVA)','Cost unitar (fără TVA)'].map(h => (
                         <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:1,borderBottom:'1px solid #1a2535',whiteSpace:'nowrap'}}>{h}</th>
                       ))}
                     </tr>
@@ -838,7 +860,7 @@ export default function ImportCalc() {
             {savedJSON && (
               <div style={{marginTop:12,background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.2)',borderRadius:12,padding:'14px 16px'}}>
                 <div style={{fontSize:13,color:'#10b981',fontWeight:700,marginBottom:6}}>✅ JSON salvat — {savedJSON.produse.length} produse</div>
-                <div style={{fontSize:11,color:'#475569',marginBottom:10}}>Conține SKU + costImportUnitarRON (cu TVA) — gata pentru calculatorul de profit</div>
+                <div style={{fontSize:11,color:'#475569',marginBottom:10}}>Conține SKU + costImportUnitarRON (fără TVA — deductibilă, separat în tvaDeductibilRON) — gata pentru calculatorul de profit</div>
                 <details>
                   <summary style={{fontSize:11,color:'#64748b',cursor:'pointer'}}>👁 Preview JSON</summary>
                   <pre style={{background:'#070d12',border:'1px solid #1a2535',borderRadius:8,padding:12,fontSize:9,color:'#64748b',overflowX:'auto',marginTop:8,maxHeight:260,overflow:'auto'}}>
