@@ -382,6 +382,22 @@ model InvoiceAwbLink {
   @@index([awb])
 }
 
+// Cost de recepție per SKU, salvat din calculatorul de Import (app/import)
+// la fiecare NIR nou — cu confirmare explicită înainte de suprascriere, vezi
+// app/api/product-costs. Profit page îl citește live la fiecare încărcare
+// (nu cache-uit indefinit în localStorage ca restul costurilor), ca sursă de
+// cost prioritară pentru calculul marjei.
+model ProductCost {
+  sku          String   @id
+  name         String
+  costRON      Decimal  @db.Decimal(12, 2) // fără TVA — cost real folosit la calculul profitului
+  costCuTvaRON Decimal? @db.Decimal(12, 2) // informativ
+  source       String   @default("import") // "import" (din NIR) | "manual"
+  updatedAt    DateTime @updatedAt
+
+  @@index([name])
+}
+
 // Persisted monthly financial rollup (GLS/Sameday collected, ad spend, profit) —
 // entered/edited manually for now (same numbers as app/profit/page.js today, but
 // saved server-side instead of localStorage so they don't need re-entering).

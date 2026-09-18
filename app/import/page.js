@@ -28,6 +28,7 @@ export default function ImportCalc() {
   const [savedJSON, setSavedJSON] = useState(null);
   const [showBD, setShowBD] = useState(null);
   const [dviSegmente, setDviSegmente] = useState([]); // segmente DVI per tip marfă
+  const [dbSaveState, setDbSaveState] = useState(null); // null | 'checking' | {diff} | 'saving' | 'done' | {error}
 
   // Preț recomandat de vânzare — asumpții de business (persistă între sesiuni,
   // spre diferență de restul formularului care se resetează la fiecare import)
@@ -497,6 +498,68 @@ export default function ImportCalc() {
       // Download
       window.XLSX.writeFile(wb, `import-cost-${data}.xlsx`);
     });
+  };
+
+  // Fișier XLSX importabil direct în "Import NIR" din SmartBill Cloud —
+  // exact cele 5 coloane pe care le cere SmartBill la mapare (Denumire
+  // produs / Cod produs / Unitate de măsură / Cantitate / Preț unitar).
+  // Preț unitar = fără TVA (gestiunea SmartBill ține valorile fără TVA —
+  // TVA se aplică separat la recepție, nu intră în fișier).
+  const exportNIR = () => {
+    loadXLSX(() => {
+      const rows = [
+        ['Denumire produs', 'Cod produs', 'Unitate de masura', 'Cantitate', 'Pret unitar'],
+        ...prods.map(p => [p.name.trim(), p.sku || p.name.replace(/\s+/g,'_').toUpperCase(), 'buc', p.qty, +p.costUnit.toFixed(2)]),
+      ];
+      const ws = window.XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{wch:40},{wch:14},{wch:12},{wch:10},{wch:14}];
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, 'NIR');
+      window.XLSX.writeFile(wb, `NIR-import-${new Date().toISOString().slice(0,10)}.xlsx`);
+    });
+  };
+
+  // Salvează costul (fără TVA) per SKU în baza de date a aplicației, ca
+  // Profit page să-l poată citi ca sursă de cost — actualizat la fiecare
+  // recepție nouă, nu introdus manual. Cere confirmare explicită înainte
+  // de suprascriere: un import vechi/greșit nu trebuie să strice costurile
+  // deja corecte fără să te întrebe.
+  const dbCostProducts = () => prods.map(p => ({
+    sku: p.sku || p.name.replace(/\s+/g,'_').toUpperCase(),
+    name: p.name.trim(),
+    costRON: +p.costUnit.toFixed(2),
+    costCuTvaRON: +p.costUnitCuTva.toFixed(2),
+  }));
+
+  const checkDbCosts = async () => {
+    setDbSaveState('checking');
+    try {
+      const res = await fetch('/api/receptie-costs', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ products: dbCostProducts(), confirm: false }),
+      });
+      const data = await res.json();
+      if (!data.ok) { setDbSaveState({ error: data.error || 'Eroare necunoscută' }); return; }
+      const { nou, schimbate, neschimbate } = data.diff;
+      if (!nou.length && !schimbate.length) {
+        setDbSaveState('done');
+      } else {
+        setDbSaveState({ diff: data.diff });
+      }
+    } catch (e) { setDbSaveState({ error: e.message }); }
+  };
+
+  const confirmDbCosts = async () => {
+    setDbSaveState('saving');
+    try {
+      const res = await fetch('/api/receptie-costs', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ products: dbCostProducts(), confirm: true }),
+      });
+      const data = await res.json();
+      if (!data.ok) { setDbSaveState({ error: data.error || 'Eroare necunoscută' }); return; }
+      setDbSaveState('done');
+    } catch (e) { setDbSaveState({ error: e.message }); }
   };
 
   // ── STYLES ──
@@ -973,6 +1036,61 @@ export default function ImportCalc() {
                 style={{background:'linear-gradient(135deg,#16a34a,#15803d)',color:'white',border:'none',padding:'14px',borderRadius:12,fontWeight:700,fontSize:13,cursor:'pointer'}}>
                 📗 Excel (.xlsx)
               </button>
+            </div>
+
+            {/* NIR SmartBill + salvare cost în DB */}
+            <div style={{...sec, border:'1px solid rgba(59,130,246,.3)', background:'rgba(59,130,246,.04)', marginTop:14}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>📥 Recepție SmartBill</div>
+              <div style={{fontSize:11,color:'#64748b',marginBottom:12}}>
+                Generează fișierul de import NIR (Denumire produs, Cod produs, UM, Cantitate, Preț unitar fără TVA) și/sau salvează costurile în aplicație, ca Profit page să le folosească automat.
+              </div>
+              <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                <button onClick={exportNIR}
+                  style={{flex:1,minWidth:180,background:'linear-gradient(135deg,#3b82f6,#1d4ed8)',color:'white',border:'none',padding:'12px',borderRadius:10,fontWeight:700,fontSize:13,cursor:'pointer'}}>
+                  📥 Generează NIR (SmartBill)
+                </button>
+                <button onClick={checkDbCosts} disabled={dbSaveState==='checking'||dbSaveState==='saving'}
+                  style={{flex:1,minWidth:180,background:'linear-gradient(135deg,#8b5cf6,#7c3aed)',color:'white',border:'none',padding:'12px',borderRadius:10,fontWeight:700,fontSize:13,cursor:'pointer',opacity:(dbSaveState==='checking'||dbSaveState==='saving')?.6:1}}>
+                  {dbSaveState==='checking' ? '⟳ Verific...' : '💾 Salvează costurile în DB'}
+                </button>
+              </div>
+
+              {dbSaveState==='done' && (
+                <div style={{marginTop:12,fontSize:12,color:'#10b981'}}>✅ Costurile din DB sunt actualizate — Profit page le va folosi automat.</div>
+              )}
+              {dbSaveState?.error && (
+                <div style={{marginTop:12,fontSize:12,color:'#f43f5e'}}>✗ {dbSaveState.error}</div>
+              )}
+              {dbSaveState?.diff && (
+                <div style={{marginTop:12,background:'#070d12',border:'1px solid #1a2535',borderRadius:9,padding:'12px 14px'}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#f59e0b',marginBottom:8}}>
+                    ⚠️ {dbSaveState.diff.schimbate.length} produse cu cost DIFERIT de cel deja salvat, {dbSaveState.diff.nou.length} produse noi — confirmi actualizarea?
+                  </div>
+                  {dbSaveState.diff.schimbate.map(d => (
+                    <div key={d.sku} style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>
+                      <strong style={{color:'#e8edf2'}}>{d.name}</strong> ({d.sku}): {fmtRON(d.costVechi)} → <strong style={{color:'#f59e0b'}}>{fmtRON(d.costNou)}</strong>
+                    </div>
+                  ))}
+                  {dbSaveState.diff.nou.map(d => (
+                    <div key={d.sku} style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>
+                      <strong style={{color:'#e8edf2'}}>{d.name}</strong> ({d.sku}): <span style={{color:'#334155'}}>nesalvat</span> → <strong style={{color:'#10b981'}}>{fmtRON(d.costRON)}</strong>
+                    </div>
+                  ))}
+                  <div style={{display:'flex',gap:10,marginTop:10}}>
+                    <button onClick={confirmDbCosts} disabled={dbSaveState==='saving'}
+                      style={{flex:1,background:'linear-gradient(135deg,#10b981,#059669)',color:'white',border:'none',padding:'10px',borderRadius:8,fontWeight:700,fontSize:12,cursor:'pointer'}}>
+                      ✅ Confirmă actualizarea
+                    </button>
+                    <button onClick={() => setDbSaveState(null)}
+                      style={{background:'transparent',border:'1px solid #1a2535',color:'#64748b',padding:'10px 16px',borderRadius:8,cursor:'pointer',fontSize:12}}>
+                      Anulează
+                    </button>
+                  </div>
+                </div>
+              )}
+              {dbSaveState==='saving' && (
+                <div style={{marginTop:12,fontSize:12,color:'#8b5cf6'}}>⟳ Se salvează...</div>
+              )}
             </div>
 
             {savedJSON && (

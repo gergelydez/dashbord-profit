@@ -405,7 +405,8 @@ export default function ProfitPage() {
   });
   const [costsLoading, setCostsLoading] = useState(false);
   const [costsLastUpdated, setCostsLastUpdated] = useState('');
-  const [productCosts, setProductCosts] = useState({});
+  const [productCosts, setProductCosts] = useState({ bySku: {}, byName: {} });
+  const [dbCostsUpdatedAt, setDbCostsUpdatedAt] = useState('');
   const [shopifyCosts, setShopifyCosts] = useState({});
   const [shopifyVariantCosts, setShopifyVariantCosts] = useState({});
   const [shopifySkuCosts, setShopifySkuCosts] = useState({});
@@ -567,7 +568,12 @@ export default function ProfitPage() {
       const data = await res.json();
       if (!res.ok || !data.ok) { setSbCostsMsg(`❌ ${data.error || data.details || 'Eroare SmartBill'}`); return; }
       if (!data.stdCosts?.length) { setSbCostsMsg('⚠️ Nu s-au găsit produse cu preț de achiziție în SmartBill.'); return; }
-      const merged = mergeCosts(stdCosts, data.stdCosts);
+      // Bază proaspătă din localStorage (nu state-ul React, care poate fi
+      // încă neîncărcat când asta rulează automat la montare) — evită să
+      // suprascriem costurile deja persistate cu un merge pe bază goală.
+      const baseRaw = localStorage.getItem('glamx_std_costs');
+      const base = baseRaw ? JSON.parse(baseRaw) : stdCosts;
+      const merged = mergeCosts(base, data.stdCosts);
       setStdCosts(merged);
       localStorage.setItem('glamx_std_costs', JSON.stringify(merged));
       setSbCostsMsg(`✅ ${data.stdCosts.length} produse importate din SmartBill!`);
@@ -635,6 +641,37 @@ export default function ProfitPage() {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
+
+  // Costuri din DB (salvate din calculatorul de Import la fiecare recepție
+  // NIR) — citite live la fiecare încărcare a paginii, nu cache-uite ca
+  // restul costurilor din localStorage, ca profitul să reflecte mereu cea
+  // mai recentă recepție confirmată.
+  useEffect(() => {
+    fetch('/api/receptie-costs')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data?.ok || !data.costs?.length) return;
+        const bySku = {}, byName = {};
+        let latest = '';
+        for (const c of data.costs) {
+          if (c.sku) bySku[c.sku.toLowerCase()] = c.costRON;
+          if (c.name) byName[c.name.toLowerCase()] = c.costRON;
+          if (!latest || c.updatedAt > latest) latest = c.updatedAt;
+        }
+        setProductCosts({ bySku, byName });
+        if (latest) setDbCostsUpdatedAt(latest);
+      })
+      .catch(() => {});
+
+    // Sincronizare automată cu SmartBill (dacă sunt credențiale salvate) —
+    // fetchSmartBillCosts citește baza proaspătă din localStorage la fiecare
+    // apel (nu din state-ul React, care ar putea fi încă neîncărcat aici),
+    // deci e sigur de apelat și fără interacțiune manuală cu butonul.
+    const email = localStorage.getItem('sb_email');
+    const token = localStorage.getItem('sb_token');
+    const cif   = localStorage.getItem('sb_cif');
+    if (email && token && cif) fetchSmartBillCosts();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!preset) return;
@@ -817,9 +854,12 @@ export default function ProfitPage() {
     if (manualCosts[nameRaw] !== undefined && manualCosts[nameRaw] !== '')
       return { cost: parseFloat(manualCosts[nameRaw])||0, src: 'manual' };
 
-    // 2. SmartBill productCosts
-    if (productCosts[nameKey])
-      return { cost: productCosts[nameKey]||0, src: 'smartbill' };
+    // 2. Cost din DB — salvat din calculatorul de Import la fiecare recepție
+    // (NIR) nouă, cea mai proaspătă sursă reală de cost per SKU/produs.
+    if (skuKey && productCosts.bySku?.[skuKey])
+      return { cost: productCosts.bySku[skuKey], src: 'receptie' };
+    if (productCosts.byName?.[nameKey])
+      return { cost: productCosts.byName[nameKey], src: 'receptie' };
 
     // 3. Shopify variant/sku costs
     const shopifyCost = (variantId ? shopifyVariantCosts[variantId] : null)
@@ -1848,8 +1888,8 @@ export default function ProfitPage() {
                             const { cost: costUnit, src } = resolveCost(item);
                             const qty = item.qty || 1;
                             const itemSku = item.sku || '';
-                            const srcClr = {standard:'#10b981',shopify:'#3b82f6',smartbill:'#a855f7',manual:'#f59e0b',none:'#f43f5e'};
-                            const srcLbl = {standard:'STD',shopify:'SH',smartbill:'SB',manual:'M',none:'?'};
+                            const srcClr = {standard:'#10b981',shopify:'#3b82f6',smartbill:'#a855f7',receptie:'#06b6d4',manual:'#f59e0b',none:'#f43f5e'};
+                            const srcLbl = {standard:'STD',shopify:'SH',smartbill:'SB',receptie:'NIR',manual:'M',none:'?'};
                             const isEditingThis = editingCost[itemSku] !== undefined && itemSku;
 
                             return (
@@ -1978,7 +2018,7 @@ export default function ProfitPage() {
 
                   <div style={{fontSize:10,color:'var(--c-text4)',textAlign:'center',padding:'8px 0',lineHeight:1.7}}>
                     Cheltuieli/comandă: {fmt(transportPerOrder)} transport + {fmt(marketingPerOrder)} marketing + {fmt(fixedPerOrder)} fixe = <strong>{fmt(cheltuieliPerOrder)} RON</strong><br/>
-                    STD = standard · SH = Shopify · SB = SmartBill · M = manual · ? = necunoscut<br/>
+                    STD = standard · SH = Shopify · SB = SmartBill · NIR = recepție (Import) · M = manual · ? = necunoscut<br/>
                     ✏️ Editarea costului unui SKU se aplică automat la toate variantele cu același SKU
                   </div>
                 </>
@@ -1995,6 +2035,7 @@ export default function ProfitPage() {
               <p style={{fontSize:12,color:'var(--c-text3)',marginBottom:12,lineHeight:1.6}}>
                 Prețurile tale de achiziție. Au prioritate față de Shopify.
                 {costsLastUpdated && <span style={{color:'var(--c-green)',marginLeft:6}}>✓ Actualizat {costsLastUpdated}</span>}
+                {dbCostsUpdatedAt && <span style={{color:'#06b6d4',marginLeft:6}}>✓ Recepții (NIR) actualizate {new Date(dbCostsUpdatedAt).toLocaleDateString('ro-RO')}</span>}
               </p>
               <table className="pf-prod-table">
                 <thead><tr><th>SKU</th><th>Produs</th><th style={{width:90,textAlign:'right'}}>Cost RON</th><th style={{width:32}}></th></tr></thead>
@@ -2071,8 +2112,8 @@ export default function ProfitPage() {
                       {uniqueProducts.slice(0,25).map(prod => {
                         const {cost:rc,src:as} = resolveCost({name:prod,sku:'',variantId:''});
                         const cs = costSource[prod]||as;
-                        const srcColor={standard:'#10b981',shopify:'#3b82f6',smartbill:'#a855f7',manual:'#f59e0b',none:'#f43f5e'};
-                        const srcLabel={standard:'STD',shopify:'SH',smartbill:'SB',manual:'M',none:'?'};
+                        const srcColor={standard:'#10b981',shopify:'#3b82f6',smartbill:'#a855f7',receptie:'#06b6d4',manual:'#f59e0b',none:'#f43f5e'};
+                        const srcLabel={standard:'STD',shopify:'SH',smartbill:'SB',receptie:'NIR',manual:'M',none:'?'};
                         return (
                           <tr key={prod}>
                             <td style={{color:'var(--c-text3)',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={prod}>{prod}</td>
