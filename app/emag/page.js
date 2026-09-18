@@ -29,6 +29,14 @@ const ls = {
 
 const fmt = n => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// "Data comenzii" vine ca "2026-09-18 09:57:42" — o afișăm zi.lună.an oră:minut.
+function fmtOrderDate(raw) {
+  if (!raw) return '';
+  const m = String(raw).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (m) return `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}`;
+  return String(raw).slice(0, 10);
+}
+
 function loadXLSXLib() {
   return new Promise((resolve, reject) => {
     if (window.XLSX) return resolve();
@@ -307,6 +315,7 @@ export default function EmagOrdersPage() {
                       </div>
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
                         {o.orderId && <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>#{o.orderId}</div>}
+                        {o.date && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>📅 {fmtOrderDate(o.date)}</div>}
                         {o.status && <div style={{ fontSize: 10, color: '#f97316', marginTop: 2 }}>{o.status}</div>}
                         {o.payMode && <div style={{ fontSize: 9, color: '#64748b', marginTop: 1 }}>{o.payMode}</div>}
                       </div>
