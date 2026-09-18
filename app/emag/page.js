@@ -214,8 +214,13 @@ export default function EmagOrdersPage() {
         for (const o of parsed) {
           const dedupKey = o.orderId || `${o.phone}__${o.products[0]?.name || ''}`;
           const existingIdx = merged.findIndex(m => (m.orderId || `${m.phone}__${m.products[0]?.name || ''}`) === dedupKey);
-          if (existingIdx !== -1) merged[existingIdx] = o;
-          else merged.push(o);
+          if (existingIdx !== -1) {
+            merged[existingIdx] = {
+              ...o,
+              feedbackSentAt: merged[existingIdx].feedbackSentAt,
+              reviewSentAt: merged[existingIdx].reviewSentAt,
+            };
+          } else merged.push(o);
         }
         if (!newFiles.includes(file.name)) newFiles.push(file.name);
       }
@@ -239,6 +244,13 @@ export default function EmagOrdersPage() {
   const clearAll = () => {
     setOrders([]); setFiles([]); setDebugInfo(null); setError('');
     ls.del('emag_orders'); ls.del('emag_files');
+  };
+
+  // wa.me doar deschide conversația pre-completată — nu ne spune dacă chiar
+  // ai apăsat trimite în WhatsApp. Marcăm "cerut" la click, ca proxy
+  // rezonabil, ca să vezi cui i-ai scris deja și să nu trimiți de două ori.
+  const markSent = (orderId, field) => {
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, [field]: new Date().toISOString() } : o));
   };
 
   const filtered = useMemo(() => {
@@ -336,15 +348,27 @@ export default function EmagOrdersPage() {
                       </div>
                     )}
                     {o.phone && (
-                      <div style={{ display: 'flex', gap: 6, borderTop: '1px solid rgba(255,255,255,.04)', paddingTop: 8 }}>
-                        <a href={fbLink} target="_blank" rel="noopener noreferrer"
-                          style={{ flex: 1, textAlign: 'center', background: 'rgba(37,211,102,.12)', border: '1px solid rgba(37,211,102,.35)', color: '#25d366', borderRadius: 7, padding: '7px 10px', fontSize: 11, fontWeight: 700, textDecoration: 'none' }}>
-                          💬 Cere feedback
-                        </a>
-                        <a href={revLink} target="_blank" rel="noopener noreferrer"
-                          style={{ flex: 1, textAlign: 'center', background: 'rgba(249,115,22,.12)', border: '1px solid rgba(249,115,22,.35)', color: '#f97316', borderRadius: 7, padding: '7px 10px', fontSize: 11, fontWeight: 700, textDecoration: 'none' }}>
-                          ⭐ Cere recenzie
-                        </a>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255,255,255,.04)', paddingTop: 8 }}>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <a href={fbLink} target="_blank" rel="noopener noreferrer" onClick={() => markSent(o.id, 'feedbackSentAt')}
+                            style={{ flex: 1, textAlign: 'center', background: 'rgba(37,211,102,.12)', border: '1px solid rgba(37,211,102,.35)', color: '#25d366', borderRadius: 7, padding: '7px 10px', fontSize: 11, fontWeight: 700, textDecoration: 'none' }}>
+                            💬 Cere feedback
+                          </a>
+                          <a href={revLink} target="_blank" rel="noopener noreferrer" onClick={() => markSent(o.id, 'reviewSentAt')}
+                            style={{ flex: 1, textAlign: 'center', background: 'rgba(249,115,22,.12)', border: '1px solid rgba(249,115,22,.35)', color: '#f97316', borderRadius: 7, padding: '7px 10px', fontSize: 11, fontWeight: 700, textDecoration: 'none' }}>
+                            ⭐ Cere recenzie
+                          </a>
+                        </div>
+                        {(o.feedbackSentAt || o.reviewSentAt) && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {o.feedbackSentAt && (
+                              <div style={{ fontSize: 10, color: '#25d366' }}>✓ Feedback cerut {fmtOrderDate(o.feedbackSentAt)}</div>
+                            )}
+                            {o.reviewSentAt && (
+                              <div style={{ fontSize: 10, color: '#f97316' }}>✓ Recenzie cerută {fmtOrderDate(o.reviewSentAt)}</div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
