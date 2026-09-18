@@ -179,14 +179,19 @@ export async function POST(request) {
     // ── Construiește produsele ────────────────────────────────────────────────
     // Cu gestiune: warehouseName se pune LA NIVEL DE PRODUS (nu la invoice)
     // isTaxIncluded: true => prețul din Shopify include deja TVA
+    const TRANSPORT_KW = ['szállítás', 'futar', 'futár', 'livrare', 'transport',
+      'shipping', 'delivery', 'fuvar', 'freight', 'postage', 'courier'];
+    const isTransport = (item) => item.isShipping || TRANSPORT_KW.some(k => (item.name || '').toLowerCase().includes(k));
+
     const buildProduct = (item) => {
       const qty   = Math.max(1, parseInt(item.qty) || 1);
       const price = parseFloat(item.price) || 0;
       const sku   = (item.sku || '').trim();
+      const transport = isTransport(item);
 
       return {
         name:               (item.name || 'Produs').slice(0, 255),
-        code:               sku || '',
+        code:               transport ? '' : sku,
         isDiscount:         false,
         measuringUnitName:  'buc',
         currency:           order.currency || 'RON',
@@ -195,10 +200,11 @@ export async function POST(request) {
         isTaxIncluded:      true,
         taxName:            'Normala',
         taxPercentage:      TAX_PERCENTAGE,
-        isService:          false,
+        // Transportul e serviciu — nu are SKU/gestiune, indiferent de useStock
+        isService:          transport,
         saveToDb:           false,
         // warehouseName la nivel de produs — corect conform documentației
-        ...(useStock && warehouse ? { warehouseName: warehouse } : {}),
+        ...(useStock && warehouse && !transport ? { warehouseName: warehouse } : {}),
       };
     };
 

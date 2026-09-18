@@ -198,15 +198,31 @@ function procOrder(o) {
     labelUrl: xcLabelUrl || xcFulfillment?.tracking_url || fulfillmentData?.tracking_url || (trackingNo ? `/api/connector/awb-label?tracking=${trackingNo}` : ''),
     utmSource: o.utmSource || '', utmMedium: o.utmMedium || '',
     utmCampaign: o.utmCampaign || '', referrerUrl: o.referrerUrl || '',
-    items: (o.line_items || []).map(i => ({
-      name: i.name || i.title || 'Produs',
-      sku: i.sku || '',
-      qty: i.quantity || 1,
-      price: parseFloat(i.price) || 0,
-      variantId: String(i.variant_id || ''),
-      productHandle: i.product_handle || i.handle || '',
-      productId: String(i.product_id || ''),
-    })),
+    items: [
+      ...(o.line_items || []).map(i => ({
+        name: i.name || i.title || 'Produs',
+        sku: i.sku || '',
+        qty: i.quantity || 1,
+        price: parseFloat(i.price) || 0,
+        variantId: String(i.variant_id || ''),
+        productHandle: i.product_handle || i.handle || '',
+        productId: String(i.product_id || ''),
+      })),
+      // Shopify ține transportul separat de line_items (shipping_lines), dar total_price
+      // îl include — fără linia asta, factura ieșea mai mică decât comanda Shopify.
+      ...(o.shipping_lines || [])
+        .filter(s => parseFloat(s.price) > 0)
+        .map(s => ({
+          name: s.title || 'Transport',
+          sku: '',
+          qty: 1,
+          price: parseFloat(s.price) || 0,
+          variantId: '',
+          productHandle: '',
+          productId: '',
+          isShipping: true,
+        })),
+    ],
     // Validare adresă locală (detectare rapidă fără API)
     addrIssues: (() => {
       const issues = [];
