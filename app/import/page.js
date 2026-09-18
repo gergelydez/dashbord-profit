@@ -356,7 +356,7 @@ export default function ImportCalc() {
   };
 
   const exportCSV = () => {
-    const rows = [['SKU','Produs','Cant','Pret USD','Pret RON','TaxaVam%','TVA%','Taxe/buc RON (fara TVA)','TVA deductibila/buc RON','Cost unitar RON (fara TVA, SmartBill receptie)','Cost unitar RON (cu TVA)','Total RON (fara TVA)','Total RON (cu TVA)']];
+    const rows = [['SKU','Produs','Cant','Pret USD','Pret RON','TaxaVam%','TVA%','Taxe/buc RON (fara TVA)','TVA deductibila/buc RON','Cost unitar RON (fara TVA, SmartBill receptie)','Pret final RON (cu TVA)','Total RON (fara TVA)','Total RON (cu TVA)']];
     prods.forEach(p => rows.push([
       p.sku, `"${p.name}"`, p.qty, fmt(p.unitUSD), fmt(p.unitUSD*curs),
       p.tvPerc, p.tvaPPerc, fmt(p.costuri/p.qty), fmt(p.qty>0?p.tvaDeductibilAlocat/p.qty:0), fmt(p.costUnit), fmt(p.costUnitCuTva), fmt(p.totalP), fmt(p.totalPCuTva)
@@ -375,7 +375,7 @@ export default function ImportCalc() {
          'Taxa vamala %', 'Taxa vamala RON', 'TVA %', 'TVA deductibila RON (nu e cost)',
          'Transport/buc RON', 'Comision DHL/buc RON (fara TVA)',
          'Taxe totale/buc RON (fara TVA)',
-         'Cost unitar RON (fara TVA — SmartBill receptie)', 'Cost unitar RON (cu TVA)',
+         'Cost unitar RON (fara TVA — SmartBill receptie)', 'Pret final RON (cu TVA)',
          'Total produs RON (fara TVA)', 'Total produs RON (cu TVA)'],
       ];
       prods.forEach(p => dataSheet.push([
@@ -710,7 +710,7 @@ export default function ImportCalc() {
                   [`🏢 Comision DHL (fără TVA — cu TVA: ${comRON.toFixed(2)} RON)`, fmtRON(comisionNetRON), '#94a3b8'],
                   [`💰 TVA deductibilă${tvaRON_dvi?' (DVI)':` ${tvaPercent}%`} — vamă+comision, recuperabilă`, fmtRON(totalTvaDeductibil), '#a855f7'],
                   ['📦 TOTAL fără TVA — pt. recepție SmartBill', fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON), '#f97316'],
-                  ['💳 TOTAL cu TVA — cost real produs', fmtRON(totalCostRON_cuTva), '#a855f7'],
+                  ['💳 PREȚ FINAL cu TVA — cost real produs', fmtRON(totalCostRON_cuTva), '#a855f7'],
                 ].map(([l,v,c], i) => (
                   <div key={l} className="bdr" style={{fontWeight:i>=5?800:400}}>
                     <span style={{color:i>=5?'#f97316':'#64748b'}}>{l}</span>
@@ -754,9 +754,9 @@ export default function ImportCalc() {
                 <span style={{fontSize:16,fontWeight:800}}>TOTAL fără TVA <span style={{fontSize:10,fontWeight:400,color:'#475569'}}>(recepție SmartBill)</span></span>
                 <span style={{fontSize:22,fontWeight:900,color:'#f97316',fontFamily:'monospace'}}>{fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON)}</span>
               </div>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,marginTop:4}}>
-                <span style={{fontSize:14,fontWeight:700,color:'#a855f7'}}>TOTAL cu TVA <span style={{fontSize:10,fontWeight:400,color:'#475569'}}>(cost real produs)</span></span>
-                <span style={{fontSize:18,fontWeight:900,color:'#a855f7',fontFamily:'monospace'}}>{fmtRON(totalCostRON_cuTva)}</span>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:12,marginTop:6,borderTop:'2px solid rgba(168,85,247,.3)'}}>
+                <span style={{fontSize:16,fontWeight:800,color:'#a855f7'}}>PREȚ FINAL cu TVA <span style={{fontSize:10,fontWeight:400,color:'#475569'}}>(cost real produs)</span></span>
+                <span style={{fontSize:22,fontWeight:900,color:'#a855f7',fontFamily:'monospace'}}>{fmtRON(totalCostRON_cuTva)}</span>
               </div>
               <div style={{textAlign:'right',marginTop:6,fontSize:11,color:'#475569'}}>
                 {totalQty} buc · cost mediu <strong style={{color:'#f97316'}}>{fmtRON(totalQty>0?totalCostRON/totalQty:0)}</strong> fără TVA
@@ -791,12 +791,12 @@ export default function ImportCalc() {
 
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10}}>
                   {[
-                    {l:'Preț furnizor', sub:`$${fmt(p.unitUSD)}`, v:fmtRON(p.unitUSD*curs), c:'#e8edf2', bg:'#070d12'},
-                    {l:'Taxe/buc', sub:'transport+vamă+comision (fără TVA)', v:fmtRON(p.qty>0?p.costuri/p.qty:0), c:'#f59e0b', bg:'rgba(245,158,11,.04)'},
-                    {l:'COST UNITAR', sub:'fără TVA — SmartBill recepție', v:fmtRON(p.costUnit), c:'#f97316', bg:'rgba(249,115,22,.08)', bold:true},
-                    {l:'COST UNITAR', sub:'cu TVA — cost real produs', v:fmtRON(p.costUnitCuTva), c:'#a855f7', bg:'rgba(168,85,247,.08)', bold:true},
-                  ].map(({l,sub,v,c,bg,bold}) => (
-                    <div key={l+sub} style={{background:bg,border:`1px solid ${bold?'rgba(249,115,22,.25)':'#1a2535'}`,borderRadius:9,padding:'10px 12px',textAlign:'center'}}>
+                    {l:'Preț furnizor', sub:`$${fmt(p.unitUSD)}`, v:fmtRON(p.unitUSD*curs), c:'#e8edf2', bg:'#070d12', bd:'#1a2535'},
+                    {l:'Taxe/buc', sub:'transport+vamă+comision (fără TVA)', v:fmtRON(p.qty>0?p.costuri/p.qty:0), c:'#f59e0b', bg:'rgba(245,158,11,.04)', bd:'#1a2535'},
+                    {l:'COST UNITAR', sub:'fără TVA — SmartBill recepție', v:fmtRON(p.costUnit), c:'#f97316', bg:'rgba(249,115,22,.08)', bd:'rgba(249,115,22,.25)', bold:true},
+                    {l:'PREȚ FINAL', sub:'cu TVA — cost real produs', v:fmtRON(p.costUnitCuTva), c:'#a855f7', bg:'rgba(168,85,247,.08)', bd:'rgba(168,85,247,.35)', bold:true},
+                  ].map(({l,sub,v,c,bg,bd,bold}) => (
+                    <div key={l+sub} style={{background:bg,border:`1px solid ${bd}`,borderRadius:9,padding:'10px 12px',textAlign:'center'}}>
                       <div style={{fontSize:9,color:'#475569',textTransform:'uppercase',marginBottom:3}}>{l}</div>
                       <div style={{fontSize:9,color:'#334155',marginBottom:4}}>{sub}</div>
                       <div style={{fontSize:bold?17:14,fontWeight:bold?900:700,color:c,fontFamily:'monospace'}}>{v}</div>
@@ -815,7 +815,7 @@ export default function ImportCalc() {
                       ['Cost unitar RON (fără TVA — SmartBill recepție)', fmtRON(p.costUnit), true],
                       [`TVA deductibilă ${p.tvaPPerc}% (vamă+comision) — recuperabilă, NU e cost`, fmtRON(p.tvaDeductibilAlocat), false],
                       [`Total ${p.qty} buc (cu TVA)`, fmtRON(p.totalPCuTva), true],
-                      ['Cost unitar RON (cu TVA — cost real produs)', fmtRON(p.costUnitCuTva), true],
+                      ['Preț final RON/buc (cu TVA — cost real produs)', fmtRON(p.costUnitCuTva), true],
                     ].map(([l,v,bold]) => (
                       <div key={l} className="bdr" style={{fontWeight:bold?700:400}}>
                         <span style={{color:bold?'#f97316':'#64748b'}}>{l}</span>
@@ -836,7 +836,7 @@ export default function ImportCalc() {
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
                   <thead>
                     <tr style={{background:'#070d12'}}>
-                      {['SKU','Produs','Cant','Preț USD','Preț RON','TV%','TVA%','Taxe/buc (fără TVA)','Cost unitar (fără TVA)','Cost unitar (cu TVA)'].map(h => (
+                      {['SKU','Produs','Cant','Preț USD','Preț RON','TV%','TVA%','Taxe/buc (fără TVA)','Cost unitar (fără TVA)','Preț final (cu TVA)'].map(h => (
                         <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:1,borderBottom:'1px solid #1a2535',whiteSpace:'nowrap'}}>{h}</th>
                       ))}
                     </tr>
