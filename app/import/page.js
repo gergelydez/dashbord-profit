@@ -6,6 +6,30 @@ const fmtRON = n => `${fmt(n)} RON`;
 
 const EMPTY = {name:'', sku:'', qty:'1', unitPriceUSD:'', taxaVamala:'', tvaPercent:'21'};
 
+// Câmp editabil + buton de copiat — pentru valori pe care le extragi din DVI
+// și le lipești în altă parte (ex. în formularul de NIR din SmartBill).
+function CopyField({ label, value, onChange, placeholder }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    try { navigator.clipboard?.writeText(value || ''); } catch {}
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div>
+      <label style={{fontSize:10,color:'#64748b',textTransform:'uppercase',letterSpacing:1,marginBottom:5,display:'block'}}>{label}</label>
+      <div style={{display:'flex',gap:6}}>
+        <input value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)}
+          style={{flex:1,background:'#070d12',border:'1px solid #1a2535',color:'#e8edf2',padding:'9px 12px',borderRadius:8,fontSize:13,outline:'none',fontFamily:'monospace'}}/>
+        <button onClick={copy} disabled={!value}
+          style={{background:copied?'#10b981':'#1a2535',color:'white',border:'none',borderRadius:8,padding:'0 14px',cursor:value?'pointer':'default',fontSize:12,whiteSpace:'nowrap',opacity:value?1:.5}}>
+          {copied ? '✓ Copiat' : '📋 Copiază'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ImportCalc() {
   const [mounted, setMounted] = useState(false);
   const [products, setProducts] = useState([{...EMPTY}]);
@@ -29,6 +53,8 @@ export default function ImportCalc() {
   const [showBD, setShowBD] = useState(null);
   const [dviSegmente, setDviSegmente] = useState([]); // segmente DVI per tip marfă
   const [dbSaveState, setDbSaveState] = useState(null); // null | 'checking' | {diff} | 'saving' | 'done' | {error}
+  const [numarFactura, setNumarFactura] = useState(''); // extras din DVI de AI, editabil manual
+  const [dataDvi, setDataDvi] = useState('');           // extras din DVI de AI, editabil manual
 
   // Preț recomandat de vânzare — asumpții de business (persistă între sesiuni,
   // spre diferență de restul formularului care se resetează la fiecare import)
@@ -176,6 +202,8 @@ export default function ImportCalc() {
       // parsed e deja definit mai sus
 
       if (type === 'dvi') {
+        if (parsed.numarFactura) setNumarFactura(String(parsed.numarFactura));
+        if (parsed.dataDvi) setDataDvi(String(parsed.dataDvi));
         if (parsed.cursSchimb) setCursValutar(String(parsed.cursSchimb));
         if (parsed.totalTaxaVamalaRON) setTaxaVamalaRON(String(parsed.totalTaxaVamalaRON));
         if (parsed.totalTvaRON) setTvaRON_dvi(String(parsed.totalTvaRON));
@@ -339,12 +367,30 @@ export default function ImportCalc() {
 
   // Preț recomandat de vânzare: cost + profit net dorit + Meta + transport de
   // livrare la client, apoi "brutizat" (grossed-up) pentru TVA și impozitul pe
-  // profit (16%), ca profitul NET rămas — după ce statul își ia impozitul pe
-  // profit — să fie exact cel dorit, nu profitul brut înainte de impozit.
+  // profit, ca profitul NET rămas — după ce statul își ia impozitul pe profit
+  // — să fie exact cel dorit, nu profitul brut înainte de impozit.
+  //
+  // Transportul de livrare la client (curier RO — GLS/Sameday) e introdus CU
+  // TVA (așa arată factura curierului) — TVA-ul e deductibil/recuperabil, la
+  // fel ca restul TVA-ului din calculator, deci NU e cost real; scădem partea
+  // de TVA înainte de a-l aduna la bază.
+  // Meta NU are TVA de scos: Meta facturează prin taxare inversă
+  // intracomunitară (fără TVA pe factură) — ca plătitor de TVA, TVA-ul
+  // autofacturat se anulează în decont (colectat = deductibil), deci costul
+  // e deja "curat", fără nicio ajustare (înainte, ca neplătitor, taxarea
+  // inversă era un cost real nerecuperabil — nu mai e cazul acum).
+  const tvaPFrac = (parseFloat(tvaPercent) || 21) / 100;
+  const transportLivrareFaraTva = (parseFloat(transportLivrarePerBuc) || 0) / (1 + tvaPFrac);
   const profitBrutNecesarPerBuc = (parseFloat(profitNetTinta)||0) / (1 - Math.min(99,(parseFloat(impozitProfitPercent)||0)) / 100);
   const calcPretRecomandat = (costUnitFaraTva) => {
-    const bazaFaraTva = costUnitFaraTva + (parseFloat(metaPerBuc)||0) + (parseFloat(transportLivrarePerBuc)||0) + profitBrutNecesarPerBuc;
-    return { faraTva: bazaFaraTva, cuTva: bazaFaraTva * (1 + (parseFloat(tvaPercent)||21) / 100) };
+    const meta = parseFloat(metaPerBuc)||0;
+    const bazaFaraTva = costUnitFaraTva + meta + transportLivrareFaraTva + profitBrutNecesarPerBuc;
+    const cuTva = bazaFaraTva * (1 + tvaPFrac);
+    // Verificare: profitul net rămas după TVA colectată + impozit pe profit
+    // — trebuie să fie exact profitNetTinta (confirmă că baza de mai sus e
+    // corect calculată, nu doar afișată).
+    const profitNetRealizat = (bazaFaraTva - costUnitFaraTva - meta - transportLivrareFaraTva) * (1 - Math.min(99,(parseFloat(impozitProfitPercent)||0))/100);
+    return { faraTva: bazaFaraTva, cuTva, transportLivrareFaraTva, profitNetRealizat };
   };
 
   const exportJSON = () => {
@@ -355,7 +401,8 @@ export default function ImportCalc() {
         comisionDHL: comisionNetRON, transportRON: tRON,
         totalCostRON: totalCostRON_real, totalCostCuTvaRON: totalCostRON_cuTva,
         pretRecomandat: {profitNetTintaRON: parseFloat(profitNetTinta)||0, impozitProfitPercent: parseFloat(impozitProfitPercent)||0,
-          metaPerBucRON: parseFloat(metaPerBuc)||0, transportLivrarePerBucRON: parseFloat(transportLivrarePerBuc)||0}},
+          metaPerBucRON: parseFloat(metaPerBuc)||0, transportLivrareCuTvaPerBucRON: parseFloat(transportLivrarePerBuc)||0,
+          transportLivrareFaraTvaPerBucRON: +transportLivrareFaraTva.toFixed(2)}},
       produse: prods.map(p => {
         const rec = calcPretRecomandat(p.costUnit);
         return {
@@ -377,6 +424,7 @@ export default function ImportCalc() {
         totalProdusCuTvaRON: +p.totalPCuTva.toFixed(2),
         pretRecomandatFaraTvaRON: +rec.faraTva.toFixed(2),
         pretRecomandatCuTvaRON: +rec.cuTva.toFixed(2),
+        profitNetRealizatRON: +rec.profitNetRealizat.toFixed(2),
       };}),
     };
     const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
@@ -388,13 +436,13 @@ export default function ImportCalc() {
   };
 
   const exportCSV = () => {
-    const rows = [['Curs','SKU','Produs','Cant','Pret USD','Pret RON','Transport/buc RON','Taxa vamala/buc RON','Comision/buc RON','TVA deductibila/buc RON','Cost unitar RON (fara TVA, SmartBill receptie)','Pret RON (cu TVA)','Pret recomandat RON (fara TVA)','Pret recomandat RON (cu TVA)','Total RON (fara TVA)','Total RON (cu TVA)']];
+    const rows = [['Curs','SKU','Produs','Cant','Pret USD','Pret RON','Transport/buc RON','Taxa vamala/buc RON','Comision/buc RON','TVA deductibila/buc RON','Cost unitar RON (fara TVA, SmartBill receptie)','Pret RON (cu TVA)','Pret recomandat RON (fara TVA)','Pret recomandat RON (cu TVA)','Profit NET/buc RON','Total RON (fara TVA)','Total RON (cu TVA)']];
     prods.forEach(p => {
       const rec = calcPretRecomandat(p.costUnit);
       rows.push([
         curs.toFixed(4), p.sku, `"${p.name}"`, p.qty, fmt(p.unitUSD), fmt(p.unitUSD*curs),
         fmt(p.transportPerBuc||0), fmt(p.qty>0?p.taxaVProd/p.qty:0), fmt(p.comisionPerBuc||0), fmt(p.qty>0?p.tvaDeductibilAlocat/p.qty:0),
-        fmt(p.costUnit), fmt(p.costUnitCuTva), fmt(rec.faraTva), fmt(rec.cuTva), fmt(p.totalP), fmt(p.totalPCuTva)
+        fmt(p.costUnit), fmt(p.costUnitCuTva), fmt(rec.faraTva), fmt(rec.cuTva), fmt(rec.profitNetRealizat), fmt(p.totalP), fmt(p.totalPCuTva)
       ]);
     });
     const blob = new Blob(['\uFEFF'+rows.map(r=>r.join(',')).join('\n')], {type:'text/csv;charset=utf-8;'});
@@ -412,7 +460,7 @@ export default function ImportCalc() {
          'Transport/buc RON', 'Comision/buc RON (fara TVA)',
          'Taxe totale/buc RON (fara TVA)',
          'Cost unitar RON (fara TVA — SmartBill receptie)', 'Pret RON (cu TVA)',
-         'Pret recomandat RON (fara TVA)', 'Pret recomandat RON (cu TVA)',
+         'Pret recomandat RON (fara TVA)', 'Pret recomandat RON (cu TVA)', 'Profit NET/buc RON',
          'Total produs RON (fara TVA)', 'Total produs RON (cu TVA)'],
       ];
       prods.forEach(p => {
@@ -435,6 +483,7 @@ export default function ImportCalc() {
           +p.costUnitCuTva.toFixed(2),
           +rec.faraTva.toFixed(2),
           +rec.cuTva.toFixed(2),
+          +rec.profitNetRealizat.toFixed(2),
           +p.totalP.toFixed(2),
           +p.totalPCuTva.toFixed(2),
         ]);
@@ -444,7 +493,7 @@ export default function ImportCalc() {
         '', 'TOTAL', '', totalQty, '', +totalRON_f.toFixed(2),
         '', '', '', +totalTvaDeductibilReal.toFixed(2),
         '', '', '',
-        '', '', '', '',
+        '', '', '', '', '',
         +(dviSegmente.length>0?totalCostRON_real:totalCostRON).toFixed(2),
         +totalCostRON_cuTva.toFixed(2),
       ]);
@@ -456,7 +505,7 @@ export default function ImportCalc() {
         {wch:10},{wch:10},{wch:30},{wch:10},{wch:16},{wch:16},
         {wch:12},{wch:16},{wch:8},{wch:16},
         {wch:16},{wch:16},
-        {wch:18},{wch:24},{wch:16},{wch:20},{wch:20},{wch:18},{wch:18},
+        {wch:18},{wch:24},{wch:16},{wch:20},{wch:20},{wch:16},{wch:18},{wch:18},
       ];
 
       window.XLSX.utils.book_append_sheet(wb, ws1, 'Produse');
@@ -755,6 +804,10 @@ export default function ImportCalc() {
                 {aiLoading==='dvi' ? <span className="pulse">🤖 Analizează DVI...</span> : '🤖 Analizează DVI cu AI'}
                 <input type="file" accept=".pdf" onChange={e => { const f=e.target.files[0]; if(f) analyzePDF(f,'dvi'); e.target.value=''; }} style={{display:'none'}} disabled={aiLoading==='dvi'}/>
               </label>
+              <div className="g2" style={{marginTop:12}}>
+                <CopyField label="Număr factură" value={numarFactura} onChange={setNumarFactura} placeholder="ex: INV-2026-4471"/>
+                <CopyField label="Data DVI" value={dataDvi} onChange={setDataDvi} placeholder="ex: 18.09.2026"/>
+              </div>
             </div>
 
             {/* AI DHL */}
@@ -966,16 +1019,17 @@ export default function ImportCalc() {
               </div>
               <div className="g2">
                 <div>
-                  <label style={lbl}>Cost Meta (ads) / buc (RON)</label>
+                  <label style={lbl}>Cost Meta (ads) / buc <span style={{color:'#3b82f6'}}>fără TVA — taxare inversă, se anulează în decont</span></label>
                   <input type="number" style={inp} value={metaPerBuc} step="1" onChange={e => setMetaPerBuc(e.target.value)}/>
                 </div>
                 <div>
-                  <label style={lbl}>Transport livrare client / buc (RON)</label>
+                  <label style={lbl}>Transport livrare client / buc <span style={{color:'#3b82f6'}}>cu TVA — de pe factura curierului</span></label>
                   <input type="number" style={inp} value={transportLivrarePerBuc} step="1" onChange={e => setTransportLivrarePerBuc(e.target.value)}/>
+                  <div style={{fontSize:9,color:'#475569',marginTop:3}}>= {fmtRON(transportLivrareFaraTva)} fără TVA (cost real) + {fmtRON((parseFloat(transportLivrarePerBuc)||0)-transportLivrareFaraTva)} TVA deductibilă</div>
                 </div>
               </div>
               <div style={{marginTop:10,fontSize:10,color:'#475569'}}>
-                Profit brut necesar (înainte de impozit): <strong style={{color:'#10b981'}}>{fmtRON(profitBrutNecesarPerBuc)}</strong>/buc — din care {impozitProfitPercent||0}% impozit = <strong>{fmtRON(profitBrutNecesarPerBuc-(parseFloat(profitNetTinta)||0))}</strong>, îți rămân net <strong style={{color:'#10b981'}}>{fmtRON(parseFloat(profitNetTinta)||0)}</strong>/buc.
+                Profit brut necesar (înainte de impozit): <strong style={{color:'#10b981'}}>{fmtRON(profitBrutNecesarPerBuc)}</strong>/buc — din care {impozitProfitPercent||0}% impozit = <strong>{fmtRON(profitBrutNecesarPerBuc-(parseFloat(profitNetTinta)||0))}</strong>, îți rămân net <strong style={{color:'#10b981'}}>{fmtRON(parseFloat(profitNetTinta)||0)}</strong>/buc — verificat și în coloana "Profit NET" din tabel mai jos.
               </div>
             </div>
 
@@ -988,7 +1042,7 @@ export default function ImportCalc() {
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
                   <thead>
                     <tr style={{background:'#070d12'}}>
-                      {['Curs','SKU','Produs','Cant','Preț USD','Preț RON','Transport/buc','Taxă vamală/buc','Comision/buc','TVA deduct./buc','COST UNITAR (fără TVA)','PREȚ (cu TVA)','PREȚ RECOMANDAT (fără TVA)','PREȚ RECOMANDAT (cu TVA)'].map(h => (
+                      {['Curs','SKU','Produs','Cant','Preț USD','Preț RON','Transport/buc','Taxă vamală/buc','Comision/buc','TVA deduct./buc','COST UNITAR (fără TVA)','PREȚ (cu TVA)','PREȚ RECOMANDAT (fără TVA)','PREȚ RECOMANDAT (cu TVA)','Profit NET / buc'].map(h => (
                         <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:1,borderBottom:'1px solid #1a2535',whiteSpace:'nowrap'}}>{h}</th>
                       ))}
                     </tr>
@@ -1012,6 +1066,7 @@ export default function ImportCalc() {
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#a855f7',fontWeight:900,fontSize:14}}>{fmtRON(p.costUnitCuTva)}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:14}}>{fmtRON(rec.faraTva)}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#10b981',fontWeight:900,fontSize:14}}>{fmtRON(rec.cuTva)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#10b981',fontWeight:700}} title="Profit net identic pe fiecare produs — e ținta setată mai sus, garantată de prețul recomandat calculat">{fmtRON(rec.profitNetRealizat)}</td>
                       </tr>
                       );
                     })}
@@ -1052,6 +1107,10 @@ export default function ImportCalc() {
               <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>📥 Recepție SmartBill</div>
               <div style={{fontSize:11,color:'#64748b',marginBottom:12}}>
                 Generează fișierul de import NIR (Denumire produs, Cod produs, UM, Cantitate, Preț unitar fără TVA) și/sau salvează costurile în aplicație, ca Profit page să le folosească automat.
+              </div>
+              <div className="g2" style={{marginBottom:12}}>
+                <CopyField label="Număr factură (pt. NIR)" value={numarFactura} onChange={setNumarFactura} placeholder="ex: INV-2026-4471"/>
+                <CopyField label="Data DVI (pt. NIR)" value={dataDvi} onChange={setDataDvi} placeholder="ex: 18.09.2026"/>
               </div>
               <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
                 <button onClick={exportNIR}

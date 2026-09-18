@@ -15,6 +15,8 @@ export async function POST(request) {
 IMPORTANT: un DVI poate conține 1, 2, 3 sau mai multe segmente de mărfuri (câte unul pentru fiecare tip de produs diferit). Caută în tot documentul toate secțiunile "SEGMENT MARFURI" / "Nr. art." și extrage-le pe TOATE, nu doar prima.
 
 Pentru fiecare câmp, folosește exact aceste surse din document:
+- numarFactura: numărul facturii comerciale a furnizorului, referită de obicei în secțiunea "Documente prezentate" / "Documente/certificate prezentate" (cod N380 "Factură comercială") sau lângă descrierea mărfurilor — caută text de forma "Factura nr.", "Invoice No.", "INV" urmat de un cod alfanumeric
+- dataDvi: data declarației vamale (data acceptării/înregistrării DVI-ului, NU data facturii) — de obicei aproape de numărul MRN, în partea de sus a primei pagini
 - cursSchimb: câmpul "Cursul de schimb - [14 09]" din SEGMENT GENERAL (ex: 4.5101)
 - Pentru fiecare segment "Nr. art. N":
   - descriere: textul din "Descrierea mărfurilor" (ex: "80 BUC CEAS INTELIGENT" sau "1 Set aparat electric pentru tuns părul și barbă, cu accesorii")
@@ -28,8 +30,12 @@ Pentru fiecare câmp, folosește exact aceste surse din document:
 
 Fii foarte precis cu cifrele — copiază exact valorile numerice din document, nu le rotunji și nu le aproxima.
 
+Dacă nu găsești numarFactura sau dataDvi în document, pune string gol "" — nu inventa valori.
+
 Răspunde DOAR cu JSON valid, fără alt text, în acest format (numărul de elemente din "segmente" trebuie să corespundă exact numărului de segmente găsite în document):
 {
+  "numarFactura": "INV-2026-4471",
+  "dataDvi": "18.09.2026",
   "cursSchimb": 4.5101,
   "segmente": [
     {
