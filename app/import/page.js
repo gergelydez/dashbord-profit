@@ -382,6 +382,18 @@ export default function ImportCalc() {
   const tvaPFrac = (parseFloat(tvaPercent) || 21) / 100;
   const transportLivrareFaraTva = (parseFloat(transportLivrarePerBuc) || 0) / (1 + tvaPFrac);
   const profitBrutNecesarPerBuc = (parseFloat(profitNetTinta)||0) / (1 - Math.min(99,(parseFloat(impozitProfitPercent)||0)) / 100);
+  // Profitul NET rămas dacă vinzi efectiv la un anumit preț (tratat ca preț
+  // FINAL, cu TVA inclus — orice preț arătat clientului include TVA) — scade
+  // TVA-ul colectat, costurile, apoi impozitul pe profit. O folosim ca să
+  // arătăm ce se întâmplă dacă greșești și folosești prețul "fără TVA" ca
+  // preț de vânzare direct (fără să mai adaugi TVA peste el).
+  const profitDacaVinziLa = (pretVanzareCuTva, costUnitFaraTva) => {
+    const meta = parseFloat(metaPerBuc)||0;
+    const venitFaraTva = pretVanzareCuTva / (1 + tvaPFrac);
+    const profitInainteDeImpozit = venitFaraTva - costUnitFaraTva - meta - transportLivrareFaraTva;
+    return profitInainteDeImpozit * (1 - Math.min(99,(parseFloat(impozitProfitPercent)||0))/100);
+  };
+
   const calcPretRecomandat = (costUnitFaraTva) => {
     const meta = parseFloat(metaPerBuc)||0;
     const bazaFaraTva = costUnitFaraTva + meta + transportLivrareFaraTva + profitBrutNecesarPerBuc;
@@ -389,8 +401,12 @@ export default function ImportCalc() {
     // Verificare: profitul net rămas după TVA colectată + impozit pe profit
     // — trebuie să fie exact profitNetTinta (confirmă că baza de mai sus e
     // corect calculată, nu doar afișată).
-    const profitNetRealizat = (bazaFaraTva - costUnitFaraTva - meta - transportLivrareFaraTva) * (1 - Math.min(99,(parseFloat(impozitProfitPercent)||0))/100);
-    return { faraTva: bazaFaraTva, cuTva, transportLivrareFaraTva, profitNetRealizat };
+    const profitNetRealizat = profitDacaVinziLa(cuTva, costUnitFaraTva);
+    // Avertisment: cât rămâi cu profit dacă vinzi din greșeală la prețul
+    // "fără TVA" ca preț final (fără să mai adaugi TVA peste) — mult mai
+    // puțin decât ținta, fiindcă TVA-ul se scade din același preț afișat.
+    const profitDacaVinziFaraSaAdaugiTva = profitDacaVinziLa(bazaFaraTva, costUnitFaraTva);
+    return { faraTva: bazaFaraTva, cuTva, transportLivrareFaraTva, profitNetRealizat, profitDacaVinziFaraSaAdaugiTva };
   };
 
   const exportJSON = () => {
@@ -804,7 +820,7 @@ export default function ImportCalc() {
                 {aiLoading==='dvi' ? <span className="pulse">🤖 Analizează DVI...</span> : '🤖 Analizează DVI cu AI'}
                 <input type="file" accept=".pdf" onChange={e => { const f=e.target.files[0]; if(f) analyzePDF(f,'dvi'); e.target.value=''; }} style={{display:'none'}} disabled={aiLoading==='dvi'}/>
               </label>
-              <div className="g2" style={{marginTop:12}}>
+              <div style={{display:'flex',flexDirection:'column',gap:12,marginTop:12}}>
                 <CopyField label="Număr factură" value={numarFactura} onChange={setNumarFactura} placeholder="ex: INV-2026-4471"/>
                 <CopyField label="Data DVI" value={dataDvi} onChange={setDataDvi} placeholder="ex: 18.09.2026"/>
               </div>
@@ -1042,7 +1058,7 @@ export default function ImportCalc() {
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
                   <thead>
                     <tr style={{background:'#070d12'}}>
-                      {['Curs','SKU','Produs','Cant','Preț USD','Preț RON','Transport/buc','Taxă vamală/buc','Comision/buc','TVA deduct./buc','COST UNITAR (fără TVA)','PREȚ (cu TVA)','PREȚ RECOMANDAT (fără TVA)','PREȚ RECOMANDAT (cu TVA)','Profit NET / buc'].map(h => (
+                      {['Curs','SKU','Produs','Cant','Preț USD','Preț RON','Transport/buc','Taxă vamală/buc','Comision/buc','TVA deduct./buc','COST UNITAR (fără TVA)','PREȚ (cu TVA)','PREȚ RECOMANDAT (fără TVA)','PREȚ RECOMANDAT (cu TVA)'].map(h => (
                         <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:1,borderBottom:'1px solid #1a2535',whiteSpace:'nowrap'}}>{h}</th>
                       ))}
                     </tr>
@@ -1064,9 +1080,14 @@ export default function ImportCalc() {
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#a855f7'}} title={`${p.tvaPPerc}%`}>{fmtRON(p.qty>0?p.tvaDeductibilAlocat/p.qty:0)}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:14}}>{fmtRON(p.costUnit)}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#a855f7',fontWeight:900,fontSize:14}}>{fmtRON(p.costUnitCuTva)}</td>
-                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:14}}>{fmtRON(rec.faraTva)}</td>
-                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#10b981',fontWeight:900,fontSize:14}}>{fmtRON(rec.cuTva)}</td>
-                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#10b981',fontWeight:700}} title="Profit net identic pe fiecare produs — e ținta setată mai sus, garantată de prețul recomandat calculat">{fmtRON(rec.profitNetRealizat)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f97316',whiteSpace:'nowrap'}}>
+                          <div style={{fontWeight:900,fontSize:14}}>{fmtRON(rec.faraTva)}</div>
+                          <div style={{fontSize:9,color:'#f43f5e',fontWeight:400,marginTop:2}}>⚠️ dacă vinzi la ăsta fără să mai adaugi TVA: {fmtRON(rec.profitDacaVinziFaraSaAdaugiTva)} profit</div>
+                        </td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#10b981',whiteSpace:'nowrap'}}>
+                          <div style={{fontWeight:900,fontSize:14}}>{fmtRON(rec.cuTva)}</div>
+                          <div style={{fontSize:9,color:'#10b981',fontWeight:400,marginTop:2}}>✓ preț corect — profit în mână: {fmtRON(rec.profitNetRealizat)}</div>
+                        </td>
                       </tr>
                       );
                     })}
@@ -1108,7 +1129,7 @@ export default function ImportCalc() {
               <div style={{fontSize:11,color:'#64748b',marginBottom:12}}>
                 Generează fișierul de import NIR (Denumire produs, Cod produs, UM, Cantitate, Preț unitar fără TVA) și/sau salvează costurile în aplicație, ca Profit page să le folosească automat.
               </div>
-              <div className="g2" style={{marginBottom:12}}>
+              <div style={{display:'flex',flexDirection:'column',gap:12,marginBottom:12}}>
                 <CopyField label="Număr factură (pt. NIR)" value={numarFactura} onChange={setNumarFactura} placeholder="ex: INV-2026-4471"/>
                 <CopyField label="Data DVI (pt. NIR)" value={dataDvi} onChange={setDataDvi} placeholder="ex: 18.09.2026"/>
               </div>

@@ -18,13 +18,19 @@ function hashPassword(password) {
   );
 }
 
-// Coduri GLS care înseamnă explicit refuz/retur la expeditor (Appendix G):
-// 17=refuz primire, 23=returnat la expeditor, 34=refuz din cauza întârzierii,
-// 35=refuzat (marfă necomandată), 40=returnat la expeditor. Un colet poate
-// primi un status ulterior ambiguu (ex. 5="delivered", refolosit și pentru
-// predarea coletului retur înapoi în depozit) care ascunde refuzul dacă ne
-// uităm doar la ultimul status din istoric — de-aia verificăm tot istoricul.
-const GLS_RETURN_CODES = [17, 23, 34, 35, 40];
+// Coduri GLS care înseamnă explicit refuz/retur la expeditor — 14=refuzat,
+// 17=retur inițiat, 23=retur la expeditor, 40=retur primit, 90=returnare
+// inițiată. Un colet poate primi un status ulterior ambiguu (ex.
+// 5="delivered", refolosit și pentru predarea coletului retur înapoi în
+// depozit) care ascunde refuzul dacă ne uităm doar la ultimul status din
+// istoric — de-aia verificăm tot istoricul.
+//
+// 34 și 35 au fost scoase din listă: conform documentației oficiale ar
+// însemna refuz, dar pe conturul nostru comenzi cu 34/35 în istoric au fost
+// livrate cu succes ȘI încasate (ramburs plătit) — codurile astea nu au deloc
+// etichetă în GLS_CODES (afișarea din panoul de tranzit), semn că nu se
+// comportă ca refuz real la acest cont; le tratam greșit ca retur definitiv.
+const GLS_RETURN_CODES = [14, 17, 23, 40, 90];
 
 // GLS Status Codes → status intern (din Appendix G documentație MyGLS)
 function mapGLSStatus(statusCode) {
