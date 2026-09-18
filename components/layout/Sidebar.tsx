@@ -21,6 +21,7 @@ const NAV: { href: string; icon: string; label: string; badge?: string }[] = [
   { href: '/import',          icon: '🚢', label: 'Import' },
   { href: '/sales-engine-pro',icon: '🤖', label: 'Sales AI' },
   { href: '/documente',       icon: '📁', label: 'Documente', badge: 'NEW' },
+  { href: '/emag',            icon: '🛍️', label: 'eMAG', badge: 'NEW' },
 ];
 
 export function Sidebar() {
