@@ -7,6 +7,18 @@ import { useState, useEffect, useMemo } from 'react';
    incompatibil cu serverless-ul Vercel fără un proxy plătit) —
    vezi decizia din conversație: mergem pe import manual, ca la
    GLS/Sameday.
+
+   Coloanele de mai jos sunt potrivite EXACT pe un export real
+   (orders_details_file), cu fallback pe potrivire aproximativă
+   dacă eMAG schimbă vreodată denumirile:
+   Nr. comanda | Data comenzii | Numar AWB | Nume produs | Cod produs |
+   PNK | Serial numbers | Cantitate | Pret fara TVA/buc | Pret total cu TVA |
+   Moneda | TVA | Status comanda | Mod plata | Mod livrare |
+   ID extern punct de livrare | Denumire punct de livrare | Status plata |
+   Data maxima finalizare | Data maxima de predare | Nume client |
+   Persoana juridica | Numar VAT | Numar telefon | Nume livrare |
+   Telefon livrare | Adresa de livrare | Cod postal de livrare |
+   Nume facturare | Adresa de facturare | Cod postal de facturare | Observatii
 ══════════════════════════════════════════════════════════════ */
 
 const ls = {
@@ -28,11 +40,61 @@ function loadXLSXLib() {
   });
 }
 
-// Caută prima coloană al cărei header conține unul din cuvintele cheie —
-// nu ne bazăm pe poziție fixă, pentru că nu am văzut exportul real eMAG
-// și denumirile de coloane pot varia (RO/EN, cu/fără diacritice).
-function findCol(headers, keywords) {
-  return headers.findIndex(h => keywords.some(k => h.includes(k)));
+// Caută întâi un header IDENTIC (exact match, după trim+lowercase) dintr-o
+// listă de candidați preferați în ordine — abia dacă niciunul nu există,
+// cade pe potrivire "conține cuvântul cheie". Exact match e necesar pentru
+// că altfel "Nume produs" era confundat cu "Nume client" (ambele conțin
+// "nume") — bug găsit direct pe exportul real trimis.
+function findCol(headers, exactCandidates, fuzzyKeywords = [], excludeIdx = []) {
+  for (const c of exactCandidates) {
+    const idx = headers.indexOf(c);
+    if (idx !== -1 && !excludeIdx.includes(idx)) return idx;
+  }
+  if (fuzzyKeywords.length) {
+    const idx = headers.findIndex((h, i) => !excludeIdx.includes(i) && fuzzyKeywords.some(k => h.includes(k)));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+// "Nume produs" e un titlu SEO lung ("Ceas smartwatch barbati, DELTA MAX
+// ecran AMOLED 1.43", rezolutie 466x466, ...") — inutilizabil într-un mesaj
+// WhatsApp. Extragem modelul cunoscut (DELTA MAX / DELTA MAX PLUS); pentru
+// un produs nou, necunoscut, ne mulțumim cu primele cuvinte relevante.
+function shortProductName(fullName) {
+  if (!fullName) return 'produsul comandat';
+  const m = fullName.match(/DELTA MAX(?:\s*PLUS)?/i);
+  if (m) return m[0].toUpperCase().replace(/\s+/g, ' ');
+  const afterComma = fullName.split(',')[1] || fullName.split(',')[0] || fullName;
+  return afterComma.trim().split(/\s+/).slice(0, 3).join(' ');
+}
+
+function toWaPhone(phone) {
+  const digits = (phone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('40') && digits.length === 11) return digits;
+  if (digits.startsWith('0') && digits.length === 10) return '40' + digits.slice(1);
+  if (digits.length === 9) return '40' + digits;
+  return digits;
+}
+
+function firstName(fullName) {
+  return (fullName || '').trim().split(/\s+/)[0] || '';
+}
+
+function waFeedbackMessage(order) {
+  const product = shortProductName(order.products[0]?.fullName || order.products[0]?.name || '');
+  return `Bună ziua!\nSunt de la compania GLAMX SRL, ați comandat de la noi în trecut un ceas inteligent ${product} și dorim să vă întrebăm dacă sunteți mulțumit(ă) de produsul primit.`;
+}
+
+function waReviewMessage() {
+  return `Dacă experiența a fost una bună, ne-ar însemna enorm o recenzie sinceră pe eMAG. Ajută și alți clienți să ia o decizie corectă.`;
+}
+
+function waLink(phone, text) {
+  const wa = toWaPhone(phone);
+  if (!wa) return null;
+  return `https://wa.me/${wa}?text=${encodeURIComponent(text)}`;
 }
 
 function parseWorkbookToOrders(wb) {
@@ -46,30 +108,31 @@ function parseWorkbookToOrders(wb) {
     if (!rows.length) continue;
     const headers = (rows[0] || []).map(h => (h || '').toString().toLowerCase().trim());
 
-    const idx = {
-      orderId: findCol(headers, ['comanda', 'id comanda', 'nr. comanda', 'nr comanda', 'order id', 'order number', 'id_comanda']),
-      name:    findCol(headers, ['nume client', 'client', 'destinatar', 'nume', 'customer name', 'recipient', 'billing name', 'shipping name']),
-      phone:   findCol(headers, ['telefon', 'phone', 'tel.', 'tel']),
-      product: findCol(headers, ['denumire produs', 'produs', 'product name', 'product', 'denumire']),
-      qty:     findCol(headers, ['cantitate', 'qty', 'quantity', 'buc']),
-      price:   findCol(headers, ['pret', 'preț', 'price', 'valoare']),
-      city:    findCol(headers, ['localitate', 'oras', 'oraș', 'city']),
-      address: findCol(headers, ['adresa', 'adresă', 'address']),
-      status:  findCol(headers, ['status', 'stare']),
-      date:    findCol(headers, ['data', 'date']),
-      awb:     findCol(headers, ['awb']),
-    };
+    const idx = {};
+    idx.orderId  = findCol(headers, ['nr. comanda', 'nr comanda', 'id comanda'], ['comanda']);
+    idx.date     = findCol(headers, ['data comenzii'], ['data']);
+    idx.awb      = findCol(headers, ['numar awb'], ['awb']);
+    idx.product  = findCol(headers, ['nume produs', 'denumire produs'], ['produs']);
+    idx.qty      = findCol(headers, ['cantitate'], ['qty', 'cant']);
+    idx.price    = findCol(headers, ['pret total cu tva'], ['pret total', 'pret', 'preț', 'valoare']);
+    idx.status   = findCol(headers, ['status comanda'], ['status']);
+    idx.payMode  = findCol(headers, ['mod plata'], ['plata', 'payment']);
+    idx.delivMode = findCol(headers, ['mod livrare'], ['livrare mod']);
+    idx.delivPoint = findCol(headers, ['denumire punct de livrare'], ['punct de livrare']);
+    idx.name     = findCol(headers, ['nume livrare', 'nume client'], ['client', 'destinatar', 'nume'], []);
+    idx.phone    = findCol(headers, ['telefon livrare', 'numar telefon'], ['telefon', 'phone'], [idx.name].filter(v => v !== undefined && v !== -1));
+    idx.address  = findCol(headers, ['adresa de livrare'], ['adresa', 'adresă', 'address']);
+    idx.zip      = findCol(headers, ['cod postal de livrare'], ['cod postal']);
 
     debugSheets.push({ sheetName, headers, idx });
 
     if (idx.name === -1 && idx.phone === -1 && idx.product === -1) {
-      // Foaia asta nu pare să conțină date de comandă (ex. un tab de sumar) — o sărim.
-      continue;
+      continue; // foaie fără date de comandă (ex. un tab de sumar)
     }
 
     const byOrder = new Map();
     rows.slice(1).forEach((row, rowN) => {
-      if (!row.some(c => (c ?? '') !== '')) return; // rând complet gol
+      if (!row.some(c => (c ?? '') !== '')) return;
       const orderId = idx.orderId !== -1 ? String(row[idx.orderId] || '').trim() : '';
       const key = orderId || `__row_${sheetName}_${rowN}`;
 
@@ -78,25 +141,28 @@ function parseWorkbookToOrders(wb) {
         order = {
           id: key,
           orderId: orderId || '',
+          date: idx.date !== -1 ? String(row[idx.date] || '').trim() : '',
           name: idx.name !== -1 ? String(row[idx.name] || '').trim() : '',
           phone: idx.phone !== -1 ? String(row[idx.phone] || '').trim() : '',
-          city: idx.city !== -1 ? String(row[idx.city] || '').trim() : '',
           address: idx.address !== -1 ? String(row[idx.address] || '').trim() : '',
+          zip: idx.zip !== -1 ? String(row[idx.zip] || '').trim() : '',
           status: idx.status !== -1 ? String(row[idx.status] || '').trim() : '',
-          date: idx.date !== -1 ? String(row[idx.date] || '').trim() : '',
+          payMode: idx.payMode !== -1 ? String(row[idx.payMode] || '').trim() : '',
+          delivMode: idx.delivMode !== -1 ? String(row[idx.delivMode] || '').trim() : '',
+          delivPoint: idx.delivPoint !== -1 ? String(row[idx.delivPoint] || '').trim() : '',
           awb: idx.awb !== -1 ? String(row[idx.awb] || '').trim() : '',
           products: [],
         };
         byOrder.set(key, order);
       }
-      // Completăm câmpuri lipsă din rânduri ulterioare ale aceleiași comenzi
       if (!order.name && idx.name !== -1) order.name = String(row[idx.name] || '').trim();
       if (!order.phone && idx.phone !== -1) order.phone = String(row[idx.phone] || '').trim();
 
-      const productName = idx.product !== -1 ? String(row[idx.product] || '').trim() : '';
-      if (productName) {
+      const productFull = idx.product !== -1 ? String(row[idx.product] || '').trim() : '';
+      if (productFull) {
         order.products.push({
-          name: productName,
+          fullName: productFull,
+          name: shortProductName(productFull),
           qty: idx.qty !== -1 ? (parseFloat(row[idx.qty]) || 1) : 1,
           price: idx.price !== -1 ? (parseFloat(row[idx.price]) || 0) : 0,
         });
@@ -116,7 +182,6 @@ export default function EmagOrdersPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [debugInfo, setDebugInfo] = useState(null);
-  const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => { ls.set('emag_orders', JSON.stringify(orders)); }, [orders]);
   useEffect(() => { ls.set('emag_files', JSON.stringify(files)); }, [files]);
@@ -138,8 +203,6 @@ export default function EmagOrdersPage() {
         const { orders: parsed, debugSheets } = parseWorkbookToOrders(wb);
         allDebug.push({ file: file.name, sheets: debugSheets, found: parsed.length });
 
-        // Dedup pe orderId (dacă există) sau pe telefon+primul produs, ca reimportul
-        // aceluiași fișier (sau un export suprapus) să nu dubleze comenzile.
         for (const o of parsed) {
           const dedupKey = o.orderId || `${o.phone}__${o.products[0]?.name || ''}`;
           const existingIdx = merged.findIndex(m => (m.orderId || `${m.phone}__${m.products[0]?.name || ''}`) === dedupKey);
@@ -148,6 +211,8 @@ export default function EmagOrdersPage() {
         }
         if (!newFiles.includes(file.name)) newFiles.push(file.name);
       }
+
+      merged.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
       if (!merged.length) {
         setError('Niciun rând recunoscut ca și comandă în fișierul importat. Vezi debug mai jos.');
@@ -175,7 +240,7 @@ export default function EmagOrdersPage() {
       (o.name || '').toLowerCase().includes(s) ||
       (o.phone || '').includes(s) ||
       (o.orderId || '').toLowerCase().includes(s) ||
-      (o.products || []).some(p => p.name.toLowerCase().includes(s))
+      (o.products || []).some(p => p.fullName.toLowerCase().includes(s))
     );
   }, [orders, search]);
 
@@ -213,9 +278,7 @@ export default function EmagOrdersPage() {
           {error && <div style={{ marginTop: 8, fontSize: 12, color: '#f43f5e' }}>⚠️ {error}</div>}
           {debugInfo && (
             <details style={{ marginTop: 8, fontSize: 11 }} open={!orders.length && !!error}>
-              <summary style={{ cursor: 'pointer', color: '#64748b' }} onClick={() => setShowDebug(v => !v)}>
-                🔍 Debug — ce coloane am recunoscut în fișier
-              </summary>
+              <summary style={{ cursor: 'pointer', color: '#64748b' }}>🔍 Debug — ce coloane am recunoscut în fișier</summary>
               <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 250, overflow: 'auto', fontSize: 10, marginTop: 6, background: '#080d12', padding: 8, borderRadius: 6 }}>
                 {JSON.stringify(debugInfo, null, 1)}
               </pre>
@@ -232,33 +295,52 @@ export default function EmagOrdersPage() {
             />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {filtered.map(o => (
-                <div key={o.id} style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.06)', borderRadius: 10, padding: '12px 14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
-                    <div>
-                      <div style={{ fontWeight: 700, color: '#e8edf2', fontSize: 14 }}>{o.name || 'Fără nume'}</div>
-                      {o.phone && <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 1 }}>📞 {o.phone}</div>}
+              {filtered.map(o => {
+                const fbLink = waLink(o.phone, waFeedbackMessage(o));
+                const revLink = waLink(o.phone, waReviewMessage());
+                return (
+                  <div key={o.id} style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.06)', borderRadius: 10, padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, color: '#e8edf2', fontSize: 14 }}>{o.name || 'Fără nume'}</div>
+                        {o.phone && <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 1 }}>📞 {o.phone}</div>}
+                      </div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        {o.orderId && <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>#{o.orderId}</div>}
+                        {o.status && <div style={{ fontSize: 10, color: '#f97316', marginTop: 2 }}>{o.status}</div>}
+                        {o.payMode && <div style={{ fontSize: 9, color: '#64748b', marginTop: 1 }}>{o.payMode}</div>}
+                      </div>
                     </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      {o.orderId && <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace' }}>#{o.orderId}</div>}
-                      {o.status && <div style={{ fontSize: 10, color: '#f97316', marginTop: 2 }}>{o.status}</div>}
-                    </div>
+                    {(o.address) && (
+                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>
+                        📍 {o.address}{o.delivMode === 'locker' && o.delivPoint ? ` — ${o.delivPoint}` : ''}
+                      </div>
+                    )}
+                    {o.products.length > 0 && (
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,.04)', paddingTop: 6, marginBottom: 8 }}>
+                        {o.products.map((p, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#cbd5e1', marginBottom: 2 }}>
+                            <span title={p.fullName}>{p.name} {p.qty > 1 ? `× ${p.qty}` : ''}</span>
+                            {p.price > 0 && <span style={{ color: '#94a3b8', fontFamily: 'monospace', flexShrink: 0, marginLeft: 8 }}>{fmt(p.price)} RON</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {o.phone && (
+                      <div style={{ display: 'flex', gap: 6, borderTop: '1px solid rgba(255,255,255,.04)', paddingTop: 8 }}>
+                        <a href={fbLink} target="_blank" rel="noopener noreferrer"
+                          style={{ flex: 1, textAlign: 'center', background: 'rgba(37,211,102,.12)', border: '1px solid rgba(37,211,102,.35)', color: '#25d366', borderRadius: 7, padding: '7px 10px', fontSize: 11, fontWeight: 700, textDecoration: 'none' }}>
+                          💬 Cere feedback
+                        </a>
+                        <a href={revLink} target="_blank" rel="noopener noreferrer"
+                          style={{ flex: 1, textAlign: 'center', background: 'rgba(249,115,22,.12)', border: '1px solid rgba(249,115,22,.35)', color: '#f97316', borderRadius: 7, padding: '7px 10px', fontSize: 11, fontWeight: 700, textDecoration: 'none' }}>
+                          ⭐ Cere recenzie
+                        </a>
+                      </div>
+                    )}
                   </div>
-                  {(o.city || o.address) && (
-                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>📍 {[o.address, o.city].filter(Boolean).join(', ')}</div>
-                  )}
-                  {o.products.length > 0 && (
-                    <div style={{ borderTop: '1px solid rgba(255,255,255,.04)', paddingTop: 6 }}>
-                      {o.products.map((p, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#cbd5e1', marginBottom: 2 }}>
-                          <span>{p.name} {p.qty > 1 ? `× ${p.qty}` : ''}</span>
-                          {p.price > 0 && <span style={{ color: '#94a3b8', fontFamily: 'monospace', flexShrink: 0, marginLeft: 8 }}>{fmt(p.price)} RON</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
               {filtered.length === 0 && (
                 <div style={{ textAlign: 'center', color: '#475569', fontSize: 13, padding: 24 }}>Nicio comandă găsită pentru căutarea asta.</div>
               )}
@@ -268,8 +350,7 @@ export default function EmagOrdersPage() {
 
         {!orders.length && !loading && (
           <div style={{ textAlign: 'center', color: '#475569', fontSize: 13, padding: '40px 20px', border: '1px dashed rgba(255,255,255,.1)', borderRadius: 12 }}>
-            Exportă comenzile din panoul de seller eMAG Marketplace (Comenzi → Export) și încarcă fișierul aici.<br/>
-            Dacă formatul exportat nu e recunoscut corect, trimite-mi un exemplu (sau screenshot cu antetele coloanelor) și ajustez detectarea.
+            Exportă comenzile din panoul de seller eMAG Marketplace și încarcă fișierul aici.
           </div>
         )}
       </div>
