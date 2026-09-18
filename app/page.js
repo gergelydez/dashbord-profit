@@ -311,14 +311,21 @@ export default function Dashboard() {
         const d = await r.json();
 
         const liveTs =
+          // hasReturnCode = un refuz/retur găsit oriunde în istoricul AWB-ului
+          // (GLS: cod explicit din Appendix G; Sameday: scanăm tot istoricul
+          // din /api/tracking, fiindcă Sameday poate arăta un status ulterior
+          // diferit — ex. reîncercare — care ascunde refuzul dacă ne uităm
+          // doar la ultimul status) — contează indiferent de status curent.
           d.hasReturnCode                   ? 'retur' :
           d.status === 'delivered'          ? 'livrat' :
           d.status === 'out_for_delivery'   ? 'outfor' :
           d.status === 'easybox'            ? 'easybox' :
           d.status === 'in_transit'         ? 'incurs' :
-          // Tentativă eșuată = practic un retur (nu "la curier") — la fel
-          // ca în refreshTracking/mapLiveStatus/procOrder.
-          (d.status === 'failed_attempt' || d.status === 'returned' || d.status === 'failure') ? 'retur' : null;
+          // GLS: tentativă eșuată fără cod explicit de refuz = va reîncerca,
+          // rămâne "la curier" (nu forțăm retur doar pe baza unei singure
+          // tentative — hasReturnCode de mai sus prinde deja refuzurile reale).
+          d.status === 'failed_attempt'     ? 'outfor' :
+          (d.status === 'returned' || d.status === 'failure') ? 'retur' : null;
         if (liveTs && liveTs !== o.ts) {
           applyOrderStatus(o.id, liveTs, d.statusRaw, d.lastUpdate, d.location);
         }
@@ -1214,15 +1221,19 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
           if (!t || !t.status) return o;
 
           const liveTs =
+            // hasReturnCode = refuz/retur găsit oriunde în istoric (GLS:
+            // Appendix G · Sameday: scanăm tot istoricul în /api/tracking) —
+            // contează indiferent de statusul curent.
             t.hasReturnCode                  ? 'retur' :
             t.status === 'delivered'         ? 'livrat' :
             t.status === 'out_for_delivery'  ? 'outfor' :
             t.status === 'easybox'           ? 'easybox' :
             t.status === 'in_transit'        ? 'incurs' :
-            // Tentativă de livrare eșuată (adresă greșită, destinatar absent,
-            // refuz) = practic un retur, nu "la curier" — la fel ca peste tot
-            // în rest (procOrder, mapLiveStatus): curierul nu a predat coletul.
-            (t.status === 'failed_attempt' || t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
+            // GLS: tentativă eșuată fără cod explicit de refuz = va
+            // reîncerca, rămâne "la curier" — hasReturnCode prinde deja
+            // refuzurile reale (și pentru Sameday, prin scanarea istoricului).
+            t.status === 'failed_attempt'    ? 'outfor' :
+            (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
           if (liveTs !== o.ts) {
             changed++;
             const ovData = { ts: liveTs, statusRaw: t.statusRaw, lastUpdate: t.lastUpdate, location: t.location };

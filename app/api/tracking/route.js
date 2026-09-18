@@ -183,6 +183,14 @@ function mapSamedayStatus(statusId) {
   return 'in_transit';
 }
 
+// Coduri Sameday care înseamnă tentativă eșuată/refuz/retur (vezi
+// mapSamedayStatus mai sus — Sameday nu are documentație publică, lista e
+// cea confirmată din statusurile deja mapate 'failed_attempt'/'returned').
+// La fel ca la GLS: un colet poate primi ulterior un status care pare activ
+// (ex. o nouă tentativă de livrare) care ascunde refuzul dacă ne uităm doar
+// la ultimul status — de-aia scanăm tot istoricul, nu doar entry-ul recent.
+const SD_RETURN_CODES = [6, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+
 // Parsează răspuns XML sau JSON de la Sameday
 function parseSamedayResponse(text) {
   // Încearcă JSON primul
@@ -195,24 +203,19 @@ function parseSamedayResponse(text) {
       statusLabel: last.statusLabel || last.statusDescription || '',
       statusDate: last.statusDate || last.date || '',
       county: last.county || last.city || '',
+      allStatusIds: history.map(h => h.statusId).filter(id => id != null),
     };
   } catch {}
 
   // Parsare XML — API-ul Sameday returnează XML în multe cazuri
   try {
-    // Extragem primul <entry> din <awbHistory> (cel mai recent status)
+    // Extragem TOATE <entry> din <awbHistory> — primul e cel mai recent status,
+    // dar avem nevoie de tot istoricul ca să prindem un refuz mai vechi.
     const awbHistoryMatch = text.match(/<awbHistory>([\s\S]*?)<\/awbHistory>/);
     if (!awbHistoryMatch) return null;
-    const firstEntry = awbHistoryMatch[1].match(/<entry>([\s\S]*?)<\/entry>/);
-    if (!firstEntry) return null;
-    const entryXml = firstEntry[1];
-
-    const getXmlVal = (xml, tag) => {
-      const m = xml.match(new RegExp(`<${tag}>[^<]*<!\[CDATA\[([^\]]*)]]\/[^<]*>\|\/?\ *<${tag}>([^<]*)<\/${tag}>`));
-      if (m) return (m[1] || m[2] || '').trim();
-      const m2 = xml.match(new RegExp(`<${tag}><!\[CDATA\[([\s\S]*?)\]\]><\/${tag}>`));
-      return m2 ? m2[1].trim() : '';
-    };
+    const entries = [...awbHistoryMatch[1].matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(m => m[1]);
+    if (!entries.length) return null;
+    const entryXml = entries[0];
 
     // Extragem statusId — primul tag simplu (nu CDATA)
     const statusIdMatch = entryXml.match(/<statusId>\s*(\d+)\s*<\/statusId>/);
@@ -229,7 +232,12 @@ function parseSamedayResponse(text) {
     const county = countyMatch ? countyMatch[1].trim() : '';
 
     if (!statusId) return null;
-    return { statusId, statusLabel, statusDate, county };
+
+    const allStatusIds = entries
+      .map(e => (e.match(/<statusId>\s*(\d+)\s*<\/statusId>/) || [])[1])
+      .filter(Boolean);
+
+    return { statusId, statusLabel, statusDate, county, allStatusIds };
   } catch(e) {
     console.log('[SAMEDAY] XML parse error:', e.message);
     return null;
@@ -254,12 +262,14 @@ async function trackSameday(awb) {
       console.log('[SAMEDAY] Public response for', awb, ':', text.slice(0, 200));
       const parsed = parseSamedayResponse(text);
       if (parsed && parsed.statusId) {
+        const ids = parsed.allStatusIds?.length ? parsed.allStatusIds : [parsed.statusId];
         const result = {
           status: mapSamedayStatus(parsed.statusId),
           statusRaw: parsed.statusLabel || String(parsed.statusId),
           statusDescription: parsed.statusLabel || '',
           lastUpdate: parsed.statusDate || '',
           location: parsed.county || '',
+          hasReturnCode: ids.some(id => SD_RETURN_CODES.includes(parseInt(id))),
         };
         trackingCache.set(cacheKey, { data: result, ts: Date.now() });
         return result;
@@ -283,12 +293,14 @@ async function trackSameday(awb) {
     const parsed2 = parseSamedayResponse(text2);
     if (!parsed2 || !parsed2.statusId) return null;
 
+    const ids2 = parsed2.allStatusIds?.length ? parsed2.allStatusIds : [parsed2.statusId];
     const result2 = {
       status: mapSamedayStatus(parsed2.statusId),
       statusRaw: parsed2.statusLabel || String(parsed2.statusId),
       statusDescription: parsed2.statusLabel || '',
       lastUpdate: parsed2.statusDate || '',
       location: parsed2.county || '',
+      hasReturnCode: ids2.some(id => SD_RETURN_CODES.includes(parseInt(id))),
     };
 
     trackingCache.set(cacheKey, { data: result2, ts: Date.now() });
