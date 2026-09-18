@@ -29,7 +29,18 @@ export default function ImportCalc() {
   const [showBD, setShowBD] = useState(null);
   const [dviSegmente, setDviSegmente] = useState([]); // segmente DVI per tip marfă
 
+  // Preț recomandat de vânzare — asumpții de business (persistă între sesiuni,
+  // spre diferență de restul formularului care se resetează la fiecare import)
+  const [profitNetTinta, setProfitNetTinta] = useState(() => { try { return localStorage.getItem('import_profit_net_tinta') || '100'; } catch { return '100'; } });
+  const [impozitProfitPercent, setImpozitProfitPercent] = useState(() => { try { return localStorage.getItem('import_impozit_profit') || '16'; } catch { return '16'; } });
+  const [metaPerBuc, setMetaPerBuc] = useState(() => { try { return localStorage.getItem('import_meta_per_buc') || '85'; } catch { return '85'; } });
+  const [transportLivrarePerBuc, setTransportLivrarePerBuc] = useState(() => { try { return localStorage.getItem('import_transport_livrare_per_buc') || '25'; } catch { return '25'; } });
+
   useEffect(() => { setMounted(true); }, []);
+  useEffect(() => { try { localStorage.setItem('import_profit_net_tinta', profitNetTinta); } catch {} }, [profitNetTinta]);
+  useEffect(() => { try { localStorage.setItem('import_impozit_profit', impozitProfitPercent); } catch {} }, [impozitProfitPercent]);
+  useEffect(() => { try { localStorage.setItem('import_meta_per_buc', metaPerBuc); } catch {} }, [metaPerBuc]);
+  useEffect(() => { try { localStorage.setItem('import_transport_livrare_per_buc', transportLivrarePerBuc); } catch {} }, [transportLivrarePerBuc]);
 
   const upd = (idx, field, val) =>
     setProducts(p => p.map((x, i) => i === idx ? {...x, [field]: val} : x));
@@ -325,18 +336,36 @@ export default function ImportCalc() {
   // Cost total cu TVA inclus (informativ — cât s-a plătit efectiv, până se recuperează TVA-ul)
   const totalCostRON_cuTva = totalCostRON_real + totalTvaDeductibilReal;
 
+  // Preț recomandat de vânzare: cost + profit net dorit + Meta + transport de
+  // livrare la client, apoi "brutizat" (grossed-up) pentru TVA și impozitul pe
+  // profit (16%), ca profitul NET rămas — după ce statul își ia impozitul pe
+  // profit — să fie exact cel dorit, nu profitul brut înainte de impozit.
+  const profitBrutNecesarPerBuc = (parseFloat(profitNetTinta)||0) / (1 - Math.min(99,(parseFloat(impozitProfitPercent)||0)) / 100);
+  const calcPretRecomandat = (costUnitFaraTva) => {
+    const bazaFaraTva = costUnitFaraTva + (parseFloat(metaPerBuc)||0) + (parseFloat(transportLivrarePerBuc)||0) + profitBrutNecesarPerBuc;
+    return { faraTva: bazaFaraTva, cuTva: bazaFaraTva * (1 + (parseFloat(tvaPercent)||21) / 100) };
+  };
+
   const exportJSON = () => {
     const data = {
       meta: {data: new Date().toISOString().slice(0,10), cursValutar:curs,
         taxaVamalaPercent: parseFloat(taxaVamalaGlobal)||0, taxaVamalaRON: taxaV_RON_global,
         tvaPercent: parseFloat(tvaPercent)||21, tvaDeductibilRON: totalTvaDeductibilReal,
         comisionDHL: comisionNetRON, transportRON: tRON,
-        totalCostRON: totalCostRON_real, totalCostCuTvaRON: totalCostRON_cuTva},
-      produse: prods.map(p => ({
+        totalCostRON: totalCostRON_real, totalCostCuTvaRON: totalCostRON_cuTva,
+        pretRecomandat: {profitNetTintaRON: parseFloat(profitNetTinta)||0, impozitProfitPercent: parseFloat(impozitProfitPercent)||0,
+          metaPerBucRON: parseFloat(metaPerBuc)||0, transportLivrarePerBucRON: parseFloat(transportLivrarePerBuc)||0}},
+      produse: prods.map(p => {
+        const rec = calcPretRecomandat(p.costUnit);
+        return {
         sku: p.sku || p.name.replace(/\s+/g,'_').toUpperCase(),
         name: p.name.trim(), qty: p.qty,
         pretFurnizorUSD: +p.unitUSD.toFixed(4),
         pretFurnizorRON: +(p.unitUSD * curs).toFixed(2),
+        transportPerBucRON: +(p.transportPerBuc||0).toFixed(2),
+        taxaVamalaPerBucRON: +(p.qty>0?p.taxaVProd/p.qty:0).toFixed(2),
+        comisionPerBucRON: +(p.comisionPerBuc||0).toFixed(2),
+        tvaDeductibilaPerBucRON: +(p.qty>0?p.tvaDeductibilAlocat/p.qty:0).toFixed(2),
         // Fără TVA — pentru recepția în SmartBill (gestiunea ține valori fără TVA)
         costImportUnitarRON: +p.costUnit.toFixed(2),
         // Cu TVA inclus — costul real, cât te costă efectiv produsul din buzunar
@@ -345,7 +374,9 @@ export default function ImportCalc() {
         tvaDeductibilRON: +p.tvaDeductibilAlocat.toFixed(2),
         totalProdusRON: +p.totalP.toFixed(2),
         totalProdusCuTvaRON: +p.totalPCuTva.toFixed(2),
-      })),
+        pretRecomandatFaraTvaRON: +rec.faraTva.toFixed(2),
+        pretRecomandatCuTvaRON: +rec.cuTva.toFixed(2),
+      };}),
     };
     const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
     const a = document.createElement('a');
@@ -356,11 +387,15 @@ export default function ImportCalc() {
   };
 
   const exportCSV = () => {
-    const rows = [['SKU','Produs','Cant','Pret USD','Pret RON','TaxaVam%','TVA%','Taxe/buc RON (fara TVA)','TVA deductibila/buc RON','Cost unitar RON (fara TVA, SmartBill receptie)','Pret final RON (cu TVA)','Total RON (fara TVA)','Total RON (cu TVA)']];
-    prods.forEach(p => rows.push([
-      p.sku, `"${p.name}"`, p.qty, fmt(p.unitUSD), fmt(p.unitUSD*curs),
-      p.tvPerc, p.tvaPPerc, fmt(p.costuri/p.qty), fmt(p.qty>0?p.tvaDeductibilAlocat/p.qty:0), fmt(p.costUnit), fmt(p.costUnitCuTva), fmt(p.totalP), fmt(p.totalPCuTva)
-    ]));
+    const rows = [['Curs','SKU','Produs','Cant','Pret USD','Pret RON','Transport/buc RON','Taxa vamala/buc RON','Comision/buc RON','TVA deductibila/buc RON','Cost unitar RON (fara TVA, SmartBill receptie)','Pret RON (cu TVA)','Pret recomandat RON (fara TVA)','Pret recomandat RON (cu TVA)','Total RON (fara TVA)','Total RON (cu TVA)']];
+    prods.forEach(p => {
+      const rec = calcPretRecomandat(p.costUnit);
+      rows.push([
+        curs.toFixed(4), p.sku, `"${p.name}"`, p.qty, fmt(p.unitUSD), fmt(p.unitUSD*curs),
+        fmt(p.transportPerBuc||0), fmt(p.qty>0?p.taxaVProd/p.qty:0), fmt(p.comisionPerBuc||0), fmt(p.qty>0?p.tvaDeductibilAlocat/p.qty:0),
+        fmt(p.costUnit), fmt(p.costUnitCuTva), fmt(rec.faraTva), fmt(rec.cuTva), fmt(p.totalP), fmt(p.totalPCuTva)
+      ]);
+    });
     const blob = new Blob(['\uFEFF'+rows.map(r=>r.join(',')).join('\n')], {type:'text/csv;charset=utf-8;'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'import-cost.csv'; a.click();
   };
@@ -371,37 +406,44 @@ export default function ImportCalc() {
 
       // ── Sheet 1: Produse ──
       const dataSheet = [
-        ['SKU', 'Produs', 'Cantitate', 'Pret furnizor USD', 'Pret furnizor RON',
-         'Taxa vamala %', 'Taxa vamala RON', 'TVA %', 'TVA deductibila RON (nu e cost)',
-         'Transport/buc RON', 'Comision DHL/buc RON (fara TVA)',
+        ['Curs', 'SKU', 'Produs', 'Cantitate', 'Pret furnizor USD', 'Pret furnizor RON',
+         'Taxa vamala %', 'Taxa vamala/buc RON', 'TVA %', 'TVA deductibila/buc RON (nu e cost)',
+         'Transport/buc RON', 'Comision/buc RON (fara TVA)',
          'Taxe totale/buc RON (fara TVA)',
-         'Cost unitar RON (fara TVA — SmartBill receptie)', 'Pret final RON (cu TVA)',
+         'Cost unitar RON (fara TVA — SmartBill receptie)', 'Pret RON (cu TVA)',
+         'Pret recomandat RON (fara TVA)', 'Pret recomandat RON (cu TVA)',
          'Total produs RON (fara TVA)', 'Total produs RON (cu TVA)'],
       ];
-      prods.forEach(p => dataSheet.push([
-        p.sku,
-        p.name,
-        p.qty,
-        +p.unitUSD.toFixed(4),
-        +(p.unitUSD * curs).toFixed(2),
-        p.tvPerc,
-        +p.taxaVProd.toFixed(2),
-        p.tvaPPerc,
-        +p.tvaDeductibilAlocat.toFixed(2),
-        +(p.transportAlocat / p.qty).toFixed(4),
-        +(p.comisionAlocat / p.qty).toFixed(4),
-        +(p.costuri / p.qty).toFixed(2),
-        +p.costUnit.toFixed(2),
-        +p.costUnitCuTva.toFixed(2),
-        +p.totalP.toFixed(2),
-        +p.totalPCuTva.toFixed(2),
-      ]));
+      prods.forEach(p => {
+        const rec = calcPretRecomandat(p.costUnit);
+        dataSheet.push([
+          curs,
+          p.sku,
+          p.name,
+          p.qty,
+          +p.unitUSD.toFixed(4),
+          +(p.unitUSD * curs).toFixed(2),
+          p.tvPerc,
+          +(p.qty>0?p.taxaVProd/p.qty:0).toFixed(2),
+          p.tvaPPerc,
+          +(p.qty>0?p.tvaDeductibilAlocat/p.qty:0).toFixed(2),
+          +(p.transportPerBuc||0).toFixed(4),
+          +(p.comisionPerBuc||0).toFixed(4),
+          +(p.costuri / p.qty).toFixed(2),
+          +p.costUnit.toFixed(2),
+          +p.costUnitCuTva.toFixed(2),
+          +rec.faraTva.toFixed(2),
+          +rec.cuTva.toFixed(2),
+          +p.totalP.toFixed(2),
+          +p.totalPCuTva.toFixed(2),
+        ]);
+      });
       // Rând TOTAL
       dataSheet.push([
-        'TOTAL', '', totalQty, '', +totalRON_f.toFixed(2),
-        '', +taxaV_RON_global.toFixed(2), '', +totalTvaDeductibilReal.toFixed(2),
+        '', 'TOTAL', '', totalQty, '', +totalRON_f.toFixed(2),
+        '', '', '', +totalTvaDeductibilReal.toFixed(2),
         '', '', '',
-        '', '',
+        '', '', '', '',
         +(dviSegmente.length>0?totalCostRON_real:totalCostRON).toFixed(2),
         +totalCostRON_cuTva.toFixed(2),
       ]);
@@ -410,10 +452,10 @@ export default function ImportCalc() {
 
       // Lățimi coloane
       ws1['!cols'] = [
-        {wch:10},{wch:30},{wch:10},{wch:16},{wch:16},
-        {wch:12},{wch:16},{wch:8},{wch:12},
-        {wch:16},{wch:18},
-        {wch:18},{wch:24},{wch:18},{wch:18},{wch:18},
+        {wch:10},{wch:10},{wch:30},{wch:10},{wch:16},{wch:16},
+        {wch:12},{wch:16},{wch:8},{wch:16},
+        {wch:16},{wch:16},
+        {wch:18},{wch:24},{wch:16},{wch:20},{wch:20},{wch:18},{wch:18},
       ];
 
       window.XLSX.utils.book_append_sheet(wb, ws1, 'Produse');
@@ -440,6 +482,13 @@ export default function ImportCalc() {
         ['(recuperabilă la decontul de TVA, NU e cost de produs)', ''],
         ['Total efectiv plătit, cu TVA inclus (RON)', +totalCostRON_cuTva.toFixed(2)],
         ['Cost mediu / bucată, cu TVA inclus (RON)', +(totalQty>0?totalCostRON_cuTva/totalQty:0).toFixed(2)],
+        [''],
+        ['PREȚ RECOMANDAT DE VÂNZARE — asumpții', ''],
+        ['Profit NET dorit / buc (RON)', +(parseFloat(profitNetTinta)||0).toFixed(2)],
+        ['Impozit pe profit (%)', +(parseFloat(impozitProfitPercent)||0)],
+        ['Cost Meta (ads) / buc (RON)', +(parseFloat(metaPerBuc)||0).toFixed(2)],
+        ['Transport livrare client / buc (RON)', +(parseFloat(transportLivrarePerBuc)||0).toFixed(2)],
+        ['Profit brut necesar / buc, înainte de impozit (RON)', +profitBrutNecesarPerBuc.toFixed(2)],
       ];
       const ws2 = window.XLSX.utils.aoa_to_sheet(sumarSheet);
       ws2['!cols'] = [{wch:35},{wch:20}];
@@ -827,43 +876,83 @@ export default function ImportCalc() {
               </div>
             ))}
 
+            {/* PREȚ RECOMANDAT — setări */}
+            <div style={{...sec, border:'1px solid rgba(16,185,129,.3)', background:'rgba(16,185,129,.04)'}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>🎯 Preț recomandat de vânzare</div>
+              <div style={{fontSize:11,color:'#64748b',marginBottom:12}}>
+                Preț la care rămâi cu profitul NET dorit / bucată, după ce scazi Meta, transportul de livrare la client, TVA-ul colectat și impozitul pe profit ({tvaPercent||21}% TVA folosit mai sus)
+              </div>
+              <div className="g2" style={{marginBottom:10}}>
+                <div>
+                  <label style={lbl}>Profit NET dorit / buc (RON)</label>
+                  <input type="number" style={inp} value={profitNetTinta} step="1" onChange={e => setProfitNetTinta(e.target.value)}/>
+                </div>
+                <div>
+                  <label style={lbl}>Impozit pe profit (%)</label>
+                  <input type="number" style={inp} value={impozitProfitPercent} step="1" onChange={e => setImpozitProfitPercent(e.target.value)}/>
+                </div>
+              </div>
+              <div className="g2">
+                <div>
+                  <label style={lbl}>Cost Meta (ads) / buc (RON)</label>
+                  <input type="number" style={inp} value={metaPerBuc} step="1" onChange={e => setMetaPerBuc(e.target.value)}/>
+                </div>
+                <div>
+                  <label style={lbl}>Transport livrare client / buc (RON)</label>
+                  <input type="number" style={inp} value={transportLivrarePerBuc} step="1" onChange={e => setTransportLivrarePerBuc(e.target.value)}/>
+                </div>
+              </div>
+              <div style={{marginTop:10,fontSize:10,color:'#475569'}}>
+                Profit brut necesar (înainte de impozit): <strong style={{color:'#10b981'}}>{fmtRON(profitBrutNecesarPerBuc)}</strong>/buc — din care {impozitProfitPercent||0}% impozit = <strong>{fmtRON(profitBrutNecesarPerBuc-(parseFloat(profitNetTinta)||0))}</strong>, îți rămân net <strong style={{color:'#10b981'}}>{fmtRON(parseFloat(profitNetTinta)||0)}</strong>/buc.
+              </div>
+            </div>
+
             {/* TABEL FINAL */}
             <div style={{...sec, padding:0, overflow:'hidden'}}>
               <div style={{padding:'12px 16px',borderBottom:'1px solid #1a2535',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <div style={{fontSize:13,fontWeight:700}}>📋 Lista produse — costuri finale, fără și cu TVA</div>
+                <div style={{fontSize:13,fontWeight:700}}>📋 Lista produse — toate costurile + preț recomandat</div>
               </div>
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
                   <thead>
                     <tr style={{background:'#070d12'}}>
-                      {['SKU','Produs','Cant','Preț USD','Preț RON','TV%','TVA%','Taxe/buc (fără TVA)','Cost unitar (fără TVA)','Preț final (cu TVA)'].map(h => (
+                      {['Curs','SKU','Produs','Cant','Preț USD','Preț RON','Transport/buc','Taxă vamală/buc','Comision/buc','TVA deduct./buc','COST UNITAR (fără TVA)','PREȚ (cu TVA)','PREȚ RECOMANDAT (fără TVA)','PREȚ RECOMANDAT (cu TVA)'].map(h => (
                         <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:1,borderBottom:'1px solid #1a2535',whiteSpace:'nowrap'}}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {prods.map((p,i) => (
+                    {prods.map((p,i) => {
+                      const rec = calcPretRecomandat(p.costUnit);
+                      return (
                       <tr key={i} style={{borderBottom:'1px solid #1a2535'}}>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#64748b'}}>{curs.toFixed(4)}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#3b82f6',fontWeight:700}}>{p.sku||'—'}</td>
                         <td style={{padding:'9px 12px',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.name}>{p.name}</td>
                         <td style={{padding:'9px 12px',color:'#94a3b8',textAlign:'center'}}>{p.qty}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#94a3b8'}}>${fmt(p.unitUSD)}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#94a3b8'}}>{fmtRON(p.unitUSD*curs)}</td>
-                        <td style={{padding:'9px 12px',color:p.tvPerc===0?'#10b981':'#f59e0b',fontWeight:700}}>{p.tvPerc}%</td>
-                        <td style={{padding:'9px 12px',color:'#a855f7'}}>{p.tvaPPerc}%</td>
-                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f59e0b'}}>{fmtRON(p.qty>0?p.costuri/p.qty:0)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#3b82f6'}}>{fmtRON(p.transportPerBuc||0)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f59e0b'}} title={`${p.tvPerc}%`}>{fmtRON(p.qty>0?p.taxaVProd/p.qty:0)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#94a3b8'}}>{fmtRON(p.comisionPerBuc||0)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#a855f7'}} title={`${p.tvaPPerc}%`}>{fmtRON(p.qty>0?p.tvaDeductibilAlocat/p.qty:0)}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:14}}>{fmtRON(p.costUnit)}</td>
                         <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#a855f7',fontWeight:900,fontSize:14}}>{fmtRON(p.costUnitCuTva)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:14}}>{fmtRON(rec.faraTva)}</td>
+                        <td style={{padding:'9px 12px',fontFamily:'monospace',color:'#10b981',fontWeight:900,fontSize:14}}>{fmtRON(rec.cuTva)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                     <tr style={{background:'rgba(249,115,22,.05)',borderTop:'2px solid rgba(249,115,22,.2)'}}>
+                      <td></td>
                       <td colSpan={2} style={{padding:'10px 12px',fontWeight:800,color:'#f97316'}}>TOTAL</td>
                       <td style={{padding:'10px 12px',color:'#f97316',fontWeight:700,textAlign:'center'}}>{totalQty}</td>
                       <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:700}}>${fmt(totalUSD)}</td>
                       <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:700}}>{fmtRON(totalRON_f)}</td>
-                      <td colSpan={3}></td>
+                      <td colSpan={4}></td>
                       <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#f97316',fontWeight:900,fontSize:15}}>{fmtRON(dviSegmente.length>0?totalCostRON_real:totalCostRON)}</td>
                       <td style={{padding:'10px 12px',fontFamily:'monospace',color:'#a855f7',fontWeight:900,fontSize:15}}>{fmtRON(totalCostRON_cuTva)}</td>
+                      <td colSpan={2}></td>
                     </tr>
                   </tbody>
                 </table>
@@ -889,7 +978,7 @@ export default function ImportCalc() {
             {savedJSON && (
               <div style={{marginTop:12,background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.2)',borderRadius:12,padding:'14px 16px'}}>
                 <div style={{fontSize:13,color:'#10b981',fontWeight:700,marginBottom:6}}>✅ JSON salvat — {savedJSON.produse.length} produse</div>
-                <div style={{fontSize:11,color:'#475569',marginBottom:10}}>Conține SKU + costImportUnitarRON (fără TVA — pt. recepția SmartBill) și costImportUnitarCuTvaRON (cu TVA — cost real produs), plus tvaDeductibilRON separat — gata pentru calculatorul de profit</div>
+                <div style={{fontSize:11,color:'#475569',marginBottom:10}}>Conține SKU + costImportUnitarRON (fără TVA — pt. recepția SmartBill), costImportUnitarCuTvaRON (cu TVA — cost real produs), taxele alocate per bucată separat (transport/taxă vamală/comision/TVA deductibilă) și pretRecomandatFaraTvaRON/pretRecomandatCuTvaRON — gata pentru calculatorul de profit</div>
                 <details>
                   <summary style={{fontSize:11,color:'#64748b',cursor:'pointer'}}>👁 Preview JSON</summary>
                   <pre style={{background:'#070d12',border:'1px solid #1a2535',borderRadius:8,padding:12,fontSize:9,color:'#64748b',overflowX:'auto',marginTop:8,maxHeight:260,overflow:'auto'}}>
