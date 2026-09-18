@@ -495,8 +495,12 @@ export default function ImportCalc() {
       ws2['!cols'] = [{wch:35},{wch:20}];
       window.XLSX.utils.book_append_sheet(wb, ws2, 'Sumar');
 
-      // Download
-      window.XLSX.writeFile(wb, `import-cost-${data}.xlsx`);
+      // Download — bookSST scrie textele ca shared strings (t="s"), formatul
+      // standard pe care îl citesc corect toate importatoarele; fără el,
+      // SheetJS scrie textul inline cu t="str" (rezervat tehnic pentru
+      // rezultate de formule), pe care unele parsere strict-conforme (ex.
+      // importul NIR din SmartBill) nu-l recunosc ca text valid.
+      window.XLSX.writeFile(wb, `import-cost-${data}.xlsx`, { bookSST: true });
     });
   };
 
@@ -515,7 +519,12 @@ export default function ImportCalc() {
       ws['!cols'] = [{wch:40},{wch:14},{wch:12},{wch:10},{wch:14}];
       const wb = window.XLSX.utils.book_new();
       window.XLSX.utils.book_append_sheet(wb, ws, 'NIR');
-      window.XLSX.writeFile(wb, `NIR-import-${new Date().toISOString().slice(0,10)}.xlsx`);
+      // bookSST: true — scrie textele ca shared strings (t="s"), formatul
+      // standard. Fără el, SheetJS scrie textul inline cu t="str" (tehnic
+      // rezervat pentru rezultate de formule) — importul NIR din SmartBill
+      // nu recunoaște acele celule ca text valid și respinge fișierul ca
+      // "nu conține date", deși rândurile sunt vizibil completate.
+      window.XLSX.writeFile(wb, `NIR-import-${new Date().toISOString().slice(0,10)}.xlsx`, { bookSST: true });
     });
   };
 
