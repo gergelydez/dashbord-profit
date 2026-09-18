@@ -126,10 +126,6 @@ function procOrder(o) {
         ts = daysSince > 10 ? 'livrat' : 'incurs';
       } else { ts = 'incurs'; }
     }
-    else if (ss === 'failed_attempt') {
-      // Tentativă de livrare eșuată — mai încearcă
-      ts = 'outfor'; // afișăm ca "la curier" că va reîncerca
-    }
     else if (o.fulfillment_status === 'fulfilled' || f.status === 'success') {
       // fulfillment creat dar fără shipment_status clar
       if (fulfilledAt) {
@@ -320,8 +316,9 @@ export default function Dashboard() {
           d.status === 'out_for_delivery'   ? 'outfor' :
           d.status === 'easybox'            ? 'easybox' :
           d.status === 'in_transit'         ? 'incurs' :
-          d.status === 'failed_attempt'     ? 'outfor' :
-          (d.status === 'returned' || d.status === 'failure') ? 'retur' : null;
+          // Tentativă eșuată = practic un retur (nu "la curier") — la fel
+          // ca în refreshTracking/mapLiveStatus/procOrder.
+          (d.status === 'failed_attempt' || d.status === 'returned' || d.status === 'failure') ? 'retur' : null;
         if (liveTs && liveTs !== o.ts) {
           applyOrderStatus(o.id, liveTs, d.statusRaw, d.lastUpdate, d.location);
         }
@@ -1222,8 +1219,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             t.status === 'out_for_delivery'  ? 'outfor' :
             t.status === 'easybox'           ? 'easybox' :
             t.status === 'in_transit'        ? 'incurs' :
-            t.status === 'failed_attempt'    ? 'outfor' :
-            (t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
+            // Tentativă de livrare eșuată (adresă greșită, destinatar absent,
+            // refuz) = practic un retur, nu "la curier" — la fel ca peste tot
+            // în rest (procOrder, mapLiveStatus): curierul nu a predat coletul.
+            (t.status === 'failed_attempt' || t.status === 'returned' || t.status === 'failure') ? 'retur' : o.ts;
           if (liveTs !== o.ts) {
             changed++;
             const ovData = { ts: liveTs, statusRaw: t.statusRaw, lastUpdate: t.lastUpdate, location: t.location };
