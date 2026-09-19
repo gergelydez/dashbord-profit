@@ -20,13 +20,11 @@ function hashPassword(password) {
 
 // Coduri GLS care înseamnă explicit refuz/retur la expeditor — 14=refuzat,
 // 17=retur inițiat, 23=retur la expeditor, 40=retur primit, 90=returnare
-// inițiată. Un colet poate primi un status ulterior ambiguu (ex.
-// 5="delivered", refolosit și pentru predarea coletului retur înapoi în
-// depozit) care ascunde refuzul dacă ne uităm doar la ultimul status din
-// istoric — de-aia verificăm tot istoricul.
+// inițiată. Vezi mai jos (hasReturnCode) — folosite pentru a scana tot
+// istoricul DOAR când ultimul status e ambiguu, nu ca regulă generală.
 //
 // 34 și 35 au fost scoase din listă: conform documentației oficiale ar
-// însemna refuz, dar pe conturul nostru comenzi cu 34/35 în istoric au fost
+// însemna refuz, dar pe contul nostru comenzi cu 34/35 în istoric au fost
 // livrate cu succes ȘI încasate (ramburs plătit) — codurile astea nu au deloc
 // etichetă în GLS_CODES (afișarea din panoul de tranzit), semn că nu se
 // comportă ca refuz real la acest cont; le tratam greșit ca retur definitiv.
@@ -103,8 +101,21 @@ async function trackGLS(awb) {
 
     // Ultimul status = primul din listă (cel mai recent)
     const last = statusList[0];
+    const lastCode = parseInt(last.StatusCode);
     const mapped = mapGLSStatus(last.StatusCode);
-    const hasReturnCode = statusList.some(s => GLS_RETURN_CODES.includes(parseInt(s.StatusCode)));
+    // Scanăm TOT istoricul după un cod de refuz/retur DOAR când ultimul
+    // status e ambiguu (5 = livrat SAU predare retur înapoi la depozit —
+    // GLS reciclează codul pentru ambele evenimente). Pentru orice alt cod
+    // final, contează DOAR ultimul status: un refuz/tentativă eșuată mai
+    // veche din istoric, urmată de o livrare reușită confirmată printr-un
+    // cod fără ambiguitate (ex. 54, 55, 58, 92, 93), NU mai trebuie să
+    // blocheze coletul la retur — GLS poate reîncerca cu succes după un
+    // refuz inițial, iar scanarea completă bloca greșit exact aceste
+    // cazuri (colete livrate și încasate, rămase totuși la "retur").
+    const GLS_AMBIGUOUS_DELIVERED_CODE = 5;
+    const hasReturnCode = lastCode === GLS_AMBIGUOUS_DELIVERED_CODE
+      ? statusList.some(s => GLS_RETURN_CODES.includes(parseInt(s.StatusCode)))
+      : GLS_RETURN_CODES.includes(lastCode);
 
     // Parsăm data GLS: /Date(1774645401000+0100)/ → timestamp
     const parseGLSDate = (dateStr) => {
