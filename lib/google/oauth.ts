@@ -60,14 +60,19 @@ export async function exchangeCodeForAccount(code: string): Promise<{ refreshTok
 // One authorized client per connected account, reused for the lifetime of a
 // warm serverless instance — the googleapis client refreshes its own access
 // token from the refresh_token automatically on each request as needed.
-const clientCache = new Map<string, OAuth2Client>();
+//
+// Keyed by mailAccountId AND keeps the refreshToken it was built with: a
+// reconnect issues a brand-new refresh_token for the SAME mailAccountId, and
+// without checking it here, a warm instance would keep serving the old
+// (now-revoked) client from cache forever — reconnecting would look like it
+// worked but every call would still fail with invalid_grant.
+const clientCache = new Map<string, { client: OAuth2Client; refreshToken: string }>();
 
 export function getAuthorizedClient(mailAccountId: string, refreshToken: string): OAuth2Client {
-  let client = clientCache.get(mailAccountId);
-  if (!client) {
-    client = baseClient();
-    client.setCredentials({ refresh_token: refreshToken });
-    clientCache.set(mailAccountId, client);
-  }
+  const cached = clientCache.get(mailAccountId);
+  if (cached && cached.refreshToken === refreshToken) return cached.client;
+  const client = baseClient();
+  client.setCredentials({ refresh_token: refreshToken });
+  clientCache.set(mailAccountId, { client, refreshToken });
   return client;
 }
