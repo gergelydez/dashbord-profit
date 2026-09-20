@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
+import PriceCalculator from '@/components/profit/PriceCalculator';
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtK = (n) => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'K' : fmt(n, 0);
@@ -412,6 +413,10 @@ export default function ProfitPage() {
   const [shopifySkuCosts, setShopifySkuCosts] = useState({});
   const [manualCosts, setManualCosts] = useState({});
   const [costSource, setCostSource] = useState({});
+  // Transport China per bucată (folosit la decompunerea costurilor vechi care includeau deja TVA de vamă)
+  const [transportChina, setTransportChina] = useState(() => {
+    try { const s = localStorage.getItem('glamx_transport_china'); return s ? s : '15'; } catch { return '15'; }
+  });
 
   // Refs replaced with dynamic createElement for Android compatibility
   function _pickFile(accept, onFile) {
@@ -848,7 +853,16 @@ export default function ProfitPage() {
     const skuKey  = rawSku.toLowerCase();
     const variantId = String(item.variantId||'');
 
-    const getCostVal = (s) => typeof s.cost==='number' ? s.cost : parseFloat(s.cost)||0;
+    // Costurile vechi (introduse înainte de a deveni plătitori de TVA) aveau TVA-ul de
+    // vamă deja inclus în prețul de achiziție. Dacă rândul e bifat "conține TVA vamă",
+    // scoatem mai întâi transportul China (fără TVA) apoi extragem TVA 21% din rest,
+    // ca să ajungem la costul real, fără TVA — comparabil cu recepțiile noi (deja nete).
+    const getCostVal = (s) => {
+      const raw = typeof s.cost==='number' ? s.cost : parseFloat(s.cost)||0;
+      if (!s.vamaTva) return raw;
+      const china = parseFloat(transportChina)||0;
+      return china + Math.max(raw - china, 0) / 1.21;
+    };
 
     // 1. Override manual
     if (manualCosts[nameRaw] !== undefined && manualCosts[nameRaw] !== '')
@@ -911,7 +925,7 @@ export default function ProfitPage() {
     }
 
     return { cost: 0, src: 'none' };
-  }, [stdCosts, productCosts, shopifyCosts, shopifyVariantCosts, shopifySkuCosts, manualCosts, costSource]);
+  }, [stdCosts, productCosts, shopifyCosts, shopifyVariantCosts, shopifySkuCosts, manualCosts, costSource, transportChina]);
 
   const getCOGS = useCallback(() => {
     if (!shopifyOrders.length) return 0;
@@ -1026,6 +1040,7 @@ export default function ProfitPage() {
     localStorage.setItem('glamx_use_cpa', String(useCPA));
     localStorage.setItem('glamx_transport_per_parcel', String(transportPerParcel));
     localStorage.setItem('glamx_sd_transport_per_parcel', String(sdTransportPerParcel));
+    localStorage.setItem('glamx_transport_china', String(transportChina));
     alert('✅ Salvat!');
   };
 
@@ -1041,7 +1056,7 @@ export default function ProfitPage() {
     .pf-sub{font-size:10px;color:var(--c-text3)}
     .pf-back{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:var(--c-text3);padding:5px 10px;border-radius:8px;font-size:11px;font-weight:600;text-decoration:none;flex-shrink:0}
     .pf-est-badge{display:inline-flex;align-items:center;gap:4px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);color:var(--c-yellow);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700}
-    .pf-tabs{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-bottom:14px}
+    .pf-tabs{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:14px}
     .pf-tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 2px;border-radius:10px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);color:var(--c-text4);font-size:9px;font-weight:700;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.3px}
     .pf-tab-icon{font-size:16px;line-height:1}
     .pf-tab.active{background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.3);color:var(--c-orange)}
@@ -1208,15 +1223,16 @@ export default function ProfitPage() {
           <a href="/whatsapp" className="pf-navlink" style={{background:'rgba(37,211,102,.1)',color:'#25d366',borderColor:'rgba(37,211,102,.2)'}}>📱 WA</a>
         </div>
 
-        {/* TABS — 6 tabs now */}
+        {/* TABS — 7 tabs now */}
         <div className="pf-tabs">
           {[
-            {id:'summary',  icon:'📊', label:'Sumar'},
-            {id:'costs',    icon:'💸', label:'Costuri'},
-            {id:'orders',   icon:'🧾', label:'Comenzi'},
-            {id:'products', icon:'📦', label:'Produse'},
-            {id:'analysis', icon:'🔬', label:'Analiză'},
-            {id:'settings', icon:'⚙️', label:'Setări'},
+            {id:'summary',    icon:'📊', label:'Sumar'},
+            {id:'costs',      icon:'💸', label:'Costuri'},
+            {id:'orders',     icon:'🧾', label:'Comenzi'},
+            {id:'products',   icon:'📦', label:'Produse'},
+            {id:'analysis',   icon:'🔬', label:'Analiză'},
+            {id:'calculator', icon:'🎯', label:'Calculator'},
+            {id:'settings',   icon:'⚙️', label:'Setări'},
           ].map(tab => (
             <button key={tab.id} className={`pf-tab${activeTab===tab.id?' active':''}`} onClick={() => setActiveTab(tab.id)}>
               <span className="pf-tab-icon">{tab.icon}</span>{tab.label}
@@ -2037,10 +2053,25 @@ export default function ProfitPage() {
                 {costsLastUpdated && <span style={{color:'var(--c-green)',marginLeft:6}}>✓ Actualizat {costsLastUpdated}</span>}
                 {dbCostsUpdatedAt && <span style={{color:'#06b6d4',marginLeft:6}}>✓ Recepții (NIR) actualizate {new Date(dbCostsUpdatedAt).toLocaleDateString('ro-RO')}</span>}
               </p>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,padding:'8px 10px',background:'rgba(249,115,22,.06)',border:'1px solid rgba(249,115,22,.15)',borderRadius:8}}>
+                <span style={{fontSize:11,color:'var(--c-text3)'}}>🚚 Transport China / buc (folosit la decompunere):</span>
+                <input type="text" inputMode="decimal" value={transportChina}
+                  onChange={e=>setTransportChina(e.target.value)}
+                  onBlur={()=>localStorage.setItem('glamx_transport_china', String(transportChina))}
+                  style={{background:'rgba(255,255,255,.05)',border:'1px solid rgba(255,255,255,.1)',color:'var(--c-text)',borderRadius:6,padding:'4px 8px',fontSize:12,width:'60px',fontFamily:'monospace',textAlign:'right',outline:'none'}} />
+                <span style={{fontSize:11,color:'var(--c-text4)'}}>lei</span>
+              </div>
+              <p style={{fontSize:11,color:'var(--c-text4)',marginBottom:10,lineHeight:1.5}}>
+                Bifează <b>„conține TVA vamă"</b> pentru costurile vechi (introduse înainte să devenim plătitori de TVA) — acestea aveau TVA-ul de la vamă deja inclus în preț. La calcul, se scade transportul China de mai sus, apoi se extrage TVA 21% din rest, ca să obținem costul real fără TVA.
+              </p>
               <table className="pf-prod-table">
-                <thead><tr><th>SKU</th><th>Produs</th><th style={{width:90,textAlign:'right'}}>Cost RON</th><th style={{width:32}}></th></tr></thead>
+                <thead><tr><th>SKU</th><th>Produs</th><th style={{width:90,textAlign:'right'}}>Cost RON</th><th style={{width:60,textAlign:'center'}}>TVA vamă?</th><th style={{width:32}}></th></tr></thead>
                 <tbody>
-                  {stdCosts.map((s,i) => (
+                  {stdCosts.map((s,i) => {
+                    const raw = typeof s.cost==='number' ? s.cost : parseFloat(s.cost)||0;
+                    const china = parseFloat(transportChina)||0;
+                    const realCost = s.vamaTva ? china + Math.max(raw-china,0)/1.21 : raw;
+                    return (
                     <tr key={s.id}>
                       <td style={{color:'var(--c-orange)',fontSize:10,fontFamily:'monospace',whiteSpace:'nowrap'}}>{s.sku||s.id}</td>
                       <td style={{color:'var(--c-text3)',fontSize:11}}>{s.name}</td>
@@ -2049,10 +2080,17 @@ export default function ProfitPage() {
                           onChange={e=>setStdCosts(p=>p.map((x,j)=>j===i?{...x,cost:e.target.value}:x))}
                           onBlur={e=>{const v=parseFloat(String(e.target.value).replace(',','.')); if(!isNaN(v)) setStdCosts(p=>p.map((x,j)=>j===i?{...x,cost:v}:x));}}
                           style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',color:'var(--c-green)',borderRadius:6,padding:'4px 8px',fontSize:12,width:'80px',fontFamily:'monospace',textAlign:'right',outline:'none'}} />
+                        {s.vamaTva && <div style={{fontSize:9,color:'#06b6d4',marginTop:3,fontWeight:600}}>→ {realCost.toFixed(2)} fără TVA</div>}
+                      </td>
+                      <td style={{textAlign:'center'}}>
+                        <input type="checkbox" checked={!!s.vamaTva}
+                          onChange={e=>setStdCosts(p=>p.map((x,j)=>j===i?{...x,vamaTva:e.target.checked}:x))}
+                          style={{width:16,height:16,cursor:'pointer',accentColor:'#06b6d4'}} />
                       </td>
                       <td><button onClick={()=>setStdCosts(p=>p.filter((_,j)=>j!==i))} style={{background:'transparent',border:'1px solid rgba(244,63,94,.3)',color:'var(--c-red)',borderRadius:6,padding:'3px 6px',fontSize:11,cursor:'pointer'}}>✕</button></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
               <button onClick={()=>setStdCosts(p=>[...p,{id:'new_'+Date.now(),sku:'',pattern:'',excludes:[],name:'Produs nou',cost:0}])} style={{marginTop:8}} className="pf-btn pf-btn-ghost">+ Adaugă produs</button>
@@ -2446,6 +2484,14 @@ export default function ProfitPage() {
             </>
           );
         })()}
+
+        {/* ══ CALCULATOR PREȚ DE VÂNZARE (simulator separat, nu depinde de comenzile Shopify) ══ */}
+        {activeTab === 'calculator' && (
+          <>
+            <div className="pf-stitle">Calculator preț de vânzare</div>
+            <PriceCalculator />
+          </>
+        )}
 
         {/* ══ SETĂRI ══ */}
         {activeTab === 'settings' && (
