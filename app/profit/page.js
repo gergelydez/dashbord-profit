@@ -127,9 +127,9 @@ function parseImportCostXLSX(file, existingCosts, onSuccess, onError) {
 }
 
 const DEFAULT_FIXED = [
-  { id: 1, name: 'Shopify subscription', amount: '290', currency: 'RON', perOrder: false, perOrderAmt: '' },
-  { id: 2, name: 'Contabilitate', amount: '600', currency: 'RON', perOrder: false, perOrderAmt: '' },
-  { id: 3, name: 'Ambalaje', amount: '', currency: 'RON', perOrder: true, perOrderAmt: '1' },
+  { id: 1, name: 'Shopify subscription', amount: '290', currency: 'RON', perOrder: false, perOrderAmt: '', vat: 'none' },
+  { id: 2, name: 'Contabilitate', amount: '600', currency: 'RON', perOrder: false, perOrderAmt: '', vat: 'incl' },
+  { id: 3, name: 'Ambalaje', amount: '', currency: 'RON', perOrder: true, perOrderAmt: '1', vat: 'incl' },
 ];
 
 const TRANSPORT_DEFAULT = 21.37;
@@ -294,6 +294,39 @@ function recomputeStatuses(orders) {
 
 const TVA_RATE = 0.21;
 
+// Descompune o sumă în (parte netă, TVA) în funcție de modul liniei de cost:
+// 'none' = fără TVA (ex. reverse-charge Meta — se compensează integral, nu apare TVA),
+// 'plus' = suma introdusă e netă, se ADAUGĂ TVA 21% (afișare/informativ),
+// 'incl' = suma introdusă include deja TVA (factură RO), se EXTRAGE TVA din ea (deductibilă).
+const splitVat = (amount, mode) => {
+  const a = parseFloat(amount) || 0;
+  if (mode === 'plus') return [a, a * TVA_RATE];
+  if (mode === 'incl') { const net = a / (1 + TVA_RATE); return [net, a - net]; }
+  return [a, 0];
+};
+
+const VAT_MODES = [
+  { k: 'none', l: 'fără TVA' },
+  { k: 'plus', l: '+TVA' },
+  { k: 'incl', l: 'TVA inclus' },
+];
+
+function VatModeToggle({ value, onChange }) {
+  return (
+    <div style={{display:'flex',gap:3,flexShrink:0}}>
+      {VAT_MODES.map(m => (
+        <button key={m.k} type="button" onClick={()=>onChange(m.k)}
+          style={{fontSize:9,fontWeight:700,padding:'3px 7px',borderRadius:5,cursor:'pointer',whiteSpace:'nowrap',
+            border:`1px solid ${value===m.k?'rgba(249,115,22,.4)':'rgba(255,255,255,.08)'}`,
+            background:value===m.k?'rgba(249,115,22,.15)':'transparent',
+            color:value===m.k?'var(--c-orange)':'var(--c-text4)'}}>
+          {m.l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function exportCostsToXLSX(stdCosts) {
   const doExport = () => {
     const wb = window.XLSX.utils.book_new();
@@ -391,10 +424,16 @@ export default function ProfitPage() {
   const [tikTokCost, setTikTokCost] = useState('');
   const [googleCost, setGoogleCost] = useState('');
   const [otherMktCost, setOtherMktCost] = useState('');
+  // Mod TVA per platformă de marketing — 'none'=reverse-charge (Meta, se compensează),
+  // 'incl'=factură RO cu TVA inclus (TikTok/Google), 'plus'=sumă netă + TVA adăugat
+  const [metaVat, setMetaVat] = useState(() => { try { return localStorage.getItem('glamx_meta_vat')||'none'; } catch { return 'none'; } });
+  const [tikTokVat, setTikTokVat] = useState(() => { try { return localStorage.getItem('glamx_tiktok_vat')||'incl'; } catch { return 'incl'; } });
+  const [googleVat, setGoogleVat] = useState(() => { try { return localStorage.getItem('glamx_google_vat')||'incl'; } catch { return 'incl'; } });
+  const [otherMktVat, setOtherMktVat] = useState(() => { try { return localStorage.getItem('glamx_other_mkt_vat')||'none'; } catch { return 'none'; } });
 
-  // TVA
-  const [tvaOnMeta, setTvaOnMeta] = useState(true);
-  const [tvaOnShopify, setTvaOnShopify] = useState(true);
+  // Impozit — profit (16% pe profit) sau micro (1-3% pe venit net de TVA)
+  const [taxMode, setTaxMode] = useState(() => { try { return localStorage.getItem('glamx_tax_mode')||'profit'; } catch { return 'profit'; } });
+  const [taxRate, setTaxRate] = useState(() => { try { return localStorage.getItem('glamx_tax_rate')||'16'; } catch { return '16'; } });
 
   // Fixed costs
   const [fixedCosts, setFixedCosts] = useState(DEFAULT_FIXED);
@@ -979,12 +1018,26 @@ export default function ProfitPage() {
   const refusedTransportCost = returnedCount * costPerParcel;
   const totalRefusedCost = refusedTransportCost;
 
-  const shopifyFixAmount = parseFloat(fixedCosts.find(c => c.name.toLowerCase().includes('shopify'))?.amount||'0')||0;
-  const tvaBase = (tvaOnMeta && !useCPA ? metaNum : 0) + (tvaOnShopify ? shopifyFixAmount : 0);
-  const totalTVA = tvaBase * TVA_RATE;
-
   const totalFixed = fixedCosts.reduce((s, c) => s + (c.perOrder ? (parseFloat(c.perOrderAmt)||0)*totalOrders : (parseFloat(c.amount)||0)), 0);
   const totalOther = otherCosts.reduce((s, c) => s + (parseFloat(c.amount)||0), 0);
+
+  // ── TVA de plată (model nou) ───────────────────────────────────────────
+  // TVA colectată la vânzare (asupra veniturilor brute, cu TVA) minus TVA
+  // deductibilă la costuri — fiecare linie descompusă după modul ei propriu
+  // (fără TVA / +TVA adăugat / TVA deja inclus în factură). Transportul GLS/
+  // SameDay e tratat ca factură RO cu TVA inclus (extragem 21% deductibil).
+  const outputVAT = totalRevenue * TVA_RATE / (1 + TVA_RATE);
+  const marketingVatDeductible = useCPA ? 0 :
+    splitVat(metaNum, metaVat)[1] + splitVat(tikTokNum, tikTokVat)[1] +
+    splitVat(googleNum, googleVat)[1] + splitVat(otherMktNum, otherMktVat)[1];
+  const fixedVatDeductible = fixedCosts.reduce((s, c) => {
+    const amt = c.perOrder ? (parseFloat(c.perOrderAmt)||0)*totalOrders : (parseFloat(c.amount)||0);
+    return s + splitVat(amt, c.vat||'incl')[1];
+  }, 0);
+  const otherVatDeductible = otherCosts.reduce((s, c) => s + splitVat(parseFloat(c.amount)||0, c.vat||'incl')[1], 0);
+  const transportVatDeductible = splitVat(effectiveTransportCost, 'incl')[1];
+  const inputVAT = marketingVatDeductible + fixedVatDeductible + otherVatDeductible + transportVatDeductible;
+  const totalTVA = outputVAT - inputVAT;
 
   const totalCosts = cogs + effectiveTransportCost + totalMarketing + totalFixed + totalOther + totalRefusedCost;
   const grossProfit = totalRevenue - cogs;
@@ -993,6 +1046,13 @@ export default function ProfitPage() {
   const marginBefore = totalRevenue > 0 ? (netProfitBeforeTVA / totalRevenue) * 100 : 0;
   const marginAfter = totalRevenue > 0 ? (netProfitAfterTVA / totalRevenue) * 100 : 0;
   const isEstimated = !glsDone || useCPA;
+
+  // ── Impozit (pe profit 16% sau micro 1-3% pe venit net de TVA) ─────────
+  const taxRateFrac = Math.min(99, parseFloat(taxRate)||0) / 100;
+  const profitTaxEstimate = taxMode === 'micro'
+    ? (totalRevenue / (1 + TVA_RATE)) * taxRateFrac
+    : Math.max(netProfitAfterTVA, 0) * taxRateFrac;
+  const netProfitAfterTax = netProfitAfterTVA - profitTaxEstimate;
 
   // ── ESTIMARE ÎNCASĂRI TRANZIT (cu rată retur 5% COD) ──────────────────
   const RETUR_RATE = 0.05;
@@ -1021,10 +1081,28 @@ export default function ProfitPage() {
   const tranzitGLS       = tranzitOrders.filter(o => o.courier==='gls'||!o.courier||o.courier==='unknown');
   const tranzitSD        = tranzitOrders.filter(o => o.courier==='sameday');
 
-  const addFixed = () => setFixedCosts(p => [...p, { id: Date.now(), name: '', amount: '', currency: 'RON', perOrder: false, perOrderAmt: '' }]);
+  // ── TVA + impozit — partea marginală adusă DOAR de coletele în tranzit ──
+  // (marketingul/costurile fixe sunt costuri de perioadă, deja incluse integral
+  // în totalTVA/profitTaxEstimate de mai sus — nu se recalculează pentru tranzit,
+  // doar COGS + transportul, care chiar variază cu numărul de colete)
+  const tranzitOutputVAT = tranzitEstTotal * TVA_RATE / (1 + TVA_RATE);
+  const tranzitInputVAT  = splitVat(tranzitTransport, 'incl')[1];
+  const tranzitVAT       = tranzitOutputVAT - tranzitInputVAT;
+  const tranzitProfitAfterVAT = tranzitNetEst - tranzitVAT;
+  const tranzitTaxEstimate = taxMode === 'micro'
+    ? (tranzitEstTotal / (1 + TVA_RATE)) * taxRateFrac
+    : Math.max(tranzitProfitAfterVAT, 0) * taxRateFrac;
+  const tranzitProfitFinal = tranzitProfitAfterVAT - tranzitTaxEstimate;
+
+  // Total combinat = livrate (confirmate) + tranzit (estimat), dacă s-ar livra tot
+  const combinedVAT = totalTVA + tranzitVAT;
+  const combinedTax = profitTaxEstimate + tranzitTaxEstimate;
+  const combinedProfitFinal = netProfitAfterTax + tranzitProfitFinal;
+
+  const addFixed = () => setFixedCosts(p => [...p, { id: Date.now(), name: '', amount: '', currency: 'RON', perOrder: false, perOrderAmt: '', vat: 'incl' }]);
   const updateFixed = (id, field, val) => setFixedCosts(p => p.map(c => c.id === id ? { ...c, [field]: val } : c));
   const removeFixed = (id) => setFixedCosts(p => p.filter(c => c.id !== id));
-  const addOther = () => setOtherCosts(p => [...p, { id: Date.now(), name: '', amount: '' }]);
+  const addOther = () => setOtherCosts(p => [...p, { id: Date.now(), name: '', amount: '', vat: 'incl' }]);
   const updateOther = (id, field, val) => setOtherCosts(p => p.map(c => c.id === id ? { ...c, [field]: val } : c));
   const removeOther = (id) => setOtherCosts(p => p.filter(c => c.id !== id));
 
@@ -1041,6 +1119,12 @@ export default function ProfitPage() {
     localStorage.setItem('glamx_transport_per_parcel', String(transportPerParcel));
     localStorage.setItem('glamx_sd_transport_per_parcel', String(sdTransportPerParcel));
     localStorage.setItem('glamx_transport_china', String(transportChina));
+    localStorage.setItem('glamx_meta_vat', metaVat);
+    localStorage.setItem('glamx_tiktok_vat', tikTokVat);
+    localStorage.setItem('glamx_google_vat', googleVat);
+    localStorage.setItem('glamx_other_mkt_vat', otherMktVat);
+    localStorage.setItem('glamx_tax_mode', taxMode);
+    localStorage.setItem('glamx_tax_rate', taxRate);
     alert('✅ Salvat!');
   };
 
@@ -1290,7 +1374,7 @@ export default function ProfitPage() {
                 {emoji:'🚚',val:fmtK(effectiveTransportCost),label:'Transport',sub:shopifyDone?`GLS ${glsCount}×${fmt(costPerParcel,0)} + SD ${sdCount}×${sdTransportPerParcel}`:`Est. ${fmt(transportPerParcel,2)} RON/col`,accent:'#f59e0b'},
                 {emoji:'📣',val:fmtK(totalMarketing),label:'Marketing',sub:useCPA?`CPA ${fmt(effectiveCPA,0)} RON/exp · ${totalExpediate} exp · ROAS ${roasMarketing.toFixed(1)}x`:`ROAS ${roasMarketing.toFixed(1)}x · CPA ${fmt(effectiveCPA,0)} RON`,accent:'#a855f7'},
                 {emoji:'↩️',val:returnedCount>0?fmtK(totalRefusedCost):'0',label:'Colete refuzate',sub:returnedCount>0?`${returnedCount} retur · doar transport retur`:'Detectate automat din Shopify',accent:returnedCount>0?'#f43f5e':'#64748b'},
-                {emoji:'🧾',val:fmt(totalTVA,0),label:'TVA de plată',sub:'Meta+Shopify · 21%',accent:'#f59e0b'},
+                {emoji:'🧾',val:fmt(totalTVA,0),label:'TVA de plată',sub:'ieșire − intrare · 21%',accent:'#f59e0b'},
                 {emoji:'🔧',val:fmtK(totalFixed+totalOther),label:'Costuri fixe',sub:`${fixedCosts.length} categorii`,accent:'#64748b'},
               ].map((k,i) => (
                 <div key={i} className="pf-kpi" style={{'--accent':k.accent}}>
@@ -1326,15 +1410,25 @@ export default function ProfitPage() {
                 <span className="pf-pl-label" style={{fontWeight:800}}>🚀 Profit net (fără TVA)</span>
                 <span className="pf-pl-val" style={{fontWeight:900,color:netProfitBeforeTVA>=0?'var(--c-green)':'var(--c-red)'}}>{netProfitBeforeTVA>=0?'+':''}{fmt(netProfitBeforeTVA)} RON</span>
               </div>
-              {tvaBase > 0 && (
+              {totalTVA !== 0 && (
                 <div className="pf-pl-row tva-row">
-                  <span className="pf-pl-label">🧾 TVA intracomunitară 21% (Meta{tvaOnShopify?'+Shopify':''})</span>
-                  <span className="pf-pl-val yellow">-{fmt(totalTVA)} RON</span>
+                  <span className="pf-pl-label">🧾 TVA de plată (ieșire {fmt(outputVAT)} − intrare {fmt(inputVAT)})</span>
+                  <span className="pf-pl-val yellow">{totalTVA>=0?'-':'+'}{fmt(Math.abs(totalTVA))} RON</span>
                 </div>
               )}
               <div className={`pf-pl-row ${netProfitAfterTVA>=0?'profit-pos':'profit-neg'}`}>
                 <span className="pf-pl-label" style={{fontWeight:800}}>✅ Profit net (după TVA)</span>
                 <span className="pf-pl-val" style={{fontWeight:900,fontSize:13,color:netProfitAfterTVA>=0?'var(--c-green)':'var(--c-red)'}}>{netProfitAfterTVA>=0?'+':''}{fmt(netProfitAfterTVA)} RON</span>
+              </div>
+              {profitTaxEstimate !== 0 && (
+                <div className="pf-pl-row tva-row">
+                  <span className="pf-pl-label">🏛️ Impozit {taxMode==='micro'?`micro ${taxRate}% pe venit`:`profit ${taxRate}%`}</span>
+                  <span className="pf-pl-val yellow">-{fmt(profitTaxEstimate)} RON</span>
+                </div>
+              )}
+              <div className={`pf-pl-row ${netProfitAfterTax>=0?'profit-pos':'profit-neg'}`}>
+                <span className="pf-pl-label" style={{fontWeight:800}}>💵 Profit în mână (după TVA + impozit)</span>
+                <span className="pf-pl-val" style={{fontWeight:900,fontSize:13,color:netProfitAfterTax>=0?'var(--c-green)':'var(--c-red)'}}>{netProfitAfterTax>=0?'+':''}{fmt(netProfitAfterTax)} RON</span>
               </div>
             </div>
 
@@ -1393,6 +1487,30 @@ export default function ProfitPage() {
                       Marjă: {tranzitEstTotal>0?((tranzitNetEst/tranzitEstTotal)*100).toFixed(1):0}%<br/>
                       după COGS + transport + {(RETUR_RATE*100).toFixed(0)}% retur
                     </div>
+                  </div>
+                </div>
+
+                {/* TVA + Impozit — doar tranzit vs. total combinat (livrate + tranzit) */}
+                <div style={{background:'rgba(0,0,0,.25)',borderRadius:8,padding:'10px 12px',marginBottom:10}}>
+                  <div style={{fontSize:9,color:'var(--c-text4)',fontWeight:700,textTransform:'uppercase',letterSpacing:.6,marginBottom:8}}>
+                    🧾 TVA + 🏛️ impozit — doar din tranzit vs. total (livrate + tranzit)
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:0,fontSize:10,color:'var(--c-text4)',fontWeight:700,paddingBottom:4,borderBottom:'1px solid rgba(255,255,255,.06)'}}>
+                    <span></span><span style={{textAlign:'right'}}>Din tranzit</span><span style={{textAlign:'right'}}>Total</span>
+                  </div>
+                  {[
+                    {label:'TVA de plată', tranzit:tranzitVAT, total:combinedVAT, color:'#f59e0b'},
+                    {label:'Impozit', tranzit:tranzitTaxEstimate, total:combinedTax, color:'#f59e0b'},
+                    {label:'Profit în mână', tranzit:tranzitProfitFinal, total:combinedProfitFinal, color:null},
+                  ].map(row=>(
+                    <div key={row.label} style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:0,fontSize:12,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)'}}>
+                      <span style={{color:'var(--c-text3)'}}>{row.label}</span>
+                      <span style={{textAlign:'right',fontFamily:'monospace',fontWeight:700,color:row.color||(row.tranzit>=0?'#10b981':'#f43f5e')}}>{row.tranzit>=0&&!row.color?'+':''}{fmt(row.tranzit)}</span>
+                      <span style={{textAlign:'right',fontFamily:'monospace',fontWeight:700,color:row.color||(row.total>=0?'#10b981':'#f43f5e')}}>{row.total>=0&&!row.color?'+':''}{fmt(row.total)}</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:9,color:'var(--c-text4)',marginTop:6,lineHeight:1.6}}>
+                    💡 Marketing/costuri fixe sunt costuri de perioadă (deja incluse o singură dată în totalul livrate) — la tranzit se adaugă doar COGS + transportul estimat, care chiar variază cu numărul de colete.
                   </div>
                 </div>
 
@@ -1550,21 +1668,25 @@ export default function ProfitPage() {
                 </>
               ) : (
                 <>
-                  <div style={{display:'grid',gap:8}}>
+                  <div style={{display:'grid',gap:10}}>
                     {[
-                      {l:'Meta Ads (RON)',v:metaCost,s:setMetaCost,badge:'TVA 21%',badgeColor:'var(--c-yellow)'},
-                      {l:'TikTok Ads (RON)',v:tikTokCost,s:setTikTokCost,badge:'TVA inclus',badgeColor:'var(--c-text4)'},
-                      {l:'Google Ads (RON)',v:googleCost,s:setGoogleCost,badge:'TVA inclus RO',badgeColor:'var(--c-text4)'},
-                      {l:'Alte platforme (RON)',v:otherMktCost,s:setOtherMktCost,badge:null},
-                    ].map((f,i)=>(
+                      {l:'Meta Ads (RON)',v:metaCost,s:setMetaCost,vat:metaVat,setVat:setMetaVat},
+                      {l:'TikTok Ads (RON)',v:tikTokCost,s:setTikTokCost,vat:tikTokVat,setVat:setTikTokVat},
+                      {l:'Google Ads (RON)',v:googleCost,s:setGoogleCost,vat:googleVat,setVat:setGoogleVat},
+                      {l:'Alte platforme (RON)',v:otherMktCost,s:setOtherMktCost,vat:otherMktVat,setVat:setOtherMktVat},
+                    ].map((f,i)=>{
+                      const [net,vatAmt] = splitVat(f.v, f.vat);
+                      return (
                       <div key={i}>
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:5}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:5,flexWrap:'wrap',gap:6}}>
                           <label className="pf-label" style={{margin:0}}>{f.l}</label>
-                          {f.badge&&<span style={{fontSize:9,color:f.badgeColor,background:f.badgeColor==='var(--c-yellow)'?'rgba(245,158,11,.1)':'rgba(255,255,255,.05)',padding:'2px 6px',borderRadius:4,fontWeight:700}}>{f.badge}</span>}
+                          <VatModeToggle value={f.vat} onChange={f.setVat} />
                         </div>
                         <input className="pf-input" type="number" placeholder="0" value={f.v} onChange={e=>f.s(e.target.value)} />
+                        {parseFloat(f.v)>0 && <div style={{fontSize:9,color:'var(--c-text4)',marginTop:3}}>net {fmt(net)} RON{vatAmt>0?` · TVA deductibilă ${fmt(vatAmt)} RON`:''}</div>}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   {totalMarketing>0&&<div style={{marginTop:8,padding:'8px 10px',background:'rgba(168,85,247,.06)',border:'1px solid rgba(168,85,247,.15)',borderRadius:8,fontSize:11,color:'var(--c-text3)',lineHeight:1.7}}>
                     <div>Total: <strong style={{color:'#a855f7'}}>{fmt(totalMarketing)} RON</strong></div>
@@ -1574,159 +1696,48 @@ export default function ProfitPage() {
                 </>
               )}
             </div>
-            {/* ══ ESTIMARE PROFIT DIN COSTURI META ══ */}
-            {(() => {
-              const metaEstNum = parseFloat(metaCost) || 0;
-              if (!metaEstNum) return null;
-
-              // Colete: livrate + în tranzit + refuzate = toate expediate
-              const livrate = totalOrders;
-              const tranzitCount = tranzitOrders.length;
-              const refuzate = returnedCount;
-              const totalExpediateEst = livrate + tranzitCount + refuzate;
-
-              // CPA estimat = Meta ÷ total expediate
-              const cpaEst = totalExpediateEst > 0 ? metaEstNum / totalExpediateEst : 0;
-
-              // TVA 21% pe Meta
-              const tvaMetaEst = tvaOnMeta ? metaEstNum * TVA_RATE : 0;
-              const metaCuTVA = metaEstNum + tvaMetaEst;
-
-              // Estimare venituri totale (livrate + tranzit estimat 95% COD + card)
-              const revenueEst_livrate = totalRevenue;
-              const revenueEst_tranzit = tranzitEstTotal; // deja calculat cu 5% retur
-              const revenueEst_total = revenueEst_livrate + revenueEst_tranzit;
-
-              // COGS estimat total
-              const cogsEst_livrate = cogs;
-              const cogsEst_total = cogsEst_livrate + tranzitCOGS;
-
-              // Transport estimat total
-              const transportEst_livrate = effectiveTransportCost;
-              const transportEst_tranzit = tranzitOrders.length * costPerParcel;
-              const transportEst_total = transportEst_livrate + transportEst_tranzit;
-
-              // Costuri fixe estimate (deja calculate)
-              const fixedEst = totalFixed + totalOther;
-
-              // Retur transport (livrate deja returnate + estimat tranzit)
-              const returTransportEst = (returnedCount + Math.round(tranzitCOD.length * 0.05)) * costPerParcel;
-
-              // Profit net estimat
-              const profitEst = revenueEst_total - cogsEst_total - metaCuTVA - transportEst_total - fixedEst - returTransportEst;
-              const marginEst = revenueEst_total > 0 ? (profitEst / revenueEst_total) * 100 : 0;
-
-              return (
-                <div style={{background:'rgba(168,85,247,.05)',border:'1px solid rgba(168,85,247,.25)',borderRadius:12,padding:'14px 16px',marginBottom:14}}>
-                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
-                    <span style={{fontSize:18}}>🎯</span>
-                    <div>
-                      <div style={{fontSize:12,fontWeight:800,color:'#a855f7',textTransform:'uppercase',letterSpacing:.8}}>
-                        Estimare profit total din costuri Meta
-                      </div>
-                      <div style={{fontSize:10,color:'var(--c-text4)',marginTop:1}}>
-                        Meta {fmt(metaEstNum)} RON{tvaMetaEst>0?` + TVA ${fmt(tvaMetaEst)} RON = ${fmt(metaCuTVA)} RON`:''} · {totalExpediateEst} colete expediate total
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* CPA estimat */}
-                  <div style={{background:'rgba(168,85,247,.08)',border:'1px solid rgba(168,85,247,.2)',borderRadius:8,padding:'10px 12px',marginBottom:10}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
-                      <div>
-                        <div style={{fontSize:9,color:'#a855f7',textTransform:'uppercase',letterSpacing:.8,fontWeight:700,marginBottom:3}}>CPA estimat (Meta ÷ expediate)</div>
-                        <div style={{fontSize:22,fontWeight:900,color:'#a855f7',fontFamily:'monospace',letterSpacing:-.5}}>{fmt(cpaEst)} RON</div>
-                        <div style={{fontSize:10,color:'var(--c-text4)',marginTop:3,lineHeight:1.6}}>
-                          {fmt(metaEstNum)} RON ÷ {totalExpediateEst} colete<br/>
-                          ({livrate} livrate + {tranzitCount} în livrare + {refuzate} refuzate)
-                        </div>
-                      </div>
-                      {tvaMetaEst > 0 && (
-                        <div style={{textAlign:'right'}}>
-                          <div style={{fontSize:9,color:'var(--c-yellow)',textTransform:'uppercase',letterSpacing:.6,fontWeight:700,marginBottom:3}}>Meta + TVA 21%</div>
-                          <div style={{fontSize:16,fontWeight:800,color:'var(--c-yellow)',fontFamily:'monospace'}}>{fmt(metaCuTVA)} RON</div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Detaliu colete */}
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:10}}>
-                    {[
-                      {label:'✅ Livrate',      val:livrate,      color:'#10b981', sub:`${fmt(revenueEst_livrate)} RON`,     note:'confirmate'},
-                      {label:'🚚 În livrare',   val:tranzitCount, color:'#3b82f6', sub:`~${fmt(revenueEst_tranzit)} RON est.`, note:`5% retur COD`},
-                      {label:'↩ Refuzate',      val:refuzate,     color:'#f43f5e', sub:`transport: -${fmt(returTransportEst)} RON`, note:'transport retur'},
-                    ].map(({label,val,color,sub,note})=>(
-                      <div key={label} style={{background:`rgba(0,0,0,.3)`,border:`1px solid ${color}22`,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
-                        <div style={{fontSize:10,color,fontWeight:700,marginBottom:2}}>{label}</div>
-                        <div style={{fontSize:18,fontWeight:900,color,fontFamily:'monospace'}}>{val}</div>
-                        <div style={{fontSize:9,color:'var(--c-text4)',marginTop:2}}>{sub}</div>
-                        <div style={{fontSize:8,color:'#334155',marginTop:1}}>{note}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* P&L estimat complet */}
-                  <div style={{background:'rgba(0,0,0,.3)',borderRadius:8,padding:'10px 12px',marginBottom:10}}>
-                    <div style={{fontSize:10,color:'var(--c-text4)',fontWeight:700,textTransform:'uppercase',letterSpacing:.6,marginBottom:8}}>P&L estimat (dacă se livrează tot)</div>
-                    {[
-                      {label:'💰 Venituri estimate (livrate + ~tranzit)',  val:revenueEst_total,                    sign:'+', color:'#f97316'},
-                      {label:'📦 Cost produse (COGS estimate)',             val:cogsEst_total,                       sign:'-', color:'#f43f5e'},
-                      {label:'🚚 Transport estimate',                       val:transportEst_total,                  sign:'-', color:'#f59e0b'},
-                      {label:'📣 Meta Ads' + (tvaMetaEst>0 ? ' + TVA 21%':''), val:metaCuTVA,                       sign:'-', color:'#a855f7'},
-                      {label:'↩ Transport retur estimate',                  val:returTransportEst,                   sign:'-', color:'#f43f5e'},
-                      {label:'🔧 Costuri fixe',                             val:fixedEst,                            sign:'-', color:'#64748b'},
-                    ].map(({label,val,sign,color})=>(
-                      <div key={label} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,.04)',fontSize:11}}>
-                        <span style={{color:'var(--c-text3)'}}>{label}</span>
-                        <span style={{fontFamily:'monospace',fontWeight:700,color}}>{sign}{fmt(val)} RON</span>
-                      </div>
-                    ))}
-                    <div style={{display:'flex',justifyContent:'space-between',padding:'8px 0',marginTop:4,borderTop:'2px solid rgba(255,255,255,.08)'}}>
-                      <span style={{fontSize:12,fontWeight:800,color:'var(--c-text)'}}>🚀 Profit net estimat</span>
-                      <span style={{fontSize:14,fontWeight:900,fontFamily:'monospace',color:profitEst>=0?'#10b981':'#f43f5e'}}>{profitEst>=0?'+':''}{fmt(profitEst)} RON</span>
-                    </div>
-                    <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4,display:'flex',justifyContent:'space-between'}}>
-                      <span>Marjă estimată</span>
-                      <span style={{fontWeight:700,color:marginEst>=0?'#10b981':'#f43f5e'}}>{marginEst.toFixed(1)}%</span>
-                    </div>
-                    {tvaMetaEst > 0 && (
-                      <div style={{marginTop:8,padding:'6px 8px',background:'rgba(245,158,11,.06)',borderRadius:6,fontSize:10,color:'var(--c-yellow)',lineHeight:1.7}}>
-                        ⚠️ TVA 21% pe Meta ({fmt(tvaMetaEst)} RON) este inclusă în calcul deoarece ai activat opțiunea TVA Meta.
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{fontSize:10,color:'var(--c-text4)',lineHeight:1.7,padding:'6px 8px',background:'rgba(255,255,255,.03)',borderRadius:6}}>
-                    💡 <strong>Cum funcționează:</strong> CPA estimat = Meta total ÷ toate coletele expediate (livrate + în livrare + refuzate). Estimarea tranzit aplică 5% retur pe comenzile COD. Cărțile de credit sunt considerate încasate 100%.
-                  </div>
-                </div>
-              );
-            })()}
-
-            <div className="pf-stitle">TVA intracomunitară</div>
+            <div className="pf-stitle">TVA &amp; Impozit</div>
             <div className="pf-card">
-              <div className="pf-card-header"><span className="pf-card-icon">🧾</span><span className="pf-card-title">TVA de plată · 21%</span><span className="pf-card-status" style={{color:'var(--c-yellow)'}}>{fmt(totalTVA)} RON</span></div>
-              <div className="tva-box">
-                <div style={{fontSize:11,color:'var(--c-text3)',marginBottom:10,lineHeight:1.6}}>TVA intracomunitară pe servicii digitale din UE.</div>
-                {[
-                  {label:'Meta Ads',val:tvaOnMeta,set:setTvaOnMeta,base:!useCPA?metaNum:0,note:useCPA?'Treci la "Sume reale" pentru calcul':''},
-                  {label:'Shopify subscription',val:tvaOnShopify,set:setTvaOnShopify,base:shopifyFixAmount,note:''},
-                  {label:'TikTok Ads',val:false,set:()=>{},base:0,note:'TVA deja inclus pe factură',disabled:true},
-                ].map((item,i) => (
-                  <div key={i} className="pf-toggle-row" style={{borderBottom:'1px solid rgba(255,255,255,.04)',paddingBottom:8,marginBottom:4,opacity:item.disabled?.8:1}}>
-                    <div style={{flex:1}}>
-                      <div className="pf-toggle-label" style={{fontSize:11}}>{item.label}</div>
-                      {item.note?<div className="pf-toggle-sub">{item.note}</div>:item.base>0&&<div className="pf-toggle-sub">Bază: {fmt(item.base)} RON → TVA: {fmt(item.base*TVA_RATE)} RON</div>}
-                    </div>
-                    {!item.disabled&&<label className="pf-switch"><input type="checkbox" checked={item.val} onChange={e=>item.set(e.target.checked)}/><span className="pf-slider"></span></label>}
-                    {item.disabled&&<span style={{fontSize:10,color:'var(--c-text4)'}}>OFF</span>}
-                  </div>
-                ))}
-                {tvaBase > 0 && <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(245,158,11,.2)',fontSize:12}}>
-                  <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'var(--c-text3)'}}>Bază TVA</span><span style={{fontFamily:'monospace'}}>{fmt(tvaBase)} RON</span></div>
-                  <div style={{display:'flex',justifyContent:'space-between',marginTop:4,fontWeight:700}}><span>TVA de plată</span><span style={{fontFamily:'monospace',color:'var(--c-yellow)'}}>{fmt(totalTVA)} RON</span></div>
-                </div>}
+              <div className="pf-card-header">
+                <span className="pf-card-icon">🧾</span>
+                <span className="pf-card-title">TVA de plată</span>
+                <span className="pf-card-status" style={{color: totalTVA>=0 ? 'var(--c-yellow)' : 'var(--c-green)'}}>
+                  {totalTVA>=0?'':'+'}{fmt(totalTVA)} RON
+                </span>
+              </div>
+              <div style={{fontSize:11,color:'var(--c-text3)',lineHeight:1.7,marginBottom:8}}>
+                TVA colectată la vânzare (din veniturile brute) minus TVA deductibilă din costuri — fiecare linie de mai jos (marketing, transport, costuri fixe/variabile) își are propriul mod de TVA (fără / +TVA / TVA inclus).
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'4px 0',borderTop:'1px solid rgba(255,255,255,.05)'}}>
+                <span style={{color:'var(--c-text4)'}}>TVA colectată (ieșire, 21% din venituri)</span>
+                <span style={{fontFamily:'monospace',color:'var(--c-yellow)'}}>{fmt(outputVAT)} RON</span>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'4px 0'}}>
+                <span style={{color:'var(--c-text4)'}}>TVA deductibilă (intrare — marketing+transport+fix+altele)</span>
+                <span style={{fontFamily:'monospace',color:'#10b981'}}>-{fmt(inputVAT)} RON</span>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:12,fontWeight:700,padding:'6px 0',borderTop:'1px solid rgba(245,158,11,.2)',marginTop:2}}>
+                <span>TVA de plată</span>
+                <span style={{fontFamily:'monospace',color:'var(--c-yellow)'}}>{fmt(totalTVA)} RON</span>
+              </div>
+              <div style={{fontSize:9,color:'var(--c-text4)',marginTop:6}}>⚠️ Nu include TVA vamă dedusă din costul produselor (COGS) — doar din marketing, transport și costuri fixe/variabile.</div>
+            </div>
+            <div className="pf-card" style={{marginTop:-2}}>
+              <div className="pf-card-header">
+                <span className="pf-card-icon">🏛️</span>
+                <span className="pf-card-title">Impozit</span>
+                <span className="pf-card-status" style={{color:'var(--c-yellow)'}}>{fmt(profitTaxEstimate,0)} RON</span>
+              </div>
+              <div className="mkt-mode">
+                <button className={`mkt-mode-btn${taxMode==='profit'?' active':''}`} onClick={()=>setTaxMode('profit')}>📈 Pe profit (16%)</button>
+                <button className={`mkt-mode-btn${taxMode==='micro'?' active':''}`} onClick={()=>setTaxMode('micro')}>🏢 Micro (1-3%)</button>
+              </div>
+              <label className="pf-label">Cotă impozit (%)</label>
+              <input className="pf-input" type="number" step="0.5" value={taxRate} onChange={e=>setTaxRate(e.target.value)} />
+              <div style={{fontSize:10,color:'var(--c-text4)',marginTop:6,lineHeight:1.6}}>
+                {taxMode==='micro'
+                  ? <>Micro: {taxRate}% × venit net de TVA ({fmt(totalRevenue/(1+TVA_RATE))} RON) = <strong style={{color:'var(--c-yellow)'}}>{fmt(profitTaxEstimate)} RON</strong></>
+                  : <>Profit: {taxRate}% × profit net după TVA ({fmt(Math.max(netProfitAfterTVA,0))} RON) = <strong style={{color:'var(--c-yellow)'}}>{fmt(profitTaxEstimate)} RON</strong></>}
               </div>
             </div>
             <div className="pf-stitle">Costuri fixe</div>
@@ -1737,6 +1748,7 @@ export default function ProfitPage() {
                     <input className="pf-input" type="text" placeholder="Nume cost" value={c.name} onChange={e=>updateFixed(c.id,'name',e.target.value)} style={{flex:2}} />
                     <button className="pf-btn pf-btn-red" onClick={()=>removeFixed(c.id)}>✕</button>
                   </div>
+                  <div style={{marginBottom:6}}><VatModeToggle value={c.vat||'incl'} onChange={v=>updateFixed(c.id,'vat',v)} /></div>
                   <div className="pf-toggle-row" style={{padding:'4px 0'}}>
                     <div><div className="pf-toggle-label" style={{fontSize:11}}>Per comandă</div><div className="pf-toggle-sub">Înmulțit cu nr. comenzi</div></div>
                     <label className="pf-switch"><input type="checkbox" checked={!!c.perOrder} onChange={e=>updateFixed(c.id,'perOrder',e.target.checked)}/><span className="pf-slider"></span></label>
@@ -1757,10 +1769,13 @@ export default function ProfitPage() {
             <div className="pf-card">
               {otherCosts.length===0&&<div style={{fontSize:12,color:'var(--c-text4)',marginBottom:8}}>Nu ai adăugat.</div>}
               {otherCosts.map(c=>(
-                <div key={c.id} className="pf-cost-row">
-                  <input className="pf-input" type="text" placeholder="Nume" value={c.name} onChange={e=>updateOther(c.id,'name',e.target.value)} />
-                  <input className="pf-input" type="number" placeholder="RON" value={c.amount} onChange={e=>updateOther(c.id,'amount',e.target.value)} style={{flex:'0 0 90px'}} />
-                  <button className="pf-btn pf-btn-red" onClick={()=>removeOther(c.id)}>✕</button>
+                <div key={c.id} style={{marginBottom:8,paddingBottom:8,borderBottom:'1px solid rgba(255,255,255,.05)'}}>
+                  <div className="pf-cost-row">
+                    <input className="pf-input" type="text" placeholder="Nume" value={c.name} onChange={e=>updateOther(c.id,'name',e.target.value)} />
+                    <input className="pf-input" type="number" placeholder="RON" value={c.amount} onChange={e=>updateOther(c.id,'amount',e.target.value)} style={{flex:'0 0 90px'}} />
+                    <button className="pf-btn pf-btn-red" onClick={()=>removeOther(c.id)}>✕</button>
+                  </div>
+                  <div style={{marginTop:6}}><VatModeToggle value={c.vat||'incl'} onChange={v=>updateOther(c.id,'vat',v)} /></div>
                 </div>
               ))}
               <button className="pf-btn pf-btn-ghost" onClick={addOther}>+ Adaugă cost variabil</button>
@@ -2064,36 +2079,41 @@ export default function ProfitPage() {
               <p style={{fontSize:11,color:'var(--c-text4)',marginBottom:10,lineHeight:1.5}}>
                 Bifează <b>„conține TVA vamă"</b> pentru costurile vechi (introduse înainte să devenim plătitori de TVA) — acestea aveau TVA-ul de la vamă deja inclus în preț. La calcul, se scade transportul China de mai sus, apoi se extrage TVA 21% din rest, ca să obținem costul real fără TVA.
               </p>
-              <table className="pf-prod-table">
-                <thead><tr><th>SKU</th><th>Produs</th><th style={{width:90,textAlign:'right'}}>Cost RON</th><th style={{width:60,textAlign:'center'}}>TVA vamă?</th><th style={{width:32}}></th></tr></thead>
-                <tbody>
-                  {stdCosts.map((s,i) => {
-                    const raw = typeof s.cost==='number' ? s.cost : parseFloat(s.cost)||0;
-                    const china = parseFloat(transportChina)||0;
-                    const realCost = s.vamaTva ? china + Math.max(raw-china,0)/1.21 : raw;
-                    return (
-                    <tr key={s.id}>
-                      <td style={{color:'var(--c-orange)',fontSize:10,fontFamily:'monospace',whiteSpace:'nowrap'}}>{s.sku||s.id}</td>
-                      <td style={{color:'var(--c-text3)',fontSize:11}}>{s.name}</td>
-                      <td style={{textAlign:'right'}}>
-                        <input type="text" inputMode="decimal" value={s.cost}
-                          onChange={e=>setStdCosts(p=>p.map((x,j)=>j===i?{...x,cost:e.target.value}:x))}
-                          onBlur={e=>{const v=parseFloat(String(e.target.value).replace(',','.')); if(!isNaN(v)) setStdCosts(p=>p.map((x,j)=>j===i?{...x,cost:v}:x));}}
-                          style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',color:'var(--c-green)',borderRadius:6,padding:'4px 8px',fontSize:12,width:'80px',fontFamily:'monospace',textAlign:'right',outline:'none'}} />
-                        {s.vamaTva && <div style={{fontSize:9,color:'#06b6d4',marginTop:3,fontWeight:600}}>→ {realCost.toFixed(2)} fără TVA</div>}
-                      </td>
-                      <td style={{textAlign:'center'}}>
-                        <input type="checkbox" checked={!!s.vamaTva}
-                          onChange={e=>setStdCosts(p=>p.map((x,j)=>j===i?{...x,vamaTva:e.target.checked}:x))}
-                          style={{width:16,height:16,cursor:'pointer',accentColor:'#06b6d4'}} />
-                      </td>
-                      <td><button onClick={()=>setStdCosts(p=>p.filter((_,j)=>j!==i))} style={{background:'transparent',border:'1px solid rgba(244,63,94,.3)',color:'var(--c-red)',borderRadius:6,padding:'3px 6px',fontSize:11,cursor:'pointer'}}>✕</button></td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <button onClick={()=>setStdCosts(p=>[...p,{id:'new_'+Date.now(),sku:'',pattern:'',excludes:[],name:'Produs nou',cost:0}])} style={{marginTop:8}} className="pf-btn pf-btn-ghost">+ Adaugă produs</button>
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {stdCosts.map((s,i) => {
+                  const raw = typeof s.cost==='number' ? s.cost : parseFloat(s.cost)||0;
+                  const china = parseFloat(transportChina)||0;
+                  const realCost = s.vamaTva ? china + Math.max(raw-china,0)/1.21 : raw;
+                  return (
+                    <div key={s.id} style={{background:'rgba(255,255,255,.02)',border:'1px solid rgba(255,255,255,.06)',borderRadius:10,padding:'8px 10px'}}>
+                      <div style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:8}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{color:'var(--c-orange)',fontSize:10,fontFamily:'monospace',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.sku||s.id}</div>
+                          <div style={{color:'var(--c-text3)',fontSize:11,marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.name}</div>
+                        </div>
+                        <button onClick={()=>setStdCosts(p=>p.filter((_,j)=>j!==i))} style={{flexShrink:0,background:'transparent',border:'1px solid rgba(244,63,94,.3)',color:'var(--c-red)',borderRadius:6,padding:'3px 8px',fontSize:11,cursor:'pointer'}}>✕</button>
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:10}}>
+                        <div>
+                          <input type="text" inputMode="decimal" value={s.cost}
+                            onChange={e=>setStdCosts(p=>p.map((x,j)=>j===i?{...x,cost:e.target.value}:x))}
+                            onBlur={e=>{const v=parseFloat(String(e.target.value).replace(',','.')); if(!isNaN(v)) setStdCosts(p=>p.map((x,j)=>j===i?{...x,cost:v}:x));}}
+                            style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',color:'var(--c-green)',borderRadius:6,padding:'4px 8px',fontSize:12,width:'80px',fontFamily:'monospace',textAlign:'right',outline:'none'}} />
+                          <span style={{fontSize:10,color:'var(--c-text4)',marginLeft:4}}>RON</span>
+                        </div>
+                        <label style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'var(--c-text3)',cursor:'pointer'}}>
+                          <input type="checkbox" checked={!!s.vamaTva}
+                            onChange={e=>setStdCosts(p=>p.map((x,j)=>j===i?{...x,vamaTva:e.target.checked}:x))}
+                            style={{width:16,height:16,cursor:'pointer',accentColor:'#06b6d4',flexShrink:0}} />
+                          TVA vamă
+                        </label>
+                        {s.vamaTva && <div style={{fontSize:10,color:'#06b6d4',fontWeight:600}}>→ {realCost.toFixed(2)} lei fără TVA</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <button onClick={()=>setStdCosts(p=>[...p,{id:'new_'+Date.now(),sku:'',pattern:'',excludes:[],name:'Produs nou',cost:0}])} style={{marginTop:10}} className="pf-btn pf-btn-ghost">+ Adaugă produs</button>
             </div>
             <div className="pf-stitle">Import / Export costuri</div>
             <div className="pf-card">
