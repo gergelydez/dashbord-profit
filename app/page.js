@@ -1172,8 +1172,12 @@ export default function Dashboard() {
     const activeOrders = allOrders.filter(o => {
       if (!o.trackingNo) return false;
       if (['incurs','outfor','pending','easybox'].includes(o.ts)) return true;
-      // Sameday: reverificăm 'retur' din ultimele 30 zile — Shopify poate fi greșit
-      if (o.ts === 'retur' && o.courier === 'sameday' && o.createdAt) {
+      // Reverificăm 'retur' din ultimele 30 zile — Shopify/clasificarea
+      // anterioară poate fi greșită (ex. un bug de clasificare deja reparat,
+      // dar statusul greșit rămas cache-uit din trecut nu se corectează
+      // singur altfel — GLS era exclus aici înainte, motiv pentru care
+      // retururi greșite din trecut rămâneau blocate la nesfârșit).
+      if (o.ts === 'retur' && o.createdAt) {
         const daysSince = (now - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
         return daysSince <= 30;
       }
