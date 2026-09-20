@@ -457,6 +457,14 @@ export default function ProfitPage() {
     try { const s = localStorage.getItem('glamx_transport_china'); return s ? s : '15'; } catch { return '15'; }
   });
 
+  // Mod TVA pentru costul de transport GLS/SameDay — ambii facturează cu TVA
+  // 21%, dar suma introdusă poate fi netă (import Excel din decontul GLS,
+  // coloana "Total amount" e netă) sau brută (transcrisă manual de pe factură,
+  // unde "Total de plată" e cu TVA inclus) — de-aici selector explicit, nu o
+  // singură presupunere fixă.
+  const [glsTransportVat, setGlsTransportVat] = useState(() => { try { return localStorage.getItem('glamx_gls_transport_vat')||'incl'; } catch { return 'incl'; } });
+  const [sdTransportVat, setSdTransportVat] = useState(() => { try { return localStorage.getItem('glamx_sd_transport_vat')||'incl'; } catch { return 'incl'; } });
+
   // Refs replaced with dynamic createElement for Android compatibility
   function _pickFile(accept, onFile) {
     const inp = document.createElement('input');
@@ -717,9 +725,14 @@ export default function ProfitPage() {
     if (email && token && cif) fetchSmartBillCosts();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
+  // Recitește comenzile din localStorage și reaplică trackingOverrides —
+  // aceleași chei (gx_orders_all*, gx_track_ov, gls_awb_map, sd_awb_map) pe
+  // care pagina de Comenzi le scrie live după fiecare refreshTracking(). Apelat
+  // la schimbarea perioadei, dar și periodic/la revenirea pe tab, ca profitul
+  // să reflecte mereu statusurile actualizate live din Comenzi, nu un
+  // instantaneu vechi citit o singură dată la montare.
+  const reloadOrdersFromStorage = useCallback(() => {
     if (!preset) return;
-    // Custom: nu aplica dacă nu sunt ambele date completate
     if (preset === 'custom' && (!customFrom || !customTo)) return;
     const g = (key) => localStorage.getItem(key);
     const sk = getShopKey();
@@ -734,6 +747,32 @@ export default function ProfitPage() {
       setShopifyDone(livrate.length > 0);
     } catch {}
   }, [preset, customFrom, customTo]);
+
+  useEffect(() => { reloadOrdersFromStorage(); }, [reloadOrdersFromStorage]);
+
+  // Reîmprospătare live: la revenirea pe tab (utilizatorul a navigat înapoi de
+  // pe Comenzi, unde refreshTracking() tocmai a corectat statusuri), la focus
+  // fereastră, cross-tab prin evenimentul storage, și un interval de siguranță
+  // — pentru cazul în care scrierea în localStorage din Comenzi se termină
+  // DUPĂ ce utilizatorul a navigat deja pe Profit (fetch-ul de tracking
+  // continuă în fundal chiar dacă pagina Comenzi s-a demontat).
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') reloadOrdersFromStorage(); };
+    const onStorageLive = (e) => {
+      const sk = getShopKey();
+      if ([ordersKey(sk), 'gx_track_ov', 'gls_awb_map', 'sd_awb_map'].includes(e.key)) reloadOrdersFromStorage();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', reloadOrdersFromStorage);
+    window.addEventListener('storage', onStorageLive);
+    const iv = setInterval(reloadOrdersFromStorage, 45000);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', reloadOrdersFromStorage);
+      window.removeEventListener('storage', onStorageLive);
+      clearInterval(iv);
+    };
+  }, [reloadOrdersFromStorage]);
 
   const fetchShopify = async () => {
     const sk = getShopKey();
@@ -1035,7 +1074,7 @@ export default function ProfitPage() {
     return s + splitVat(amt, c.vat||'incl')[1];
   }, 0);
   const otherVatDeductible = otherCosts.reduce((s, c) => s + splitVat(parseFloat(c.amount)||0, c.vat||'incl')[1], 0);
-  const transportVatDeductible = splitVat(effectiveTransportCost, 'incl')[1];
+  const transportVatDeductible = splitVat(glsEffective, glsTransportVat)[1] + splitVat(sdEffective, sdTransportVat)[1];
   const inputVAT = marketingVatDeductible + fixedVatDeductible + otherVatDeductible + transportVatDeductible;
   const totalTVA = outputVAT - inputVAT;
 
@@ -1119,6 +1158,8 @@ export default function ProfitPage() {
     localStorage.setItem('glamx_transport_per_parcel', String(transportPerParcel));
     localStorage.setItem('glamx_sd_transport_per_parcel', String(sdTransportPerParcel));
     localStorage.setItem('glamx_transport_china', String(transportChina));
+    localStorage.setItem('glamx_gls_transport_vat', glsTransportVat);
+    localStorage.setItem('glamx_sd_transport_vat', sdTransportVat);
     localStorage.setItem('glamx_meta_vat', metaVat);
     localStorage.setItem('glamx_tiktok_vat', tikTokVat);
     localStorage.setItem('glamx_google_vat', googleVat);
@@ -1298,6 +1339,10 @@ export default function ProfitPage() {
             </button>
           </div>
         )}
+
+        <button onClick={reloadOrdersFromStorage} style={{width:'100%',marginBottom:10,background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',color:'#10b981',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+          🔄 Reîncarcă comenzile (statusuri live din Comenzi)
+        </button>
 
         {/* NAV */}
         <div className="pf-navlinks">
@@ -1627,6 +1672,16 @@ export default function ProfitPage() {
                   <div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>📊 Calculat luna trecută: 2522.34 ÷ 118 = <strong>21.37 RON/colet</strong></div>
                 </>
               )}
+              {glsEffective>0 && (() => { const [net,vat] = splitVat(glsEffective, glsTransportVat); return (
+                <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid rgba(255,255,255,.06)'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,flexWrap:'wrap',gap:6}}>
+                    <span style={{fontSize:11,color:'var(--c-text3)'}}>Suma introdusă e</span>
+                    <VatModeToggle value={glsTransportVat} onChange={setGlsTransportVat} />
+                  </div>
+                  <div style={{fontSize:10,color:'var(--c-text4)'}}>net {fmt(net)} RON · TVA deductibilă <strong style={{color:'#06b6d4'}}>{fmt(vat)} RON</strong></div>
+                  <div style={{fontSize:9,color:'var(--c-text4)',marginTop:3}}>💡 Import Excel din decontul GLS = de obicei fără TVA (coloana „Total amount" e netă) · transcris manual de pe factură = de obicei cu TVA inclus.</div>
+                </div>
+              ); })()}
             </div>
             <div className="pf-stitle">Transport SameDay</div>
             <div className="pf-card" style={{borderColor:sdCount>0?'rgba(16,185,129,.25)':'rgba(255,255,255,.06)'}}>
@@ -1644,6 +1699,15 @@ export default function ProfitPage() {
               <label className="pf-label">Cost per colet SameDay (RON)</label>
               <input className="pf-input" type="number" step="0.5" value={sdTransportPerParcel} onChange={e=>setSdTransportPerParcel(parseFloat(e.target.value)||0)} />
               {sdCount>0&&<div style={{fontSize:10,color:'var(--c-text4)',marginTop:4}}>{sdCount} × {sdTransportPerParcel} RON = <strong>{fmt(sdEffective)} RON</strong></div>}
+              {sdEffective>0 && (() => { const [net,vat] = splitVat(sdEffective, sdTransportVat); return (
+                <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid rgba(255,255,255,.06)'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,flexWrap:'wrap',gap:6}}>
+                    <span style={{fontSize:11,color:'var(--c-text3)'}}>Suma introdusă e</span>
+                    <VatModeToggle value={sdTransportVat} onChange={setSdTransportVat} />
+                  </div>
+                  <div style={{fontSize:10,color:'var(--c-text4)'}}>net {fmt(net)} RON · TVA deductibilă <strong style={{color:'#06b6d4'}}>{fmt(vat)} RON</strong></div>
+                </div>
+              ); })()}
             </div>
             <div className="pf-stitle">Marketing</div>
             <div className="pf-card">
