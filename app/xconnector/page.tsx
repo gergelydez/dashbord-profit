@@ -197,16 +197,17 @@ function EditableField({ label, value, onSave, type = 'text', placeholder }: {
 }
 
 /* FIELD (wizard use) */
-function Field({ label, value, onChange, type = 'text', placeholder, disabled }: {
+function Field({ label, value, onChange, type = 'text', placeholder, disabled, borderColor, onFocus, onBlur }: {
   label: string; value: string | number; onChange: (v: string) => void;
-  type?: string; placeholder?: string; disabled?: boolean;
+  type?: string; placeholder?: string; disabled?: boolean; borderColor?: string;
+  onFocus?: () => void; onBlur?: () => void;
 }) {
   return (
     <div>
       <label style={S.inputLabel}>{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)}
-        placeholder={placeholder} disabled={disabled}
-        style={{ ...S.input, ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+        placeholder={placeholder} disabled={disabled} onFocus={onFocus} onBlur={onBlur}
+        style={{ ...S.input, ...(borderColor ? { borderColor } : {}), ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
       />
     </div>
   );
@@ -1012,6 +1013,72 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
   const setNum = (key: keyof AwbWizardData) => (val: string) => { const n = parseFloat(val); setData(p => ({ ...p, [key]: isNaN(n) ? 0 : n })); setErrors([]); };
   const next = () => { const e = validateStep(step, data); if (e.length) { setErrors(e); return; } setErrors([]); setStep(s => (s < 3 ? (s + 1) as WizardStep : s)); };
   const prev = () => { setErrors([]); setStep(s => (s > 1 ? (s - 1) as WizardStep : s)); };
+
+  /* ── VERIFICARE / SUGESTIE COD POȘTAL (pasul 1) ────────────────────────
+     Aceeași sursă locală (/api/postal-lookup) folosită deja la AWB manual din
+     pagina GLS — autocomplete oraș, autofill cod poștal când lipsește, listă
+     de străzi când localitatea are mai multe coduri, și avertisment când
+     codul introdus nu se potrivește cu județul/localitatea. */
+  const [cityOptions, setCityOptions] = useState<{ localitate: string; judet: string }[]>([]);
+  const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
+  const [streetOptions, setStreetOptions] = useState<{ strada: string; zip: string }[]>([]);
+  const [zipNote, setZipNote] = useState<{ text: string; tone: 'ok' | 'warn' | 'info'; suggested?: string } | null>(null);
+
+  useEffect(() => {
+    const q = data.recipientCity.trim();
+    if (q.length < 2) { setCityOptions([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(q)}`);
+        const json = await res.json();
+        setCityOptions(json.localities || []);
+      } catch { setCityOptions([]); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [data.recipientCity]);
+
+  useEffect(() => {
+    const city = data.recipientCity.trim();
+    const county = data.recipientCounty.trim();
+    if (city.length < 2 || county.length < 2) { setStreetOptions([]); setZipNote(null); return; }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(city)}&county=${encodeURIComponent(county)}`);
+        const json = await res.json();
+        if (!json.ok || !json.found) { setStreetOptions([]); setZipNote(null); return; }
+        const zips: string[] = json.zips || [];
+        if (zips.length > 1 && !zips.includes(data.recipientZip.trim())) {
+          setStreetOptions(json.streets || []);
+          setZipNote({ text: `📍 ${city} are mai multe coduri poștale — alege strada mai jos pentru codul corect.`, tone: 'info' });
+          return;
+        }
+        setStreetOptions([]);
+        const suggested = json.singleZip || zips[0] || '';
+        const current = data.recipientZip.trim();
+        if (!suggested) { setZipNote(null); return; }
+        if (!current) {
+          setData(p => (p.recipientZip ? p : { ...p, recipientZip: suggested }));
+          setZipNote({ text: `✓ Cod poștal completat automat pentru ${city}.`, tone: 'ok' });
+        } else if (current !== suggested && !zips.includes(current)) {
+          setZipNote({ text: `⚠️ Codul poștal ${current} nu corespunde cu ${city}, ${county} — sugerat: ${suggested}`, tone: 'warn', suggested });
+        } else {
+          setZipNote({ text: `✓ Cod poștal confirmat pentru ${city}, ${county}.`, tone: 'ok' });
+        }
+      } catch { setStreetOptions([]); setZipNote(null); }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [data.recipientCity, data.recipientCounty, data.recipientZip]);
+
+  const pickCity = (opt: { localitate: string; judet: string }) => {
+    setData(p => ({ ...p, recipientCity: opt.localitate, recipientCounty: opt.judet, recipientZip: '' }));
+    setCityOptions([]); setCityDropdownOpen(false);
+  };
+  const pickStreet = (opt: { strada: string; zip: string }) => {
+    setData(p => ({ ...p, recipientZip: opt.zip }));
+    setZipNote({ text: `✓ Cod poștal ${opt.zip} pentru strada ${opt.strada}.`, tone: 'ok' });
+    setStreetOptions([]);
+  };
+  const zipNoteColor = zipNote?.tone === 'warn' ? 'var(--c-red)' : zipNote?.tone === 'info' ? '#f59e0b' : '#10b981';
   const invNum = order.invoice
     ? `${order.invoice.series}${order.invoice.number}`
     : ((order.noteAttributes as Record<string,string>)?.['invoice-number'] || (order.noteAttributes as Record<string,string>)?.['Factură'] || '');
@@ -1070,10 +1137,47 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
                 <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
                   <Field label="Stradă + număr *" value={data.recipientAddress} onChange={set('recipientAddress')} placeholder="Str. Exemplu nr. 10" />
                   <div style={S.row2col}>
-                    <Field label="Oraș *" value={data.recipientCity} onChange={set('recipientCity')} placeholder="București" />
+                    <div style={{ position: 'relative' as const }}>
+                      <Field label="Oraș *" value={data.recipientCity} onChange={set('recipientCity')} placeholder="București"
+                        onFocus={() => setCityDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setCityDropdownOpen(false), 150)} />
+                      {cityDropdownOpen && cityOptions.length > 0 && (
+                        <div style={{ position: 'absolute' as const, top: '100%', left: 0, right: 0, zIndex: 20, marginTop: 2, background: 'var(--c-bg2)', border: '1px solid var(--c-border)', borderRadius: 10, maxHeight: 180, overflowY: 'auto' as const, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+                          {cityOptions.map((opt, i) => (
+                            <div key={i} onMouseDown={() => pickCity(opt)}
+                              style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', borderBottom: i < cityOptions.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
+                              {opt.localitate} <span style={{ color: 'var(--c-text4)' }}>· {opt.judet}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     <Field label="Județ" value={data.recipientCounty} onChange={set('recipientCounty')} placeholder="Ilfov" />
                   </div>
-                  <Field label="Cod poștal *" value={data.recipientZip} onChange={set('recipientZip')} placeholder="077160" />
+                  <Field label="Cod poștal *" value={data.recipientZip} onChange={set('recipientZip')} placeholder="077160"
+                    borderColor={zipNote?.tone === 'warn' ? 'var(--c-red)' : undefined} />
+                  {streetOptions.length > 0 && (
+                    <div style={{ background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: 10, maxHeight: 160, overflowY: 'auto' as const }}>
+                      {streetOptions.map((opt, i) => (
+                        <div key={i} onClick={() => pickStreet(opt)}
+                          style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', borderBottom: i < streetOptions.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
+                          <span>{opt.strada}</span>
+                          <span style={{ color: 'var(--c-orange)', fontFamily: 'monospace' }}>{opt.zip}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {zipNote && (
+                    <div style={{ fontSize: 11, color: zipNoteColor, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const }}>
+                      <span>{zipNote.text}</span>
+                      {zipNote.tone === 'warn' && zipNote.suggested && (
+                        <button type="button" onClick={() => { setData(p => ({ ...p, recipientZip: zipNote.suggested! })); }}
+                          style={{ background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.3)', color: 'var(--c-orange)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                          Aplică {zipNote.suggested}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </>
