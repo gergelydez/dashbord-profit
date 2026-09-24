@@ -966,8 +966,8 @@ function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWiza
     : ((order.noteAttributes as Record<string,string>)?.['invoice-number'] || (order.noteAttributes as Record<string,string>)?.['Factură'] || '');
   const firstProduct = order.lineItems[0]?.name || 'Colet';
   const productName = invoiceNum
-    ? `${order.name}- ${invoiceNum}- ${firstProduct}`.slice(0, 40)
-    : `${order.name}- ${firstProduct}`.slice(0, 40);
+    ? `${order.name}- ${invoiceNum}- ${firstProduct}`
+    : `${order.name}- ${firstProduct}`;
   return {
     recipientName:    (order.customer.name  || '').trim() || 'Client',
     recipientPhone:   (order.customer.phone || '').replace(/\D/g, '').slice(-10) || '',
@@ -1084,11 +1084,15 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
     : ((order.noteAttributes as Record<string,string>)?.['invoice-number'] || (order.noteAttributes as Record<string,string>)?.['Factură'] || '');
   const firstProd = order.lineItems[0]?.name || 'Colet';
   const templates = [
-    { label: '🏷 Cmd+Fact+Produs', val: invNum ? `${order.name}- ${invNum}- ${firstProd}`.slice(0,40) : `${order.name}- ${firstProd}`.slice(0,40) },
-    { label: '📦 Toate produsele', val: order.lineItems.map((li: any) => li.quantity > 1 ? `${li.quantity}x ${li.name}` : li.name).join(', ').slice(0,40) },
-    { label: '🔢 Cu cantități', val: order.lineItems.map((li: any) => `${li.quantity}buc ${li.name}`).join('+').slice(0,40) },
+    { label: '🏷 Cmd+Fact+Produs', val: invNum ? `${order.name}- ${invNum}- ${firstProd}` : `${order.name}- ${firstProd}` },
+    { label: '📦 Toate produsele', val: order.lineItems.map((li: any) => li.quantity > 1 ? `${li.quantity}x ${li.name}` : li.name).join(', ') },
+    { label: '🔢 Cu cantități', val: order.lineItems.map((li: any) => `${li.quantity}buc ${li.name}`).join('+') },
     { label: '📫 Generic', val: 'Colet' },
   ];
+  // Cu cât textul de pe etichetă e mai lung, cu atât fontul se micșorează ca
+  // să încapă în spațiul fix al etichetei — fără o limită fixă de caractere.
+  const labelFontSize = (len: number, base: number, min: number, startAt = 20) =>
+    len <= startAt ? base : Math.max(min, base - (len - startAt) * 0.18);
 
   const stepActive:  React.CSSProperties = { ...S.stepDot, background: 'var(--c-orange)', color: '#fff' };
   const stepDone:    React.CSSProperties = { ...S.stepDot, background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.4)' };
@@ -1211,8 +1215,8 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
                             onClick={() => {
                               const current = data.productName;
                               const newText = current && current !== 'Colet'
-                                ? `${current}, ${addition}`.slice(0, 40)
-                                : addition.slice(0, 40);
+                                ? `${current}, ${addition}`
+                                : addition;
                               setData(p => ({ ...p, productName: newText }));
                               setErrors([]);
                             }}
@@ -1237,19 +1241,19 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
                   <div>
                     <label style={S.inputLabel}>
                       Text pe etichetă *
-                      <span style={{ marginLeft: 6, color: data.productName.length > 35 ? '#f43f5e' : data.productName.length > 25 ? '#f59e0b' : '#10b981', fontWeight: 700 }}>
-                        {data.productName.length}/40
+                      <span style={{ marginLeft: 6, color: data.productName.length > 100 ? '#f43f5e' : data.productName.length > 60 ? '#f59e0b' : '#10b981', fontWeight: 700 }}>
+                        {data.productName.length} caractere
                       </span>
                     </label>
-                    <input type="text" value={data.productName} maxLength={40}
+                    <input type="text" value={data.productName}
                       onChange={e => { setData(p => ({ ...p, productName: e.target.value })); setErrors([]); }}
                       placeholder="ex: #3333- GLA123- Produs"
-                      style={{ ...S.input, borderColor: data.productName.length > 35 ? 'rgba(244,63,94,0.5)' : data.productName.length > 25 ? 'rgba(245,158,11,0.5)' : 'var(--c-border)', fontSize: data.productName.length > 30 ? 11 : 13 }}
+                      style={{ ...S.input, fontSize: labelFontSize(data.productName.length, 13, 10) }}
                     />
                   </div>
                   <div style={{ background: '#fff', borderRadius: 8, padding: '10px 14px', border: '2px solid #e5e7eb' }}>
                     <div style={{ fontSize: 9, color: '#888', marginBottom: 4, fontFamily: 'monospace' }}>PREVIEW ETICHETĂ:</div>
-                    <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#000', fontSize: data.productName.length > 30 ? 10 : data.productName.length > 20 ? 12 : 14, wordBreak: 'break-all' as const, lineHeight: 1.4 }}>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#000', fontSize: labelFontSize(data.productName.length, 14, 6), wordBreak: 'break-all' as const, lineHeight: 1.4 }}>
                       {data.productName || <span style={{ color: '#ccc' }}>Text etichetă…</span>}
                     </div>
                     <div style={{ fontSize: 9, color: '#999', marginTop: 4, fontFamily: 'monospace' }}>{data.recipientName} · {data.recipientCity}</div>
@@ -1825,7 +1829,7 @@ export default function XConnectorPage() {
           zip: (wizData.recipientZip || '').replace(/\s/g, ''),
           weight: parseFloat(String(wizData.weight)) || 1,
           parcels: parseInt(String(wizData.parcels)) || 1,
-          content: (wizData.productName || order.name || 'Colet').slice(0, 100),
+          content: wizData.productName || order.name || 'Colet',
           codAmount: wizData.isCOD ? wizData.codAmount : 0,
           codCurrency: 'RON', orderName: order.name, orderId,
           selectedServices: {
@@ -1846,17 +1850,21 @@ export default function XConnectorPage() {
             const sd = await sr.json();
             if (sd.ok && sd.labelUrl) awbData.labelUrl = sd.labelUrl;
           } catch {}
+          let fulfillOk = false, fulfillErr = '';
           if ((wizData as any).fulfillShopify && data.awb) {
             try {
-              await fetch('/api/connector/fulfill-order', {
+              const fr = await fetch('/api/connector/fulfill-order', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ shopifyOrderId: orderId, shop: activeShop, trackingNumber: data.awb, trackingUrl: data.trackUrl, courier: 'GLS', notifyCustomer: wizData.notifyCustomer }),
               });
-            } catch {}
+              const fd = await fr.json();
+              if (fr.ok && fd.ok) fulfillOk = true; else fulfillErr = fd.error || `HTTP ${fr.status}`;
+            } catch (e) { fulfillErr = (e as Error).message; }
           }
           setAwbResults(p => ({ ...p, [orderId]: awbData }));
           setAS(orderId, { shipmentLoading: false }); setWizardOrder(null); setWizardLoading(false);
-          addToast('ok', `✅ AWB GLS ${data.awb} generat${(wizData as any).fulfillShopify ? ' + Fulfilled!' : '!'}`);
+          addToast('ok', `✅ AWB GLS ${data.awb} generat${fulfillOk ? ' + Fulfilled!' : ''}`);
+          if ((wizData as any).fulfillShopify && !fulfillOk) addToast('err', `⚠️ AWB generat, dar fulfillment Shopify a eșuat: ${fulfillErr}`);
           qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
           if (data.labelBase64) {
             try {
@@ -1873,15 +1881,28 @@ export default function XConnectorPage() {
           email: wizData.recipientEmail || '', address: wizData.recipientAddress, city: wizData.recipientCity,
           county: wizData.recipientCounty, zip: (wizData.recipientZip || '').replace(/\s/g, ''),
           weight: parseFloat(String(wizData.weight)) || 1, parcels: parseInt(String(wizData.parcels)) || 1,
-          content: (wizData.productName || order.name || 'Colet').slice(0, 100),
+          content: wizData.productName || order.name || 'Colet',
           isCOD: wizData.isCOD, total: wizData.codAmount, orderName: order.name, orderId, observations: wizData.observations || '',
         };
         const res = await fetch('/api/sameday-awb', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json();
         if (data.ok) {
+          const trackUrl = data.trackUrl || `https://sameday.ro/tracking-colet/${data.awb}`;
+          let fulfillOk = false, fulfillErr = '';
+          if ((wizData as any).fulfillShopify && data.awb) {
+            try {
+              const fr = await fetch('/api/connector/fulfill-order', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shopifyOrderId: orderId, shop: activeShop, trackingNumber: data.awb, trackingUrl: trackUrl, courier: 'Sameday', notifyCustomer: wizData.notifyCustomer }),
+              });
+              const fd = await fr.json();
+              if (fr.ok && fd.ok) fulfillOk = true; else fulfillErr = fd.error || `HTTP ${fr.status}`;
+            } catch (e) { fulfillErr = (e as Error).message; }
+          }
           setAwbResults(p => ({ ...p, [orderId]: { awb: data.awb, courier: 'sameday' } }));
           setAS(orderId, { shipmentLoading: false }); setWizardOrder(null); setWizardLoading(false);
-          addToast('ok', `AWB Sameday ${data.awb} generat!`);
+          addToast('ok', `AWB Sameday ${data.awb} generat${fulfillOk ? ' + Fulfilled!' : ''}!`);
+          if ((wizData as any).fulfillShopify && !fulfillOk) addToast('err', `⚠️ AWB generat, dar fulfillment Shopify a eșuat: ${fulfillErr}`);
           qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
         } else { throw new Error(data.error || 'Eroare Sameday'); }
       }
