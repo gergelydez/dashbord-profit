@@ -203,11 +203,14 @@ function mapSamedayStatus(statusId) {
 // Coduri Sameday care înseamnă tentativă eșuată/refuz/retur (vezi
 // mapSamedayStatus mai sus — Sameday nu are documentație publică, lista e
 // cea confirmată din statusurile deja mapate 'failed_attempt'/'returned').
-// Scanăm tot istoricul după aceste coduri DOAR când ultimul status NU e deja
-// un "livrat" clar (5/9/30) — la fel ca la GLS: o tentativă eșuată inițială
-// (destinatar absent, adresă greșită) urmată de o reîncercare reușită NU
-// trebuie să blocheze coletul la retur doar fiindcă a existat un refuz mai
-// vechi în istoric — un colet confirmat livrat la final rămâne livrat.
+// IMPORTANT: verificăm DOAR ultimul status (nu tot istoricul) — spre
+// deosebire de GLS, Sameday nu reutilizează niciun cod ambiguu pentru
+// "livrat"/"retur", deci nu există motiv să scanăm istoricul întreg. Un
+// refuz vechi urmat de mutarea coletului mai departe (ex. la depozit local
+// pentru reîncercare, sau încărcat în easybox) NU mai e un refuz activ —
+// dacă am scana tot istoricul, orice colet cu un singur refuz temporar undeva
+// în trecut ar rămâne blocat la "retur" pentru tot restul traseului, chiar
+// dacă a ajuns între timp în tranzit normal spre livrare.
 const SD_RETURN_CODES = [6, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
 
 // Parsează răspuns XML sau JSON de la Sameday
@@ -281,7 +284,6 @@ async function trackSameday(awb) {
       console.log('[SAMEDAY] Public response for', awb, ':', text.slice(0, 200));
       const parsed = parseSamedayResponse(text);
       if (parsed && parsed.statusId) {
-        const ids = parsed.allStatusIds?.length ? parsed.allStatusIds : [parsed.statusId];
         const lastMapped = mapSamedayStatus(parsed.statusId);
         const result = {
           status: lastMapped,
@@ -289,7 +291,7 @@ async function trackSameday(awb) {
           statusDescription: parsed.statusLabel || '',
           lastUpdate: parsed.statusDate || '',
           location: parsed.county || '',
-          hasReturnCode: lastMapped === 'delivered' ? false : ids.some(id => SD_RETURN_CODES.includes(parseInt(id))),
+          hasReturnCode: SD_RETURN_CODES.includes(parseInt(parsed.statusId)),
         };
         trackingCache.set(cacheKey, { data: result, ts: Date.now() });
         return result;
@@ -313,7 +315,6 @@ async function trackSameday(awb) {
     const parsed2 = parseSamedayResponse(text2);
     if (!parsed2 || !parsed2.statusId) return null;
 
-    const ids2 = parsed2.allStatusIds?.length ? parsed2.allStatusIds : [parsed2.statusId];
     const lastMapped2 = mapSamedayStatus(parsed2.statusId);
     const result2 = {
       status: lastMapped2,
@@ -321,7 +322,7 @@ async function trackSameday(awb) {
       statusDescription: parsed2.statusLabel || '',
       lastUpdate: parsed2.statusDate || '',
       location: parsed2.county || '',
-      hasReturnCode: lastMapped2 === 'delivered' ? false : ids2.some(id => SD_RETURN_CODES.includes(parseInt(id))),
+      hasReturnCode: SD_RETURN_CODES.includes(parseInt(parsed2.statusId)),
     };
 
     trackingCache.set(cacheKey, { data: result2, ts: Date.now() });
