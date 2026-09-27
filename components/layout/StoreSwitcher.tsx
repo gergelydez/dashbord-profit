@@ -14,6 +14,7 @@ const FLAG: Record<string, string> = {
   RO: '🇷🇴',
   HU: '🇭🇺',
   GLATO: '🛍️',
+  GLATOHU: '🎀',
 };
 
 function flag(f: string) {
