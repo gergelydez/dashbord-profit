@@ -44,7 +44,10 @@ const S: Record<string, React.CSSProperties> = {
   row2col:     { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
   fieldLabel:  { fontSize: 11, color: 'var(--c-text3)', marginBottom: 3 },
   fieldValue:  { fontSize: 13, color: 'var(--c-text)' },
-  toastWrap:   { position: 'fixed' as const, bottom: 90, right: 16, zIndex: 200, display: 'flex', flexDirection: 'column' as const, gap: 8, maxWidth: 340 },
+  // zIndex peste orice modal/drawer din pagină (cel mai mare folosit e 10000,
+  // la InvoiceModal) — altfel un toast declanșat cât timp un modal e deschis
+  // (ex. eroare la generare AWB) se randează sub el, complet invizibil.
+  toastWrap:   { position: 'fixed' as const, bottom: 90, right: 16, zIndex: 20000, display: 'flex', flexDirection: 'column' as const, gap: 8, maxWidth: 340 },
   toastOk:     { background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.35)', color: '#10b981', borderRadius: 12, padding: '11px 15px', fontSize: 13, fontWeight: 500 },
   toastErr:    { background: 'rgba(244,63,94,0.15)', border: '1px solid rgba(244,63,94,0.35)', color: 'var(--c-red)', borderRadius: 12, padding: '11px 15px', fontSize: 13, fontWeight: 500 },
   toastInfo:   { background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', color: 'var(--c-blue)', borderRadius: 12, padding: '11px 15px', fontSize: 13, fontWeight: 500 },
@@ -1009,9 +1012,10 @@ function validateStep(step: WizardStep, data: AwbWizardData): string[] {
   return errs;
 }
 
-function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
+function AwbWizard({ order, initialCourier, onClose, onConfirm, loading, serverError }: {
   order: EnrichedOrder; initialCourier: CourierName;
   onClose: () => void; onConfirm: (data: AwbWizardData) => void; loading: boolean;
+  serverError?: string | null;
 }) {
   const [step, setStep]     = useState<WizardStep>(1);
   const [data, setData]     = useState<AwbWizardData>(() => buildDefaultWizard(order, initialCourier));
@@ -1145,9 +1149,10 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
             </div>
           ))}
         </div>
-        {errors.length > 0 && (
+        {(errors.length > 0 || (!loading && serverError)) && (
           <div style={{ margin: '12px 20px 0', background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: 10, padding: '10px 14px' }}>
             {errors.map((e, i) => <div key={i} style={{ fontSize: 12, color: 'var(--c-red)' }}>• {e}</div>)}
+            {!loading && serverError && <div style={{ fontSize: 12, color: 'var(--c-red)' }}>• {serverError}</div>}
           </div>
         )}
         <div style={S.drawerBody}>
@@ -2239,6 +2244,7 @@ export default function XConnectorPage() {
         <AwbWizard order={wizardOrder} initialCourier="gls"
           onClose={() => { setWizardOrder(null); setWizardLoading(false); }}
           onConfirm={handleWizardConfirm} loading={wizardLoading}
+          serverError={getState(wizardOrder.id).error}
         />
       )}
 
