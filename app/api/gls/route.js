@@ -41,6 +41,22 @@ export async function GET() {
 
 function cleanZip(z) { return (z || '').replace(/\D/g, ''); }
 
+// Țara destinatarului vine din order.address.country (Shopify) — poate fi
+// numele complet ("România"/"Hungary"/"Ungaria") sau deja un cod ISO2. GLS
+// livrează în rețeaua lor și RO și HU, deci nu mai presupunem mereu RO.
+function resolveCountryIso(country) {
+  const c = (country || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, ''); // scoate diacriticele
+  if (!c) return 'RO';
+  if (c.length === 2) return c.toUpperCase();
+  if (c.includes('ungar') || c.includes('hungar') || c.includes('magyar')) return 'HU';
+  if (c.includes('roman')) return 'RO';
+  return 'RO'; // fallback — restul rețelei GLS nu e suportată încă în UI
+}
+
+// Coduri poștale valide pe țară — RO are 6 cifre, HU are 4.
+const ZIP_LENGTH_BY_COUNTRY = { RO: 6, HU: 4 };
+
 function parseStreet(address) {
   const addr = (address || '').trim();
   const patterns = [
@@ -253,7 +269,7 @@ export async function POST(req) {
 
     // ── Create AWB (PrintLabels) ─────────────────────────────────────────────
     const {
-      recipientName, phone, email, address, city, county, zip,
+      recipientName, phone, email, address, city, county, zip, country,
       weight, parcels, content, codAmount, codCurrency,
       orderName, orderId, selectedServices, observations, manualAwb,
     } = body;
@@ -264,14 +280,16 @@ export async function POST(req) {
     const safeAddress   = (address||'').trim() || 'Adresa';
     const safeCity      = (city||'').trim() || 'Oras';
     const safeCounty    = (county||'').trim() || '';
+    const deliveryCountryIso = resolveCountryIso(country);
 
     if (manualAwb) {
       return NextResponse.json({ ok: true, awb: manualAwb, mode: 'manual' }, { headers: CORS });
     }
 
     const zipCleaned = cleanZip(zip);
-    if (!zipCleaned || zipCleaned.length !== 6) {
-      return NextResponse.json({ ok: false, error: `Cod postal invalid: "${zip}". Trebuie 6 cifre.`, requiresCorrection: true }, { status: 422, headers: CORS });
+    const expectedZipLen = ZIP_LENGTH_BY_COUNTRY[deliveryCountryIso] || 6;
+    if (!zipCleaned || zipCleaned.length !== expectedZipLen) {
+      return NextResponse.json({ ok: false, error: `Cod postal invalid: "${zip}". Trebuie ${expectedZipLen} cifre pentru ${deliveryCountryIso}.`, requiresCorrection: true }, { status: 422, headers: CORS });
     }
     if (!safeCity || safeCity.trim().length < 2) {
       return NextResponse.json({ ok: false, error: 'Orasul destinatarului lipseste.', requiresCorrection: true }, { status: 422, headers: CORS });
@@ -371,7 +389,7 @@ export async function POST(req) {
         CountyName:     safeCounty.slice(0, 40),
         City:           safeCity.slice(0, 40),
         ZipCode:        zipCleaned,
-        CountryIsoCode: 'RO',
+        CountryIsoCode: deliveryCountryIso,
         ContactName:    safeRecipient.slice(0, 40),
         ContactPhone:   safePhone,
         ContactEmail:   (email || '').slice(0, 100),

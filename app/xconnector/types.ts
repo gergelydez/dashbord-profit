@@ -79,6 +79,7 @@ export interface AwbWizardData {
   recipientCity:    string;
   recipientCounty:  string;
   recipientZip:     string;
+  recipientCountry: string;
   /** Step 2 — Parcel */
   productName:      string;   // printed on AWB content field
   weight:           number;   // kg

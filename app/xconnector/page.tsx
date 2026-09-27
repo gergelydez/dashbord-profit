@@ -983,6 +983,7 @@ function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWiza
     recipientCity:    (order.address.city     || '').trim(),
     recipientCounty:  (order.address.province || '').trim(),
     recipientZip:     (order.address.zip      || '').replace(/\s/g, ''),
+    recipientCountry: (order.address.country  || 'România').trim(),
     productName, weight: 1, parcels: 1, isCOD, codAmount: isCOD ? order.totalPrice : 0,
     courier, notifyCustomer: false, observations: '',
     glsFDS: false, glsSM1: false, glsSM2: false, glsAOS: false, glsSAT: false, glsT12: false,
@@ -1031,9 +1032,15 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
   const [streetOptions, setStreetOptions] = useState<{ strada: string; zip: string }[]>([]);
   const [zipNote, setZipNote] = useState<{ text: string; tone: 'ok' | 'warn' | 'info'; suggested?: string } | null>(null);
 
+  // Autocomplete-ul de localități/coduri poștale de mai jos e Romania-only
+  // (/api/postal-lookup nu are date pentru alte țări) — dezactivat dacă
+  // destinatarul e din altă țară (ex. Ungaria), ca să nu sugerăm localități
+  // românești greșite pe o adresă maghiară.
+  const isRoRecipient = /^(ro|rom[aâ]nia)?$/i.test(data.recipientCountry.trim().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+
   useEffect(() => {
     const q = data.recipientCity.trim();
-    if (q.length < 2) { setCityOptions([]); return; }
+    if (!isRoRecipient || q.length < 2) { setCityOptions([]); return; }
     const t = setTimeout(async () => {
       try {
         const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(q)}`);
@@ -1042,12 +1049,12 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
       } catch { setCityOptions([]); }
     }, 300);
     return () => clearTimeout(t);
-  }, [data.recipientCity]);
+  }, [data.recipientCity, isRoRecipient]);
 
   useEffect(() => {
     const city = data.recipientCity.trim();
     const county = data.recipientCounty.trim();
-    if (city.length < 2 || county.length < 2) { setStreetOptions([]); setZipNote(null); return; }
+    if (!isRoRecipient || city.length < 2 || county.length < 2) { setStreetOptions([]); setZipNote(null); return; }
     const t = setTimeout(async () => {
       try {
         const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(city)}&county=${encodeURIComponent(county)}`);
@@ -1074,7 +1081,7 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
       } catch { setStreetOptions([]); setZipNote(null); }
     }, 400);
     return () => clearTimeout(t);
-  }, [data.recipientCity, data.recipientCounty, data.recipientZip]);
+  }, [data.recipientCity, data.recipientCounty, data.recipientZip, isRoRecipient]);
 
   const pickCity = (opt: { localitate: string; judet: string }) => {
     setData(p => ({ ...p, recipientCity: opt.localitate, recipientCounty: opt.judet, recipientZip: '' }));
@@ -1146,10 +1153,11 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
               <div style={S.section}>
                 <div style={S.sectionHead}>📍 Adresă livrare</div>
                 <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
+                  <Field label="Țară" value={data.recipientCountry} onChange={set('recipientCountry')} placeholder="România" />
                   <Field label="Stradă + număr *" value={data.recipientAddress} onChange={set('recipientAddress')} placeholder="Str. Exemplu nr. 10" />
                   <div style={S.row2col}>
                     <div style={{ position: 'relative' as const }}>
-                      <Field label="Oraș *" value={data.recipientCity} onChange={set('recipientCity')} placeholder="București"
+                      <Field label="Oraș *" value={data.recipientCity} onChange={set('recipientCity')} placeholder={isRoRecipient ? 'București' : 'Debrecen'}
                         onFocus={() => setCityDropdownOpen(true)}
                         onBlur={() => setTimeout(() => setCityDropdownOpen(false), 150)} />
                       {cityDropdownOpen && cityOptions.length > 0 && (
@@ -1163,9 +1171,9 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
                         </div>
                       )}
                     </div>
-                    <Field label="Județ" value={data.recipientCounty} onChange={set('recipientCounty')} placeholder="Ilfov" />
+                    <Field label={isRoRecipient ? 'Județ' : 'Județ / Megye'} value={data.recipientCounty} onChange={set('recipientCounty')} placeholder={isRoRecipient ? 'Ilfov' : 'Pest megye'} />
                   </div>
-                  <Field label="Cod poștal *" value={data.recipientZip} onChange={set('recipientZip')} placeholder="077160"
+                  <Field label="Cod poștal *" value={data.recipientZip} onChange={set('recipientZip')} placeholder={isRoRecipient ? '077160' : '4031'}
                     borderColor={zipNote?.tone === 'warn' ? 'var(--c-red)' : undefined} />
                   {streetOptions.length > 0 && (
                     <div style={{ background: 'var(--c-bg)', border: '1px solid var(--c-border)', borderRadius: 10, maxHeight: 160, overflowY: 'auto' as const }}>
@@ -1834,6 +1842,7 @@ export default function XConnectorPage() {
           city: (wizData.recipientCity || '').trim(),
           county: (wizData.recipientCounty || '').trim(),
           zip: (wizData.recipientZip || '').replace(/\s/g, ''),
+          country: (wizData.recipientCountry || '').trim(),
           weight: parseFloat(String(wizData.weight)) || 1,
           parcels: parseInt(String(wizData.parcels)) || 1,
           content: wizData.productName || order.name || 'Colet',
