@@ -1448,6 +1448,40 @@ function OrderDrawer({ order, onClose, onOpenInvoiceModal, onShipmentWizard, act
   const [fixingZip, setFixingZip]   = useState(false);
   const [fixMsg, setFixMsg]         = useState<string | null>(null);
   const [tab, setTab]               = useState<'overview' | 'products' | 'delivery'>('overview');
+  const [fulfilling, setFulfilling] = useState(false);
+
+  // Marchează Fulfilled folosind AWB-ul deja existent — pentru cazul în care
+  // AWB-ul s-a generat cu succes dar fulfillment-ul către Shopify a eșuat
+  // (ex. eroare tranzitorie), fără să mai genereze un AWB nou (deci fără să
+  // trimită alt colet fizic către client).
+  const retryFulfillment = async () => {
+    const tracking = awbResult?.awb || order.shipment?.tracking;
+    const trackingUrl = awbResult?.trackUrl || awbResult?.myglsUrl || order.shipment?.trackingUrl || undefined;
+    const courier = (awbResult?.courier || order.shipment?.courier || 'GLS').toUpperCase();
+    if (!tracking) { onToast('err', 'Nu există niciun AWB pentru comanda asta.'); return; }
+    setFulfilling(true);
+    try {
+      const res = await fetch('/api/connector/fulfill-order', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopifyOrderId: order.id, shop, trackingNumber: tracking, trackingUrl, courier }),
+      });
+      const json = await res.json();
+      if (res.ok && json.ok) {
+        onToast('ok', '✅ Fulfillment reușit!');
+        onRefresh();
+      } else {
+        const msg = json.error || `HTTP ${res.status}`;
+        alert(msg);
+        onToast('err', `Fulfillment eșuat: ${msg}`);
+      }
+    } catch (e) {
+      const msg = (e as Error).message;
+      alert(msg);
+      onToast('err', `Fulfillment eșuat: ${msg}`);
+    } finally {
+      setFulfilling(false);
+    }
+  };
 
   const parseStreet = (addr1: string) => {
     const m = addr1.match(/^(.*?)[\s,]+(\d+\w*)$/);
@@ -1619,6 +1653,12 @@ function OrderDrawer({ order, onClose, onOpenInvoiceModal, onShipmentWizard, act
                       <a href={awbResult?.myglsUrl || order.shipment?.trackingUrl || undefined} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: 'none' }}>🔍 Tracking</a>
                     )}
                   </div>
+                  {order.fulfillmentStatus !== 'fulfilled' && (
+                    <button style={fulfilling ? { ...S.btnPrimary, opacity: 0.6, background: '#10b981' } : { ...S.btnPrimary, background: '#10b981' }}
+                      onClick={retryFulfillment} disabled={fulfilling}>
+                      {fulfilling ? <><Spin /> Se marchează...</> : '✅ Marchează Fulfilled (fără AWB nou)'}
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
