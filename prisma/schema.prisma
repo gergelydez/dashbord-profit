@@ -261,6 +261,26 @@ model RoPostalCode {
   @@index([judetNorm, localitateNorm, stradaNorm])
 }
 
+// Local Hungarian postal code dataset (megye/telepules/resz -> zip), same
+// role as RoPostalCode above but for glato.hu orders. Source: Ferenci Tamás,
+// IrszHnk (https://github.com/ferenci-tamas/IrszHnk), itself compiled from
+// Magyar Posta + KSH (Központi Statisztikai Hivatal) official data. Seeded
+// once from prisma/data/hu-postal-codes.csv. Read-only at runtime.
+model HuPostalCode {
+  id         Int     @id @default(autoincrement())
+  megye      String  // original casing/diacritics, for display ("Budapest" for the capital, not a real megye)
+  telepules  String
+  resz       String? // Településrész — null/empty for settlements with a single postal code
+  zip        String
+
+  megyeNorm     String
+  telepulesNorm String
+  reszNorm      String?
+
+  @@index([zip])
+  @@index([megyeNorm, telepulesNorm])
+}
+
 // BullMQ job audit log — one row per job lifecycle
 model JobLog {
   id      String    @id @default(uuid())

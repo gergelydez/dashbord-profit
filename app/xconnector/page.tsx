@@ -1031,33 +1031,46 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
   const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
   const [streetOptions, setStreetOptions] = useState<{ strada: string; zip: string }[]>([]);
   const [zipNote, setZipNote] = useState<{ text: string; tone: 'ok' | 'warn' | 'info'; suggested?: string } | null>(null);
+  const [huSeedMsg, setHuSeedMsg] = useState<string | null>(null);
+  const [huSeeding, setHuSeeding] = useState(false);
+  const seedHuPostalCodes = async () => {
+    setHuSeeding(true); setHuSeedMsg(null);
+    try {
+      const res = await fetch('/api/postal-lookup/seed-hu', { method: 'POST' });
+      const json = await res.json();
+      setHuSeedMsg(json.message || (json.ok ? 'Gata.' : json.error || 'Eroare'));
+    } catch (e) { setHuSeedMsg((e as Error).message); }
+    finally { setHuSeeding(false); }
+  };
 
-  // Autocomplete-ul de localități/coduri poștale de mai jos e Romania-only
-  // (/api/postal-lookup nu are date pentru alte țări) — dezactivat dacă
-  // destinatarul e din altă țară (ex. Ungaria), ca să nu sugerăm localități
-  // românești greșite pe o adresă maghiară.
-  const isRoRecipient = /^(ro|rom[aâ]nia)?$/i.test(data.recipientCountry.trim().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+  // Autocomplete-ul de localități/coduri poștale de mai jos acoperă România
+  // și Ungaria (/api/postal-lookup alege setul de date după `country`) —
+  // dezactivat pentru orice altă țară, ca să nu sugerăm localități greșite.
+  const countryNorm = data.recipientCountry.trim().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const isRoRecipient = countryNorm === '' || countryNorm === 'ro' || countryNorm.includes('roman');
+  const isHuRecipient = countryNorm === 'hu' || countryNorm.includes('ungar') || countryNorm.includes('hungar') || countryNorm.includes('magyar');
+  const isSupportedCountry = isRoRecipient || isHuRecipient;
 
   useEffect(() => {
     const q = data.recipientCity.trim();
-    if (!isRoRecipient || q.length < 2) { setCityOptions([]); return; }
+    if (!isSupportedCountry || q.length < 2) { setCityOptions([]); return; }
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(q)}&country=${encodeURIComponent(data.recipientCountry)}`);
         const json = await res.json();
         setCityOptions(json.localities || []);
       } catch { setCityOptions([]); }
     }, 300);
     return () => clearTimeout(t);
-  }, [data.recipientCity, isRoRecipient]);
+  }, [data.recipientCity, isSupportedCountry, data.recipientCountry]);
 
   useEffect(() => {
     const city = data.recipientCity.trim();
     const county = data.recipientCounty.trim();
-    if (!isRoRecipient || city.length < 2 || county.length < 2) { setStreetOptions([]); setZipNote(null); return; }
+    if (!isSupportedCountry || city.length < 2 || county.length < 2) { setStreetOptions([]); setZipNote(null); return; }
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(city)}&county=${encodeURIComponent(county)}`);
+        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(city)}&county=${encodeURIComponent(county)}&country=${encodeURIComponent(data.recipientCountry)}`);
         const json = await res.json();
         if (!json.ok || !json.found) { setStreetOptions([]); setZipNote(null); return; }
         const zips: string[] = json.zips || [];
@@ -1081,7 +1094,7 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
       } catch { setStreetOptions([]); setZipNote(null); }
     }, 400);
     return () => clearTimeout(t);
-  }, [data.recipientCity, data.recipientCounty, data.recipientZip, isRoRecipient]);
+  }, [data.recipientCity, data.recipientCounty, data.recipientZip, isSupportedCountry, data.recipientCountry]);
 
   const pickCity = (opt: { localitate: string; judet: string }) => {
     setData(p => ({ ...p, recipientCity: opt.localitate, recipientCounty: opt.judet, recipientZip: '' }));
@@ -1195,6 +1208,15 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
                           Aplică {zipNote.suggested}
                         </button>
                       )}
+                    </div>
+                  )}
+                  {isHuRecipient && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const }}>
+                      <button type="button" onClick={seedHuPostalCodes} disabled={huSeeding}
+                        style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', color: '#3b82f6', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                        {huSeeding ? '⟳ Se populează…' : '🌍 Populează coduri poștale Ungaria'}
+                      </button>
+                      {huSeedMsg && <span style={{ fontSize: 11, color: 'var(--c-text3)' }}>{huSeedMsg}</span>}
                     </div>
                   )}
                 </div>
