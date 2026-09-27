@@ -1880,7 +1880,7 @@ export default function XConnectorPage() {
           content: wizData.productName || order.name || 'Colet',
           observations: wizData.observations || '',
           codAmount: wizData.isCOD ? wizData.codAmount : 0,
-          codCurrency: 'RON', orderName: order.name, orderId,
+          codCurrency: order.currency || 'RON', orderName: order.name, orderId,
           selectedServices: {
             ...((wizData as any).glsFDS ? { FDS: wizData.recipientEmail || true } : {}),
             ...((wizData as any).glsSM1 ? { SM1: true } : {}),
