@@ -1996,7 +1996,7 @@ export default function XConnectorPage() {
       <div style={S.topbar}>
         <div style={S.topbarRow1}>
           <h1 style={S.h1}>
-            <span style={{ background: 'linear-gradient(135deg,#f97316,#fb923c)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>⚡ xConnector</span>
+            <span style={{ background: 'linear-gradient(135deg,#f97316,#fb923c)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>⚡ Procesare</span>
           </h1>
           {currentShopInfo && (
             <div style={S.shopBadge}><span>{FLAG[currentShopInfo.flag?.toUpperCase()] ?? '🌐'}</span><span>{currentShopInfo.label}</span></div>

@@ -11,7 +11,7 @@ import { SidebarStoreSwitcher } from './StoreSwitcher';
 
 const NAV: { href: string; icon: string; label: string; badge?: string }[] = [
   { href: '/',                icon: '📦', label: 'Comenzi' },
-  { href: '/xconnector',      icon: '⚡', label: 'xConnector' },
+  { href: '/xconnector',      icon: '⚡', label: 'Procesare' },
   { href: '/fulfillment',     icon: '🚚', label: 'Fulfillment' },
   { href: '/gls',             icon: '🏷️', label: 'GLS AWB', badge: 'NEW' },
   { href: '/stats',           icon: '📊', label: 'Statistici' },
@@ -76,7 +76,7 @@ export function Sidebar() {
 
       {/* ── Footer ── */}
       <div style={S.footer}>
-        <div style={{ fontSize: 11, color: 'var(--c-text4)' }}>xConnector v2.0</div>
+        <div style={{ fontSize: 11, color: 'var(--c-text4)' }}>Procesare v2.0</div>
         <div style={{ fontSize: 11, color: 'var(--c-text4)', marginTop: 2 }}>GLAMX SaaS Platform</div>
       </div>
     </aside>

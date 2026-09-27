@@ -35,7 +35,7 @@ const PRIMARY = [
   { href: '/',           icon: Ico.comenzi, label: 'Comenzi' },
   { href: '/stats',      icon: Ico.stats,   label: 'Stats'   },
   { href: '/profit',     icon: Ico.profit,  label: 'Profit'  },
-  { href: '/xconnector', icon: Ico.xconn,   label: 'xConn'   },
+  { href: '/xconnector', icon: Ico.xconn,   label: 'Procesare' },
 ];
 
 /* ─── Secondary tabs (inside "More" drawer) ─────────────────── */
