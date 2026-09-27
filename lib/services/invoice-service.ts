@@ -33,6 +33,13 @@ export interface InvoiceServiceResult {
   collected:      boolean;
 }
 
+/** Limba documentului SmartBill — 'RO' implicit, 'HU' pentru comenzi din Ungaria (glato.hu). */
+function resolveInvoiceLanguage(country: string): string {
+  const c = (country || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (c.includes('ungar') || c.includes('hungar') || c.includes('magyar') || c === 'hu') return 'HU';
+  return 'RO';
+}
+
 /**
  * Create an invoice for the given Order row.
  * Idempotent: returns existing invoice if already created.
@@ -80,6 +87,7 @@ export async function ensureInvoice(
   const result = await createInvoice(cfg, {
     orderName:        order.shopifyName,
     currency:         order.currency,
+    language:         resolveInvoiceLanguage(order.shippingCountry),
     isPaid:           order.isPaid,
     totalPrice:       Number(order.totalPrice),
     useStockOverride: useStock,

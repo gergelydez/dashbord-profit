@@ -54,6 +54,7 @@ export interface InvoiceLineItem {
 export interface CreateInvoiceInput {
   orderName:         string;
   currency:          string;
+  language?:         string;  // limba documentului SmartBill — 'RO' implicit, 'HU' pentru glato.hu
   isPaid:            boolean;
   totalPrice:        number;
   useStockOverride?: boolean;
@@ -226,7 +227,7 @@ export async function createInvoice(
     seriesName:   series,
     isDraft:      false,
     currency:     input.currency || 'RON',
-    language:     'RO',
+    language:     input.language || 'RO',
     precision:    2,
     // useStock=true only if we have at least one product with SKU and gestiune
     // Transport items don't count — they never need gestiune

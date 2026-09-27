@@ -7,6 +7,13 @@ const BASE = 'https://ws.smartbill.ro/SBORO/api';
 // (redusă) sau devine neplătitor de TVA din nou (caz în care s-ar seta 0).
 const TAX_PERCENTAGE = parseInt(process.env.SMARTBILL_TAX_PERCENTAGE || '21', 10);
 
+// Limba documentului SmartBill — 'RO' implicit, 'HU' pentru comenzi din Ungaria.
+function resolveInvoiceLanguage(country) {
+  const c = (country || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (c.includes('ungar') || c.includes('hungar') || c.includes('magyar') || c === 'hu') return 'HU';
+  return 'RO';
+}
+
 function makeAuth(email, token) {
   return Buffer.from(`${email.trim()}:${token.trim()}`).toString('base64');
 }
@@ -249,7 +256,7 @@ export async function POST(request) {
       seriesName: series,
       isDraft:    false,
       currency:   order.currency || 'RON',
-      language:   'RO',
+      language:   resolveInvoiceLanguage(order.country),
       precision:  2,
       // useStock la nivel de invoice — activează descărcarea gestiunii
       useStock,
