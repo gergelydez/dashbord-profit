@@ -277,6 +277,13 @@ export async function POST(req) {
     // Sanitizare
     const safePhone     = (phone||'').replace(/\D/g,'').slice(-10) || '0700000000';
     const safeRecipient = (recipientName||'').trim() || 'Client';
+    // GLS nu are un câmp API separat pentru instrucțiuni către curier — Content
+    // e singurul text liber care chiar apare pe eticheta fizică, deci notele
+    // (ex. "Livrare 16-18, sună înainte") se adaugă la finalul lui.
+    const safeContent = [
+      (content || orderName || 'Colet').trim(),
+      (observations || '').trim(),
+    ].filter(Boolean).join(' | ');
     const safeAddress   = (address||'').trim() || 'Adresa';
     const safeCity      = (city||'').trim() || 'Oras';
     const safeCounty    = (county||'').trim() || '';
@@ -368,7 +375,7 @@ export async function POST(req) {
       CODAmount:       parseFloat(codAmount) || 0,
       CODReference:    codAmount > 0 ? (orderName||'').slice(0, 40) : '',
       CODCurrency:     codAmount > 0 ? (codCurrency || 'RON') : undefined,
-      Content:         (content || orderName || 'Colet').slice(0, 40),
+      Content:         safeContent,
       PickupDate:      `/Date(${Date.now()})/`,
       PickupAddress: {
         Name:           pickup.name.slice(0, 40),

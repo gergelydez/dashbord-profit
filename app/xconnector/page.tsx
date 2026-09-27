@@ -1377,7 +1377,12 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading }: {
                   </div>
                   <div>
                     <label style={S.inputLabel}>Observații pentru curier (opțional)</label>
-                    <textarea value={data.observations} onChange={e => setData(p => ({ ...p, observations: e.target.value }))} placeholder="ex: Sună înainte de livrare..." rows={3} style={{ ...S.input, resize: 'vertical' as const, fontFamily: 'inherit' }} />
+                    <textarea value={data.observations} onChange={e => setData(p => ({ ...p, observations: e.target.value }))} placeholder="ex: Livrare 16:00-18:00, sună înainte..." rows={3} style={{ ...S.input, resize: 'vertical' as const, fontFamily: 'inherit' }} />
+                    <div style={{ fontSize: 10, color: 'var(--c-text4)', marginTop: 4 }}>
+                      {data.courier === 'gls'
+                        ? 'La GLS apare direct pe eticheta fizică, lângă conținutul coletului (GLS nu are un câmp separat de instrucțiuni).'
+                        : 'La SameDay ajunge ca observație separată în comandă, către curier.'}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1868,6 +1873,7 @@ export default function XConnectorPage() {
           weight: parseFloat(String(wizData.weight)) || 1,
           parcels: parseInt(String(wizData.parcels)) || 1,
           content: wizData.productName || order.name || 'Colet',
+          observations: wizData.observations || '',
           codAmount: wizData.isCOD ? wizData.codAmount : 0,
           codCurrency: 'RON', orderName: order.name, orderId,
           selectedServices: {
