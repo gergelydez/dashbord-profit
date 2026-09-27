@@ -241,7 +241,7 @@ export async function POST(request) {
         isTaxPayer: false,
         city:       order.city    || '',
         county:     order.county  || '',
-        country:    'Romania',
+        country:    order.country || 'Romania',
         email:      order.clientEmail || '',
         saveToDb:   false,
       },

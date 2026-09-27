@@ -64,6 +64,7 @@ export interface CreateInvoiceInput {
     address: string;
     city:    string;
     county:  string;
+    country?: string;
   };
   lineItems: InvoiceLineItem[];
 }
@@ -217,7 +218,7 @@ export async function createInvoice(
       isTaxPayer: false,
       city:       input.client.city  || '',
       county:     input.client.county || '',
-      country:    'Romania',
+      country:    input.client.country || 'Romania',
       email:      input.client.email || '',
       saveToDb:   false,
     },

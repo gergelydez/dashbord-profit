@@ -227,7 +227,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   order: EnrichedOrder; shop: string; actionState: RowActionState;
   onClose: () => void;
   generatedInvoice?: { series: string; number: string; downloadUrl: string; smartbillUrl?: string; collected: boolean } | null;
-  onGenerate: (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; paymentType?: string; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: InvoiceLineLocal[] } }) => void;
+  onGenerate: (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; paymentType?: string; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string; country: string }; lineItems: InvoiceLineLocal[] } }) => void;
 }) {
   const isPaid = order.financialStatus !== 'pending';
 
@@ -239,6 +239,9 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
   const [city,     setCity]     = useState(order.address.city    || '');
   const [zip,      setZip]      = useState(order.address.zip     || '');
   const [province, setProvince] = useState(order.address.province || '');
+  const [country,  setCountry]  = useState(order.address.country || 'România');
+  const isHU = /ungaria|hungary|magyar/i.test(country);
+  const countyPlaceholder = isHU ? 'ex: Pest megye' : 'ex: Cluj';
 
   // Line items state
   const [items, setItems] = useState<InvoiceLineLocal[]>(
@@ -342,7 +345,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
       shopifyOrderId: order.id, withCollection, useStock, paymentType,
       overrides: {
         customer: { name, phone, email },
-        address:  { address1: addr1, city, zip, province },
+        address:  { address1: addr1, city, zip, province, country },
         lineItems: items,
       },
     });
@@ -530,16 +533,20 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                 <input style={inp} value={addr1} onChange={e => setAddr1(e.target.value)} placeholder="Str. Exemplu nr. 1" />
               </div>
               <div>
-                <label style={lbl}>Oraș</label>
-                <input style={inp} value={city} onChange={e => setCity(e.target.value)} placeholder="Cluj-Napoca" />
+                <label style={lbl}>Țară</label>
+                <input style={inp} value={country} onChange={e => setCountry(e.target.value)} placeholder="România" />
               </div>
               <div>
-                <label style={lbl}>Județ</label>
-                <input style={inp} value={province} onChange={e => setProvince(e.target.value)} placeholder="Cluj" />
+                <label style={lbl}>Oraș</label>
+                <input style={inp} value={city} onChange={e => setCity(e.target.value)} placeholder={isHU ? 'Debrecen' : 'Cluj-Napoca'} />
+              </div>
+              <div>
+                <label style={lbl}>Județ{isHU ? ' / Megye' : ''}</label>
+                <input style={inp} value={province} onChange={e => setProvince(e.target.value)} placeholder={countyPlaceholder} />
               </div>
               <div>
                 <label style={lbl}>Cod poștal</label>
-                <input style={inp} value={zip} onChange={e => setZip(e.target.value)} placeholder="400000" />
+                <input style={inp} value={zip} onChange={e => setZip(e.target.value)} placeholder={isHU ? '4031' : '400000'} />
               </div>
             </div>
           </div>
@@ -1769,7 +1776,7 @@ export default function XConnectorPage() {
   const invoiceMut = useMutation({
     mutationFn: async ({ shopifyOrderId, withCollection, useStock, paymentType, overrides }: {
       shopifyOrderId: string; withCollection: boolean; useStock?: boolean; paymentType?: string;
-      overrides?: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: { name: string; sku: string; quantity: number; price: number }[] };
+      overrides?: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string; country: string }; lineItems: { name: string; sku: string; quantity: number; price: number }[] };
     }) => {
       setAS(shopifyOrderId, { invoiceLoading: true, error: null });
       // First save overrides to Shopify if provided
@@ -1803,7 +1810,7 @@ export default function XConnectorPage() {
     onError: (err: Error, { shopifyOrderId }) => { setAS(shopifyOrderId, { invoiceLoading: false, error: err.message }); addToast('err', err.message); },
   });
 
-  const handleInvoiceGenerate = (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string }; lineItems: { name: string; sku: string; quantity: number; price: number }[] } }) => {
+  const handleInvoiceGenerate = (opts: { shopifyOrderId: string; withCollection: boolean; useStock: boolean; overrides: { customer: { name: string; phone: string; email: string }; address: { address1: string; city: string; zip: string; province: string; country: string }; lineItems: { name: string; sku: string; quantity: number; price: number }[] } }) => {
     invoiceMut.mutate(opts);
   };
 

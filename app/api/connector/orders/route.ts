@@ -78,7 +78,7 @@ async function enrichWithDbState(shopifyIds: string[], domain: string) {
         id: true, shopifyId: true, status: true, processingError: true,
         customerName: true, customerEmail: true, customerPhone: true,
         shippingAddress1: true, shippingAddress2: true,
-        shippingCity: true, shippingProvince: true, shippingZip: true,
+        shippingCity: true, shippingProvince: true, shippingZip: true, shippingCountry: true,
       },
     }),
     db.invoice.findMany({
@@ -94,13 +94,13 @@ async function enrichWithDbState(shopifyIds: string[], domain: string) {
   const orderMap: Record<string, {
     id: string; status: string; error?: string | null;
     customerName: string; customerEmail: string; customerPhone: string;
-    address1: string; address2: string; city: string; province: string; zip: string;
+    address1: string; address2: string; city: string; province: string; zip: string; country: string;
   }> = {};
   for (const o of dbOrders) orderMap[o.shopifyId] = {
     id: o.id, status: o.status, error: o.processingError,
     customerName: o.customerName, customerEmail: o.customerEmail, customerPhone: o.customerPhone,
     address1: o.shippingAddress1, address2: o.shippingAddress2,
-    city: o.shippingCity, province: o.shippingProvince, zip: o.shippingZip,
+    city: o.shippingCity, province: o.shippingProvince, zip: o.shippingZip, country: o.shippingCountry,
   };
 
   const invMap: Record<string, { id: string; series: string; number: string; status: string; url: string }> = {};
@@ -185,6 +185,7 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
       city:     addr.city     || dbOrder?.city     || '',
       province: addr.province || addr.province_code || dbOrder?.province || '',
       zip:      addr.zip      || dbOrder?.zip      || '',
+      country:  addr.country  || addr.country_code  || dbOrder?.country  || '',
     },
     lineItems:         items,
     totalPrice:        parseFloat(o.total_price || '0'),

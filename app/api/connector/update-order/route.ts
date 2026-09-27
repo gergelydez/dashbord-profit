@@ -38,6 +38,7 @@ interface UpdateOrderBody {
     city?:     string;
     zip?:      string;
     province?: string;
+    country?:  string;
   };
   codAmount?: number;
   note?: string;
@@ -136,6 +137,7 @@ export async function POST(request: Request) {
     if (address.city     !== undefined) existing.city     = address.city;
     if (address.zip      !== undefined) existing.zip      = address.zip;
     if (address.province !== undefined) existing.province = address.province;
+    if (address.country  !== undefined) existing.country  = address.country;
     orderPatch.shipping_address = existing;
     updatedFields.push('address');
   }

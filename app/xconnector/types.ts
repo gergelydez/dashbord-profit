@@ -35,7 +35,7 @@ export interface EnrichedOrder {
   createdAt: string;
   cancelled: boolean;
   customer: { name: string; email: string; phone: string };
-  address:  { address1: string; address2: string; city: string; province: string; zip: string };
+  address:  { address1: string; address2: string; city: string; province: string; zip: string; country: string };
   lineItems: LineItem[];
   totalPrice:        number;
   currency:          string;

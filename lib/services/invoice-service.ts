@@ -90,6 +90,7 @@ export async function ensureInvoice(
       address: order.shippingAddress1,
       city:    order.shippingCity,
       county:  order.shippingProvince,
+      country: order.shippingCountry,
     },
     lineItems,
   });
