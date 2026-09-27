@@ -1911,9 +1911,15 @@ export default function XConnectorPage() {
             } catch (e) { fulfillErr = (e as Error).message; }
           }
           setAwbResults(p => ({ ...p, [orderId]: awbData }));
-          setAS(orderId, { shipmentLoading: false }); setWizardOrder(null); setWizardLoading(false);
+          const fulfillFailed = (wizData as any).fulfillShopify && !fulfillOk;
+          // error se salvează în actionState (nu doar ca toast, care dispare
+          // singur) — apare ca buton ⚠ persistent pe rândul comenzii, cu
+          // mesajul complet la hover/tap, ca să nu se piardă dacă utilizatorul
+          // nu apucă să citească toast-ul.
+          setAS(orderId, { shipmentLoading: false, error: fulfillFailed ? `Fulfillment eșuat: ${fulfillErr}` : null });
+          setWizardOrder(null); setWizardLoading(false);
           addToast('ok', `✅ AWB GLS ${data.awb} generat${fulfillOk ? ' + Fulfilled!' : ''}`);
-          if ((wizData as any).fulfillShopify && !fulfillOk) addToast('err', `⚠️ AWB generat, dar fulfillment Shopify a eșuat: ${fulfillErr}`);
+          if (fulfillFailed) addToast('err', `⚠️ AWB generat, dar fulfillment Shopify a eșuat: ${fulfillErr}`);
           qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
           if (data.labelBase64) {
             try {
@@ -1949,9 +1955,11 @@ export default function XConnectorPage() {
             } catch (e) { fulfillErr = (e as Error).message; }
           }
           setAwbResults(p => ({ ...p, [orderId]: { awb: data.awb, courier: 'sameday' } }));
-          setAS(orderId, { shipmentLoading: false }); setWizardOrder(null); setWizardLoading(false);
+          const fulfillFailed = (wizData as any).fulfillShopify && !fulfillOk;
+          setAS(orderId, { shipmentLoading: false, error: fulfillFailed ? `Fulfillment eșuat: ${fulfillErr}` : null });
+          setWizardOrder(null); setWizardLoading(false);
           addToast('ok', `AWB Sameday ${data.awb} generat${fulfillOk ? ' + Fulfilled!' : ''}!`);
-          if ((wizData as any).fulfillShopify && !fulfillOk) addToast('err', `⚠️ AWB generat, dar fulfillment Shopify a eșuat: ${fulfillErr}`);
+          if (fulfillFailed) addToast('err', `⚠️ AWB generat, dar fulfillment Shopify a eșuat: ${fulfillErr}`);
           qc.invalidateQueries({ queryKey: ['connector-orders', activeShop] });
         } else { throw new Error(data.error || 'Eroare Sameday'); }
       }
@@ -2183,7 +2191,16 @@ export default function XConnectorPage() {
                   <td style={S.td} onClick={e => e.stopPropagation()}>
                     <div style={S.actionsCell}>
                       {procBadge(order.processingStatus)}
-                      {as.error && <button title={as.error} style={S.btnDanger} onClick={e => { e.stopPropagation(); setAS(order.id, { error: null }); }}>⚠</button>}
+                      {as.error && (
+                        <button style={S.btnDanger} onClick={e => {
+                          e.stopPropagation();
+                          // title/tooltip nu funcționează la atingere pe mobil — alert()
+                          // rămâne vizibil până e închis manual, deci mesajul chiar se
+                          // poate citi (sau fotografia) înainte să dispară.
+                          alert(as.error);
+                          setAS(order.id, { error: null });
+                        }}>⚠</button>
+                      )}
                     </div>
                   </td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
