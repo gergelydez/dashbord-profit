@@ -412,11 +412,12 @@ function buildProduct(
     || !item.sku?.trim();
 
   if (item.isDiscount) {
-    // Discount la nivel de comandă (cod promo): fără cod, fără gestiune.
-    // isService:true a fost respins de SmartBill ("Produsul ... nu are codul
-    // specificat") — cont-ul asta cere cod real pentru servicii. Un produs
-    // obișnuit fără cod (isService:false) e deja calea dovedită să meargă
-    // (exact ce se întâmplă la orice produs Shopify fără SKU).
+    // Discount la nivel de comandă (cod promo): fără cod. isService:true a fost
+    // respins ("nu are codul specificat" — cere cod real de catalog pentru
+    // servicii); dar fără gestiune, dacă restul facturii are useStock activ,
+    // SmartBill respinge la fel de sigur ("nu are gestiune specificată") —
+    // orice produs fără isService trebuie să aibă o gestiune când factura
+    // descarcă stoc. Îi dăm aceeași gestiune ca produsele reale.
     return {
       name:              item.name.slice(0, 255),
       code:              '',
@@ -430,14 +431,13 @@ function buildProduct(
       taxPercentage:     cfg.taxPercentage,
       isService:         false,
       saveToDb:          false,
+      ...(useStockCfg && cfg.warehouseName ? { warehouseName: cfg.warehouseName } : {}),
     };
   }
 
   if (isTransport) {
-    // Transport/shipping: fără cod, fără gestiune. isService:true a fost
-    // respins de SmartBill ("Produsul Expediere nu are codul specificat") —
-    // contul ăsta cere cod real pentru servicii, deci îl tratăm ca produs
-    // obișnuit fără cod (exact calea deja dovedită să meargă).
+    // Transport/shipping: fără cod, aceeași logică de gestiune ca discountul
+    // de mai sus — vezi comentariul acolo.
     return {
       name:              item.name.slice(0, 255),
       code:              '',
@@ -451,6 +451,7 @@ function buildProduct(
       taxPercentage:     cfg.taxPercentage,
       isService:         false,
       saveToDb:          false,
+      ...(useStockCfg && cfg.warehouseName ? { warehouseName: cfg.warehouseName } : {}),
     };
   }
 

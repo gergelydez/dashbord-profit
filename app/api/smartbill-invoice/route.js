@@ -210,11 +210,14 @@ export async function POST(request) {
         // isService:true a fost respins de SmartBill ("Produsul ... nu are codul
         // specificat") — contul ăsta cere cod real pentru servicii. Tratăm
         // transportul/discountul ca produs obișnuit fără cod (calea deja
-        // dovedită să meargă, la fel ca orice produs Shopify fără SKU).
+        // dovedită să meargă, la fel ca orice produs Shopify fără SKU) —
+        // dar la fel ca orice alt produs fără isService, dacă factura descarcă
+        // stoc, tot are nevoie de o gestiune ("Produsul Livrare nu are
+        // gestiune specificată" altfel), deci îi dăm aceeași gestiune.
         isService:          false,
         saveToDb:           false,
         // warehouseName la nivel de produs — corect conform documentației
-        ...(useStock && warehouse && !transport && !item.isDiscount ? { warehouseName: warehouse } : {}),
+        ...(useStock && warehouse ? { warehouseName: warehouse } : {}),
       };
     };
 
