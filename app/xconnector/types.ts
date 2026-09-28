@@ -20,6 +20,8 @@ export interface LineItem {
   quantity: number;
   price:    number;
   sku:      string;
+  isShipping?: boolean;
+  isDiscount?: boolean;
 }
 
 export type ProcessingStatus = 'pending' | 'processing' | 'partial' | 'fulfilled' | 'failed' | 'cancelled';

@@ -223,6 +223,8 @@ interface InvoiceLineLocal {
   sbCode?: string; sbName?: string; sbMatched?: boolean;
   useGestiuneName?: boolean;
   warehouse?: string; // gestiunea din SmartBill (ex: "Marfuri")
+  isShipping?: boolean;
+  isDiscount?: boolean;
 }
 interface SbProduct { code: string; name: string; unit: string; price: number; warehouse: string; stock?: number | null; }
 
@@ -248,7 +250,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
 
   // Line items state
   const [items, setItems] = useState<InvoiceLineLocal[]>(
-    order.lineItems.map(li => ({ name: li.name, sku: li.sku || '', quantity: li.quantity, price: li.price }))
+    order.lineItems.map(li => ({ name: li.name, sku: li.sku || '', quantity: li.quantity, price: li.price, isShipping: li.isShipping, isDiscount: li.isDiscount }))
   );
 
   // Options
@@ -334,7 +336,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
     setLocalError(null);
     // When useStock=true: ALL products MUST have SKU — no exceptions
     if (useStock) {
-      const missing = items.filter(i => i.price > 0 && !i.sku?.trim());
+      const missing = items.filter(i => i.price > 0 && !i.sku?.trim() && !i.isShipping && !i.isDiscount);
       if (missing.length > 0) {
         setLocalError(
           `Adaugă codul SKU pentru: ` +
@@ -561,10 +563,18 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
               const shopifyName = order.lineItems[i]?.name ?? item.name;
               const gestiuneName = item.sbName ?? item.name;
               const showNameToggle = item.sbMatched && item.sbName && item.sbName !== shopifyName;
+              const isSpecial = item.isShipping || item.isDiscount;
               return (
               <div key={i} style={{ paddingBottom: i < items.length - 1 ? 14 : 0, marginBottom: i < items.length - 1 ? 14 : 0, borderBottom: i < items.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
 
+                {isSpecial && (
+                  <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 600, color: item.isDiscount ? '#f59e0b' : 'var(--c-text3)' }}>
+                    {item.isDiscount ? '🏷' : '🚚'} {item.name} <span style={{ fontWeight: 400, opacity: 0.7 }}>(fără gestiune, fără cod SmartBill)</span>
+                  </div>
+                )}
+
                 {/* SKU / Cod SmartBill — FIRST, most important */}
+                {!isSpecial && (
                 <div style={{ marginBottom: 8 }}>
                   <label style={lbl}>
                     SKU / Cod SmartBill
@@ -635,6 +645,7 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Name toggle — shown only when gestiune name differs from Shopify name */}
                 {showNameToggle && (

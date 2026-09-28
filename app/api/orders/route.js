@@ -22,6 +22,9 @@ const buildQuery = (cursor, createdAtMin) => {
         displayFinancialStatus displayFulfillmentStatus
         paymentGatewayNames
         totalPriceSet { shopMoney { amount currencyCode } }
+        totalDiscountsSet { shopMoney { amount } }
+        discountCodes
+        shippingLine { title originalPriceSet { shopMoney { amount } } }
         shippingAddress { name address1 address2 city province zip phone }
         billingAddress { name address1 address2 city province zip phone }
         lineItems(first: 10) {
@@ -135,6 +138,12 @@ function toRestOrder(node) {
     billing_address:  { name: baddr.name||'', address1: baddr.address1||'', address2: baddr.address2||'', city: baddr.city||'', province: baddr.province||'', zip: baddr.zip||'' },
     fulfillments,
     line_items: lineItems,
+    total_discounts: node.totalDiscountsSet?.shopMoney?.amount || '0',
+    discount_codes: (node.discountCodes || []).map(code => ({ code })),
+    shipping_lines: node.shippingLine ? [{
+      title: node.shippingLine.title || 'Transport',
+      price: node.shippingLine.originalPriceSet?.shopMoney?.amount || '0',
+    }] : [],
   };
 }
 

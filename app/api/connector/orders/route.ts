@@ -140,12 +140,28 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
   else if (invoice || shipment)          procStatus = 'partial';
   else if (dbOrder?.status === 'PROCESSING') procStatus = 'processing';
 
-  const items = (o.line_items || []).map((li: any) => ({
-    name:     li.name     || '',
-    quantity: li.quantity || 1,
-    price:    parseFloat(li.price || '0'),
-    sku:      li.sku      || '',
-  }));
+  const items = [
+    ...(o.line_items || []).map((li: any) => ({
+      name:     li.name     || '',
+      quantity: li.quantity || 1,
+      price:    parseFloat(li.price || '0'),
+      sku:      li.sku      || '',
+    })),
+    // Shopify ține transportul separat de line_items (shipping_lines), dar total_price
+    // îl include — fără linia asta, factura ieșea mai mică decât comanda Shopify.
+    ...(o.shipping_lines || [])
+      .filter((s: any) => parseFloat(s.price || '0') > 0)
+      .map((s: any) => ({
+        name: s.title || 'Transport', quantity: 1, price: parseFloat(s.price || '0'), sku: '', isShipping: true,
+      })),
+    // Discount la nivel de comandă (cod promo etc.) — Shopify îl scade din
+    // total_price, dar nu apare deloc în line_items. Fără linia asta,
+    // factura ieșea mai mare decât comanda Shopify (prețul plin, fără discount).
+    ...(parseFloat(o.total_discounts || '0') > 0 ? [{
+      name: `Discount${o.discount_codes?.[0]?.code ? ` (${o.discount_codes[0].code})` : ''}`,
+      quantity: 1, price: parseFloat(o.total_discounts || '0'), sku: '', isDiscount: true,
+    }] : []),
+  ];
 
   // Extract AWB from Shopify fulfillments (for orders created by xConnector original)
   const fulfillments = o.fulfillments || [];

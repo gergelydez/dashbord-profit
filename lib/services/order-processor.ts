@@ -294,6 +294,8 @@ export interface WebhookOrderPayload {
     code?:  string;
   }>;
   total_shipping_price_set?: { shop_money?: { amount?: string } };
+  total_discounts?:  string;
+  discount_codes?:   Array<{ code?: string }>;
 }
 
 /**
@@ -331,7 +333,18 @@ export async function upsertOrderFromWebhook(
       isShipping: true,
     }));
 
-  const lineItems = [...productItems, ...shippingItems];
+  // Discount la nivel de comandă (cod promo) — Shopify îl scade din total_price
+  // dar nu apare în line_items; fără el factura ieșea mai mare decât comanda reală.
+  const totalDiscounts = parseFloat(payload.total_discounts ?? '0');
+  const discountItems = totalDiscounts > 0 ? [{
+    name:       `Discount${payload.discount_codes?.[0]?.code ? ` (${payload.discount_codes[0].code})` : ''}`,
+    sku:        '',
+    qty:        1,
+    price:      totalDiscounts,
+    isDiscount: true,
+  }] : [];
+
+  const lineItems = [...productItems, ...shippingItems, ...discountItems];
 
   const isPaid = (payload.financial_status ?? '').toLowerCase() === 'paid';
   const isCancelled = !!payload.cancelled_at;

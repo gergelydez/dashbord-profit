@@ -49,6 +49,7 @@ export interface InvoiceLineItem {
   price:       number;
   warehouse?:  string;  // gestiunea SmartBill
   isShipping?: boolean; // transport — no gestiune, no SKU needed
+  isDiscount?: boolean; // discount la nivel de comandă — no gestiune, no SKU needed
 }
 
 export interface CreateInvoiceInput {
@@ -172,7 +173,7 @@ export async function createInvoice(
 
   if (useStock) {
     const missing = input.lineItems.filter(i =>
-      i.price > 0 && !i.sku?.trim() && !i.isShipping && !isTransport(i.name)
+      i.price > 0 && !i.sku?.trim() && !i.isShipping && !i.isDiscount && !isTransport(i.name)
     );
     if (missing.length > 0) {
       throw new Error(
@@ -231,7 +232,7 @@ export async function createInvoice(
     precision:    2,
     // useStock=true only if we have at least one product with SKU and gestiune
     // Transport items don't count — they never need gestiune
-    useStock: useStock && input.lineItems.some(i => i.price > 0 && !!i.sku?.trim() && !i.isShipping),
+    useStock: useStock && input.lineItems.some(i => i.price > 0 && !!i.sku?.trim() && !i.isShipping && !i.isDiscount),
     observations: `Comanda Shopify ${input.orderName}`,
     mentions:     '',
     products,
@@ -409,6 +410,25 @@ function buildProduct(
   const isTransport = item.isShipping
     || TRANSPORT_NAMES.some(k => item.name.toLowerCase().includes(k))
     || !item.sku?.trim();
+
+  if (item.isDiscount) {
+    // Discount la nivel de comandă (cod promo): fără cod, fără gestiune,
+    // isDiscount=true e ce spune SmartBill să scadă suma din total.
+    return {
+      name:              item.name.slice(0, 255),
+      code:              '',
+      isDiscount:        true,
+      measuringUnitName: 'buc',
+      currency:          currency || 'RON',
+      quantity:          Math.max(1, item.quantity),
+      price:             item.price,
+      isTaxIncluded:     true,
+      taxName:           'Normala',
+      taxPercentage:     cfg.taxPercentage,
+      isService:         true,
+      saveToDb:          false,
+    };
+  }
 
   if (isTransport) {
     // Transport/shipping: no code, no warehouse, isService=true

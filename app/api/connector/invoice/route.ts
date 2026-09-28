@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     withCollection?: boolean;
     useStock?: boolean;
     paymentType?: string;
-    lineItems?: Array<{ name: string; sku: string; quantity: number; price: number; warehouse?: string }>;
+    lineItems?: Array<{ name: string; sku: string; quantity: number; price: number; warehouse?: string; isShipping?: boolean; isDiscount?: boolean }>;
   };
   if (!shopifyOrderId) return NextResponse.json({ error: 'shopifyOrderId required' }, { status: 400 });
 
