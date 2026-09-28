@@ -2796,7 +2796,9 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                               if (o.invoiceShort||o.invoiceUrl) return <a href={o.invoiceShort||o.invoiceUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:'#10b981',fontFamily:'monospace',textDecoration:'none'}}>{label} ↗</a>;
                               return <span style={{fontSize:10,color:'#10b981',fontFamily:'monospace'}}>✓ {label}</span>;
                             }
-                            if(o.fin==='paid') return <button onClick={()=>openInvoiceModal(o)} disabled={invLoading} style={{fontSize:9,background:'rgba(245,158,11,.15)',border:'1px solid rgba(245,158,11,.4)',color:'#f59e0b',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:invLoading?.5:1}}>{invLoading?'⟳':'+ Factură'}</button>;
+                            // Comenzile ramburs (fin=pending) nu devin niciodată "paid" automat în Shopify —
+                            // dar odată livrate, rambursul a fost încasat de curier, deci se poate factura.
+                            if(o.fin==='paid'||o.ts==='livrat') return <button onClick={()=>openInvoiceModal(o)} disabled={invLoading} style={{fontSize:9,background:'rgba(245,158,11,.15)',border:'1px solid rgba(245,158,11,.4)',color:'#f59e0b',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:invLoading?.5:1}}>{invLoading?'⟳':'+ Factură'}</button>;
                             return <span style={{fontSize:10,color:'#4a5568'}}>—</span>;
                           })()}</td>
                           <td style={{fontSize:'10px',color:'#94a3b8',whiteSpace:'nowrap'}}>{fmtD(o.createdAt)}</td>
