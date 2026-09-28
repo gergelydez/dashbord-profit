@@ -207,8 +207,11 @@ export async function POST(request) {
         isTaxIncluded:      true,
         taxName:            'Normala',
         taxPercentage:      TAX_PERCENTAGE,
-        // Transportul și discount-ul sunt "servicii" — nu au SKU/gestiune, indiferent de useStock
-        isService:          transport || item.isDiscount,
+        // isService:true a fost respins de SmartBill ("Produsul ... nu are codul
+        // specificat") — contul ăsta cere cod real pentru servicii. Tratăm
+        // transportul/discountul ca produs obișnuit fără cod (calea deja
+        // dovedită să meargă, la fel ca orice produs Shopify fără SKU).
+        isService:          false,
         saveToDb:           false,
         // warehouseName la nivel de produs — corect conform documentației
         ...(useStock && warehouse && !transport && !item.isDiscount ? { warehouseName: warehouse } : {}),

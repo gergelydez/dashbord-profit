@@ -412,8 +412,11 @@ function buildProduct(
     || !item.sku?.trim();
 
   if (item.isDiscount) {
-    // Discount la nivel de comandă (cod promo): fără cod, fără gestiune,
-    // isDiscount=true e ce spune SmartBill să scadă suma din total.
+    // Discount la nivel de comandă (cod promo): fără cod, fără gestiune.
+    // isService:true a fost respins de SmartBill ("Produsul ... nu are codul
+    // specificat") — cont-ul asta cere cod real pentru servicii. Un produs
+    // obișnuit fără cod (isService:false) e deja calea dovedită să meargă
+    // (exact ce se întâmplă la orice produs Shopify fără SKU).
     return {
       name:              item.name.slice(0, 255),
       code:              '',
@@ -425,14 +428,16 @@ function buildProduct(
       isTaxIncluded:     true,
       taxName:           'Normala',
       taxPercentage:     cfg.taxPercentage,
-      isService:         true,
+      isService:         false,
       saveToDb:          false,
     };
   }
 
   if (isTransport) {
-    // Transport/shipping: no code, no warehouse, isService=true
-    // SmartBill accepts services without SKU even when useStock=true
+    // Transport/shipping: fără cod, fără gestiune. isService:true a fost
+    // respins de SmartBill ("Produsul Expediere nu are codul specificat") —
+    // contul ăsta cere cod real pentru servicii, deci îl tratăm ca produs
+    // obișnuit fără cod (exact calea deja dovedită să meargă).
     return {
       name:              item.name.slice(0, 255),
       code:              '',
@@ -444,7 +449,7 @@ function buildProduct(
       isTaxIncluded:     true,
       taxName:           'Normala',
       taxPercentage:     cfg.taxPercentage,
-      isService:         true,  // services don't need SKU or warehouse
+      isService:         false,
       saveToDb:          false,
     };
   }
