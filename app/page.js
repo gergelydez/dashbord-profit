@@ -219,6 +219,19 @@ function procOrder(o) {
           productId: '',
           isShipping: true,
         })),
+      // Discount la nivel de comandă (cod promo etc.) — Shopify îl scade din
+      // total_price, dar nu apare deloc în line_items. Fără linia asta,
+      // factura ieșea mai mare decât comanda Shopify (prețul plin, fără discount).
+      ...(parseFloat(o.total_discounts) > 0 ? [{
+        name: `Discount${o.discount_codes?.[0]?.code ? ` (${o.discount_codes[0].code})` : ''}`,
+        sku: '',
+        qty: 1,
+        price: parseFloat(o.total_discounts) || 0,
+        variantId: '',
+        productHandle: '',
+        productId: '',
+        isDiscount: true,
+      }] : []),
     ],
     // Validare adresă locală (detectare rapidă fără API)
     addrIssues: (() => {

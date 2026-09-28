@@ -198,8 +198,8 @@ export async function POST(request) {
 
       return {
         name:               (item.name || 'Produs').slice(0, 255),
-        code:               transport ? '' : sku,
-        isDiscount:         false,
+        code:               (transport || item.isDiscount) ? '' : sku,
+        isDiscount:         !!item.isDiscount,
         measuringUnitName:  'buc',
         currency:           order.currency || 'RON',
         quantity:           qty,
@@ -207,11 +207,11 @@ export async function POST(request) {
         isTaxIncluded:      true,
         taxName:            'Normala',
         taxPercentage:      TAX_PERCENTAGE,
-        // Transportul e serviciu — nu are SKU/gestiune, indiferent de useStock
-        isService:          transport,
+        // Transportul și discount-ul sunt "servicii" — nu au SKU/gestiune, indiferent de useStock
+        isService:          transport || item.isDiscount,
         saveToDb:           false,
         // warehouseName la nivel de produs — corect conform documentației
-        ...(useStock && warehouse && !transport ? { warehouseName: warehouse } : {}),
+        ...(useStock && warehouse && !transport && !item.isDiscount ? { warehouseName: warehouse } : {}),
       };
     };
 
