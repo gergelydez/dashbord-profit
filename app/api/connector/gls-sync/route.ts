@@ -3,6 +3,63 @@ export const dynamic = 'force-dynamic';
 
 import { db } from '@/lib/db';
 import { ShipmentStatus, OrderStatus } from '@prisma/client';
+import { getAccessTokenForDomain } from '@/lib/shopify/ccg-token';
+import { shopifyGraphQL } from '@/lib/shopify/client';
+import { loadSmartBillConfig, collectInvoice } from '@/lib/invoicing/smartbill';
+
+const MARK_PAID_MUTATION = `
+  mutation orderMarkAsPaid($input: OrderMarkAsPaidInput!) {
+    orderMarkAsPaid(input: $input) {
+      order { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+/**
+ * La livrare confirmată pentru o comandă ramburs: încasează automat factura
+ * în SmartBill (dacă există și nu e deja încasată) și marchează comanda ca
+ * plătită în Shopify — banii chiar au fost colectați de curier la livrare,
+ * doar sistemul nu știa încă. Non-fatal: erorile nu opresc sincronizarea GLS.
+ */
+async function autoCollectOnDelivery(orderId: string) {
+  const order = await db.order.findUnique({ where: { id: orderId }, include: { shop: true } });
+  if (!order || order.isPaid) return;
+
+  const gw = (order.paymentGateway || '').toLowerCase();
+  const isCod = gw.includes('cash') || gw.includes('ramburs') || gw.includes('cod') || gw === 'manual' || !order.isPaid;
+  if (!isCod) return;
+
+  // 1. Încasează factura existentă (dacă e deja generată și nu e deja încasată)
+  try {
+    const invoice = await db.invoice.findFirst({ where: { orderId: order.id }, orderBy: { createdAt: 'desc' } });
+    if (invoice && !invoice.collected) {
+      const cfg = loadSmartBillConfig();
+      const result = await collectInvoice(cfg, invoice.series, invoice.number, Number(order.totalPrice), order.customerName, order.currency, 'Ramburs');
+      if (result.ok) {
+        await db.invoice.update({ where: { id: invoice.id }, data: { collected: true, collectionSeries: result.series, collectionNumber: result.number } });
+      } else {
+        console.warn('[gls-sync] auto-collect invoice failed', order.id, result.error);
+      }
+    }
+  } catch (e) {
+    console.warn('[gls-sync] auto-collect invoice error', order.id, (e as Error).message);
+  }
+
+  // 2. Marchează comanda ca plătită în Shopify
+  try {
+    const accessToken = await getAccessTokenForDomain(order.shop.domain);
+    const orderGid = order.shopifyGid || `gid://shopify/Order/${order.shopifyId}`;
+    await shopifyGraphQL(
+      { domain: order.shop.domain, accessToken },
+      MARK_PAID_MUTATION,
+      { input: { id: orderGid } },
+    );
+    await db.order.update({ where: { id: order.id }, data: { isPaid: true, financialStatus: 'paid' } });
+  } catch (e) {
+    console.warn('[gls-sync] orderMarkAsPaid error', order.id, (e as Error).message);
+  }
+}
 
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
@@ -169,6 +226,7 @@ export async function GET(request: Request) {
             where: { id: u.orderId },
             data: { status: OrderStatus.FULFILLED, fulfilled: true },
           }).catch(() => {});
+          await autoCollectOnDelivery(u.orderId).catch(() => {});
         }
         updated++;
       } catch (dbErr) {
