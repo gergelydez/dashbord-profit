@@ -219,6 +219,7 @@ export async function GET(request: Request) {
   const search    = searchParams.get('search')  ?? '';
   const finStatus = searchParams.get('fin')     ?? 'all';
   const dateFrom  = searchParams.get('from')    ?? new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const invFilter = searchParams.get('inv')     ?? 'all'; // 'all' | 'invoiced' | 'not_invoiced'
   const cursor    = searchParams.get('cursor')  ?? null;
   const shopKey   = searchParams.get('shop')    ?? getDefaultShopKey();
 
@@ -237,7 +238,14 @@ export async function GET(request: Request) {
 
     const ids      = result.orders.map((o: any) => String(o.id));
     const enriched = await enrichWithDbState(ids, shopCfg.domain);
-    const orders   = result.orders.map((o: any) => mapOrder(o, enriched));
+    let orders     = result.orders.map((o: any) => mapOrder(o, enriched));
+
+    if (invFilter === 'invoiced' || invFilter === 'not_invoiced') {
+      orders = orders.filter((o: ReturnType<typeof mapOrder>) => {
+        const hasInvoice = Boolean(o.invoice || o.noteAttributes['xconnector-invoice-url'] || o.noteAttributes['invoice-url']);
+        return invFilter === 'invoiced' ? hasInvoice : !hasInvoice;
+      });
+    }
 
     return NextResponse.json({ orders, pageInfo: result.pageInfo });
   } catch (err) {

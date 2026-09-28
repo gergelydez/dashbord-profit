@@ -1786,7 +1786,18 @@ export default function XConnectorPage() {
 
   const [search, setSearch]       = useState('');
   const [finFilter, setFinFilter] = useState('all');
+  const [invFilter, setInvFilter] = useState('all');
+  const [datePreset, setDatePreset] = useState('30');
   const [dateFrom, setDateFrom]   = useState(() => new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
+
+  const isoDaysAgo = (days: number) => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const applyDatePreset = (preset: string) => {
+    setDatePreset(preset);
+    setCursor(null);
+    if (preset === 'custom') return; // keep current dateFrom, user picks manually
+    const days: Record<string, number> = { '7': 7, '30': 30, '90': 90, '180': 180, '365': 365, all: 3650 };
+    setDateFrom(isoDaysAgo(days[preset] ?? 30));
+  };
   const [cursor, setCursor]       = useState<string | null>(null);
   const [prevCursors, setPrev]    = useState<string[]>([]);
   const searchTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -1815,11 +1826,11 @@ export default function XConnectorPage() {
     finally { clearTimeout(t); setAutoInvLoading(false); }
   };
 
-  const queryKey = ['connector-orders', activeShop, debouncedSearch, finFilter, dateFrom, cursor];
+  const queryKey = ['connector-orders', activeShop, debouncedSearch, finFilter, invFilter, dateFrom, cursor];
   const { data, isLoading, isError, error, refetch } = useQuery<OrdersResponse>({
     queryKey,
     queryFn: async () => {
-      const p = new URLSearchParams({ shop: activeShop, search: debouncedSearch, fin: finFilter, from: dateFrom, ...(cursor ? { cursor } : {}) });
+      const p = new URLSearchParams({ shop: activeShop, search: debouncedSearch, fin: finFilter, inv: invFilter, from: dateFrom, ...(cursor ? { cursor } : {}) });
       const res = await fetch(`/api/connector/orders?${p}`);
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Eroare server'); }
       return res.json();
@@ -2070,7 +2081,23 @@ export default function XConnectorPage() {
             <option value="pending">💰 Ramburs</option>
             <option value="refunded">↩ Returnat</option>
           </select>
-          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setCursor(null); }} style={S.select} />
+          <select value={invFilter} onChange={e => { setInvFilter(e.target.value); setCursor(null); }} style={S.select}>
+            <option value="all">Toate facturile</option>
+            <option value="invoiced">🧾 Cu factură</option>
+            <option value="not_invoiced">❌ Fără factură</option>
+          </select>
+          <select value={datePreset} onChange={e => applyDatePreset(e.target.value)} style={S.select}>
+            <option value="7">Ultimele 7 zile</option>
+            <option value="30">Ultimele 30 zile</option>
+            <option value="90">Ultimele 3 luni</option>
+            <option value="180">Ultimele 6 luni</option>
+            <option value="365">Ultimul an</option>
+            <option value="all">Tot istoricul</option>
+            <option value="custom">Dată personalizată…</option>
+          </select>
+          {datePreset === 'custom' && (
+            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setCursor(null); }} style={S.select} />
+          )}
           <button style={S.iconBtn} onClick={() => refetch()}>{isLoading ? <Spin /> : '↻'} Refresh</button>
           <SyncButton shop={activeShop} onDone={() => { addToast('ok', 'Sync trimis! Refresh în 30s.'); setTimeout(() => refetch(), 30000); }} />
           <button
