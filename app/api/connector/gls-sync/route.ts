@@ -64,13 +64,15 @@ async function autoCollectOnDelivery(orderId: string) {
 const GLS_BASE = 'https://api.mygls.ro/ParcelService.svc/json';
 
 async function buildAuth() {
-  const username     = process.env.GLS_USERNAME     || '';
-  const password     = process.env.GLS_PASSWORD     || '';
-  const clientNumber = parseInt(process.env.GLS_CLIENT_NUMBER || '0', 10);
+  const username = process.env.GLS_USERNAME || '';
+  const password = process.env.GLS_PASSWORD || '';
   const encoded  = new TextEncoder().encode(password);
   const hashBuf  = await globalThis.crypto.subtle.digest('SHA-512', encoded);
   const pwdBytes = Array.from(new Uint8Array(hashBuf));
-  return { Username: username, Password: pwdBytes, ClientNumberList: [clientNumber] };
+  // GetParcelStatuses nu vrea ClientNumberList (spre deosebire de crearea AWB-urilor) —
+  // /api/tracking (care chiar funcționează, confirmat live) nu-l trimite deloc; adăugarea
+  // lui aici era motivul pentru care gls-sync primea glsQueried:0 pentru toate coletele.
+  return { Username: username, Password: pwdBytes };
 }
 
 async function glsPost(endpoint: string, body: Record<string, unknown>) {
@@ -122,6 +124,7 @@ const ACTIVE_STATUSES: ShipmentStatus[] = [
 
 async function fetchGlsStatuses(trackingNumbers: string[]) {
   const results = new Map<string, { newStatus: AppStatus; glsCode: unknown; glsDescription: string; lastEvent: string }>();
+  const diagnostics: string[] = [];
   const BATCH = 10;
 
   for (let i = 0; i < trackingNumbers.length; i += BATCH) {
@@ -129,18 +132,30 @@ async function fetchGlsStatuses(trackingNumbers: string[]) {
     await Promise.all(batch.map(async (tn) => {
       try {
         const parcelNum = parseInt(tn.replace(/\D/g, ''), 10);
-        if (isNaN(parcelNum)) return;
+        if (isNaN(parcelNum)) { diagnostics.push(`${tn}: tracking number invalid (nu conține cifre)`); return; }
         const data = await glsPost('GetParcelStatuses', {
           ParcelNumber:    parcelNum,
           ReturnPOD:       false,
           LanguageIsoCode: 'RO',
         });
+        const glsErrors = data?.GetParcelStatusErrors ?? [];
+        if (Array.isArray(glsErrors) && glsErrors.length > 0) {
+          diagnostics.push(`${tn}: GLS a răspuns cu eroare — ${JSON.stringify(glsErrors).slice(0, 200)}`);
+          return;
+        }
+        if (data?.ErrorCode || data?.ErrorDescription) {
+          diagnostics.push(`${tn}: GLS a răspuns cu eroare — ${data.ErrorCode ?? ''} ${data.ErrorDescription ?? ''}`.trim());
+          return;
+        }
         const statusList: Array<Record<string, unknown>> =
           (data?.ParcelStatusList ?? data?.GetParcelStatusesResult?.ParcelStatusList ?? []) as Array<Record<string, unknown>>;
-        if (!Array.isArray(statusList) || statusList.length === 0) return;
+        if (!Array.isArray(statusList) || statusList.length === 0) {
+          diagnostics.push(`${tn}: GLS n-a returnat niciun status pentru acest AWB`);
+          return;
+        }
         const events: Array<Record<string, unknown>> =
           (statusList[0]?.ParcelEvents ?? statusList[0]?.StatusList ?? []) as Array<Record<string, unknown>>;
-        if (events.length === 0) return;
+        if (events.length === 0) { diagnostics.push(`${tn}: GLS a returnat coletul dar fără evenimente de tracking`); return; }
         const last = events[events.length - 1];
         const code = last?.Code ?? last?.StatusCode ?? 0;
         const desc = String(last?.Description ?? last?.StatusDescription ?? '');
@@ -151,12 +166,14 @@ async function fetchGlsStatuses(trackingNumbers: string[]) {
           lastEvent:      `${String(last?.Date ?? '')} ${String(last?.Time ?? '')} — ${desc}`.trim(),
         });
       } catch (err) {
-        console.warn(`[gls-sync] failed for ${tn}:`, (err as Error).message);
+        const msg = (err as Error).message;
+        console.warn(`[gls-sync] failed for ${tn}:`, msg);
+        diagnostics.push(`${tn}: ${msg}`);
       }
     }));
     if (i + BATCH < trackingNumbers.length) await new Promise(r => setTimeout(r, 300));
   }
-  return results;
+  return { results, diagnostics };
 }
 
 export async function GET(request: Request) {
@@ -190,7 +207,7 @@ export async function GET(request: Request) {
     }
 
     const trackingNumbers = Array.from(new Set(shipments.map(s => s.trackingNumber).filter(Boolean)));
-    const glsStatuses = await fetchGlsStatuses(trackingNumbers).catch((err) => {
+    const { results: glsStatuses, diagnostics } = await fetchGlsStatuses(trackingNumbers).catch((err) => {
       throw new Error(`GLS API error: ${(err as Error).message}`);
     });
 
@@ -205,6 +222,7 @@ export async function GET(request: Request) {
         ok: true, dryRun: true,
         checked: shipments.length, glsQueried: glsStatuses.size,
         toUpdate: updates.length, updates,
+        diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
         elapsed: Date.now() - startedAt,
       });
     }
@@ -241,6 +259,7 @@ export async function GET(request: Request) {
       updated,
       unchanged: shipments.length - updates.length,
       errors: errors.length > 0 ? errors : undefined,
+      diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
       updates: updates.map(u => ({
         tracking:  u.trackingNumber,
         oldStatus: u.oldStatus,
