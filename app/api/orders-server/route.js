@@ -100,11 +100,26 @@ function mapDbOrder(o) {
   const items = Array.isArray(o.lineItems) ? o.lineItems : [];
   const prods = items.map(i => i.name || '').filter(Boolean).join(' + ');
 
-  // Tracking din DB shipment (dacă există)
-  if (shipment && !trackingNo) {
-    trackingNo = shipment.trackingNumber || '';
-    courier = (shipment.courier || '').toLowerCase();
-    if (trackingNo) ts = 'incurs'; // are AWB = în tranzit (minim)
+  // Tracking din DB shipment — sursă AUTORITATIVĂ pentru livrare reală.
+  // rawPayload-ul Shopify nu are niciodată statusul curierului GLS/Sameday
+  // (Shopify nu integrează acei curieri), deci ts/fulfilledAt deduse mai sus
+  // pot rămâne "fulfilled dar fără fulfilledAt" la nesfârșit. Shipment.status
+  // e actualizat de sincronizarea proprie (gls-sync) cu statusul real de la
+  // curier, deci îl folosim ca să suprascriem ts/fulfilledAt când există.
+  if (shipment && o.status !== 'CANCELLED') {
+    if (!trackingNo) trackingNo = shipment.trackingNumber || '';
+    if (shipment.courier) courier = shipment.courier.toLowerCase();
+    const shipStatus = (shipment.status || '').toUpperCase();
+    if (shipStatus === 'DELIVERED') {
+      ts = 'livrat';
+      if (shipment.deliveredAt) fulfilledAt = shipment.deliveredAt.toISOString();
+    } else if (['RETURNED', 'FAILED_ATTEMPT', 'FAILED'].includes(shipStatus)) {
+      ts = 'retur';
+    } else if (shipStatus === 'OUT_FOR_DELIVERY') {
+      ts = 'outfor';
+    } else if (trackingNo && ts === 'pending') {
+      ts = 'incurs'; // are AWB = în tranzit (minim)
+    }
   }
 
   const gateway = o.paymentGateway || '';

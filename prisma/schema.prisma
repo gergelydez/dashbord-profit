@@ -188,8 +188,9 @@ model Shipment {
   fulfillmentId  String?                 // Shopify fulfillment GID (after creation)
   shopifyUpdated Boolean @default(false)
 
-  status ShipmentStatus @default(CREATED)
-  error  String?
+  status      ShipmentStatus @default(CREATED)
+  error       String?
+  deliveredAt DateTime?
 
   // Parcel details
   weight   Decimal? @db.Decimal(8, 3)
