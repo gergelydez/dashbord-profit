@@ -132,6 +132,14 @@ async function trackGLS(awb) {
       lastUpdate: parseGLSDate(last.StatusDate),
       location: last.DepotCity || '',
       hasReturnCode,
+      // Istoric complet — cel mai recent primul, folosit de fereastra
+      // "toate statusurile scanate" din pagina Comenzi.
+      history: statusList.map(s => ({
+        code:        s.StatusCode,
+        description: s.StatusDescription || '',
+        date:        parseGLSDate(s.StatusDate),
+        location:    s.DepotCity || '',
+      })),
     };
 
     trackingCache.set(cacheKey, { data: result, ts: Date.now() });
@@ -226,6 +234,12 @@ function parseSamedayResponse(text) {
       statusDate: last.statusDate || last.date || '',
       county: last.county || last.city || '',
       allStatusIds: history.map(h => h.statusId).filter(id => id != null),
+      events: history.map(h => ({
+        code:        h.statusId,
+        description: h.statusLabel || h.statusDescription || '',
+        date:        h.statusDate || h.date || '',
+        location:    h.county || h.city || '',
+      })),
     };
   } catch {}
 
@@ -259,7 +273,14 @@ function parseSamedayResponse(text) {
       .map(e => (e.match(/<statusId>\s*(\d+)\s*<\/statusId>/) || [])[1])
       .filter(Boolean);
 
-    return { statusId, statusLabel, statusDate, county, allStatusIds };
+    const events = entries.map(e => ({
+      code:        (e.match(/<statusId>\s*(\d+)\s*<\/statusId>/) || [])[1] || '',
+      description: (e.match(/<status>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/status>/) || [])[1]?.trim() || '',
+      date:        (e.match(/<statusDate>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/statusDate>/) || [])[1]?.trim() || '',
+      location:    (e.match(/<county>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/county>/) || [])[1]?.trim() || '',
+    }));
+
+    return { statusId, statusLabel, statusDate, county, allStatusIds, events };
   } catch(e) {
     console.log('[SAMEDAY] XML parse error:', e.message);
     return null;
@@ -292,6 +313,7 @@ async function trackSameday(awb) {
           lastUpdate: parsed.statusDate || '',
           location: parsed.county || '',
           hasReturnCode: SD_RETURN_CODES.includes(parseInt(parsed.statusId)),
+          history: parsed.events || [],
         };
         trackingCache.set(cacheKey, { data: result, ts: Date.now() });
         return result;
@@ -323,6 +345,7 @@ async function trackSameday(awb) {
       lastUpdate: parsed2.statusDate || '',
       location: parsed2.county || '',
       hasReturnCode: SD_RETURN_CODES.includes(parseInt(parsed2.statusId)),
+      history: parsed2.events || [],
     };
 
     trackingCache.set(cacheKey, { data: result2, ts: Date.now() });

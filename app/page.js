@@ -309,6 +309,23 @@ export default function Dashboard() {
   const [addrValidating, setAddrValidating] = useState(false);
   const [liveTrackingData, setLiveTrackingData] = useState({}); // { orderId: {statusCode, desc, location, lastUpdate, loading} }
 
+  // Fereastră cu tot istoricul de scanări pentru un colet (click pe rând în
+  // panoul "Tranzit") — util ca să vezi de ce un colet arată "livrat" live
+  // dar nu a trecut încă în lista de livrate.
+  const [historyModal, setHistoryModal] = useState(null); // { order, loading, history, error }
+  const openHistoryModal = async (o) => {
+    if (!o.trackingNo) return;
+    setHistoryModal({ order: o, loading: true, history: [], error: '' });
+    try {
+      const r = await fetch(`/api/tracking?awb=${o.trackingNo}&courier=${o.courier||'gls'}`);
+      const d = await r.json();
+      if (d.error) setHistoryModal({ order: o, loading: false, history: [], error: d.error });
+      else setHistoryModal({ order: o, loading: false, history: d.history || [], error: '' });
+    } catch (e) {
+      setHistoryModal({ order: o, loading: false, history: [], error: e.message });
+    }
+  };
+
   // Refresh-ul din panoul "Colete în tranzit" arăta un status live corect
   // (ex. "Livrat") dar nu scria nicăieri rezultatul — coletul rămânea în
   // continuare "în tranzit" pentru totdeauna, indiferent ce spunea eticheta.
@@ -2257,7 +2274,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     const catIcons = {inregistrat:'📋',ridicat:'📦',centru:'🏭',livrare:'🚴'};
                     const courierColor = o.courier==='sameday' ? '#8b5cf6' : '#f97316';
                     return (
-                      <div key={o.id} style={{padding:'10px 0',borderBottom:'1px solid rgba(255,255,255,.05)'}}>
+                      <div key={o.id} onClick={()=>openHistoryModal(o)} style={{padding:'10px 0',borderBottom:'1px solid rgba(255,255,255,.05)',cursor:o.trackingNo?'pointer':'default'}}>
                         <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
                           <span style={{color:'#f97316',fontWeight:700,fontSize:12,minWidth:60}}>{o.name}</span>
                           <span style={{color:'#94a3b8',fontSize:11,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.client}</span>
@@ -2854,6 +2871,49 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
           </>
         )}
       </div>
+
+      {historyModal&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.75)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}}
+          onClick={e=>{if(e.target===e.currentTarget)setHistoryModal(null);}}>
+          <div style={{background:'#0f1419',border:'1px solid #243040',borderRadius:14,width:'100%',maxWidth:480,maxHeight:'85vh',overflow:'auto',padding:'20px'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:'#e8edf2'}}>📋 Istoric scanări {historyModal.order.name}</div>
+                <div style={{fontSize:11,color:'#94a3b8',marginTop:2,fontFamily:'monospace'}}>{historyModal.order.trackingNo}</div>
+              </div>
+              <button onClick={()=>setHistoryModal(null)} style={{background:'transparent',border:'1px solid #243040',color:'#94a3b8',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:13}}>✕</button>
+            </div>
+            {historyModal.loading ? (
+              <div style={{textAlign:'center',color:'#475569',fontSize:12,padding:'24px 0'}}>⟳ Se încarcă...</div>
+            ) : historyModal.error ? (
+              <div style={{color:'#f43f5e',fontSize:12,padding:'12px 0'}}>⚠ {historyModal.error}</div>
+            ) : historyModal.history.length===0 ? (
+              <div style={{textAlign:'center',color:'#475569',fontSize:12,padding:'24px 0'}}>Niciun eveniment de tracking găsit.</div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',gap:0}}>
+                {historyModal.history.map((h,i)=>(
+                  <div key={i} style={{display:'flex',gap:10,padding:'9px 0',borderBottom:i<historyModal.history.length-1?'1px solid #1e2a35':'none'}}>
+                    <div style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,paddingTop:2}}>
+                      <div style={{width:8,height:8,borderRadius:'50%',background:i===0?'#f97316':'#334155'}}/>
+                      {i<historyModal.history.length-1&&<div style={{width:1,flex:1,background:'#1e2a35',marginTop:4}}/>}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                        {h.code!=null&&h.code!==''&&<span style={{fontSize:10,fontWeight:800,background:'rgba(59,130,246,.15)',color:'#93c5fd',padding:'1px 5px',borderRadius:4,fontFamily:'monospace'}}>#{h.code}</span>}
+                        <span style={{fontSize:12,fontWeight:600,color:i===0?'#f97316':'#cbd5e1'}}>{h.description||'—'}</span>
+                      </div>
+                      <div style={{fontSize:10,color:'#64748b',marginTop:2}}>
+                        {h.date&&<span>{String(h.date).slice(0,16).replace('T',' ')}</span>}
+                        {h.location&&<span> · 📍{h.location}</span>}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {invoiceModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.75)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}}

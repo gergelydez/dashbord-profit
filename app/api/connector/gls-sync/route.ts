@@ -93,6 +93,18 @@ async function glsPost(endpoint: string, body: Record<string, unknown>) {
 // Use Prisma's ShipmentStatus enum directly to stay in sync with the schema
 type AppStatus = ShipmentStatus;
 
+// Coduri GLS de refuz/retur explicit — vezi app/api/tracking/route.js
+// (GLS_RETURN_CODES) pentru istoricul deciziilor: 34/35 au fost scoase
+// fiindcă pe acest cont comenzi cu ele în istoric au fost livrate/încasate
+// cu succes. Ținem lista identică ca să nu ajungem cu două surse de adevăr
+// care se contrazic (asta a fost exact bug-ul din runda cu Sameday).
+const GLS_RETURN_CODES = [14, 17, 23, 40, 90];
+// Codul 5 e ambiguu — GLS îl reciclează atât pentru "livrat" cât și pentru
+// "predare retur înapoi la depozit", deci scanăm tot istoricul după un cod
+// de retur explicit DOAR când ultimul status e 5. Pentru orice alt cod final
+// contează doar ultimul status.
+const GLS_AMBIGUOUS_DELIVERED_CODE = 5;
+
 function mapGlsStatus(statusCode: unknown, description?: string): AppStatus {
   const code = typeof statusCode === 'string' ? parseInt(statusCode, 10) : Number(statusCode);
   if (!isNaN(code)) {
@@ -113,6 +125,14 @@ function mapGlsStatus(statusCode: unknown, description?: string): AppStatus {
   if (desc.includes('refuzat') || desc.includes('absent') || desc.includes('nelivrat')) return ShipmentStatus.FAILED_ATTEMPT;
   if (desc.includes('returnat') || desc.includes('return'))  return ShipmentStatus.RETURNED;
   return ShipmentStatus.IN_TRANSIT;
+}
+
+// GLS trimite datele ca /Date(1774645401000+0100)/ — parsăm timestamp-ul.
+function parseGlsDate(dateStr: unknown): string {
+  const s = String(dateStr ?? '');
+  const match = s.match(/\/Date\((\d+)/);
+  if (match) return new Date(parseInt(match[1], 10)).toISOString();
+  return s;
 }
 
 const ACTIVE_STATUSES: ShipmentStatus[] = [
@@ -147,23 +167,28 @@ async function fetchGlsStatuses(trackingNumbers: string[]) {
           diagnostics.push(`${tn}: GLS a răspuns cu eroare — ${data.ErrorCode ?? ''} ${data.ErrorDescription ?? ''}`.trim());
           return;
         }
+        // ParcelStatusList e o listă PLATĂ de evenimente, cel mai recent primul
+        // (nu imbricată sub .ParcelEvents — asta era a doua cauză pentru care
+        // sincronizarea nu găsea niciun status, chiar și după ce autentificarea
+        // a fost reparată). Aceeași formă ca în app/api/tracking/route.js,
+        // singura implementare confirmată să funcționeze cu acest cont GLS.
         const statusList: Array<Record<string, unknown>> =
-          (data?.ParcelStatusList ?? data?.GetParcelStatusesResult?.ParcelStatusList ?? []) as Array<Record<string, unknown>>;
+          (data?.ParcelStatusList ?? []) as Array<Record<string, unknown>>;
         if (!Array.isArray(statusList) || statusList.length === 0) {
           diagnostics.push(`${tn}: GLS n-a returnat niciun status pentru acest AWB`);
           return;
         }
-        const events: Array<Record<string, unknown>> =
-          (statusList[0]?.ParcelEvents ?? statusList[0]?.StatusList ?? []) as Array<Record<string, unknown>>;
-        if (events.length === 0) { diagnostics.push(`${tn}: GLS a returnat coletul dar fără evenimente de tracking`); return; }
-        const last = events[events.length - 1];
-        const code = last?.Code ?? last?.StatusCode ?? 0;
-        const desc = String(last?.Description ?? last?.StatusDescription ?? '');
+        const last = statusList[0];
+        const lastCode = parseInt(String(last?.StatusCode ?? ''), 10);
+        const desc = String(last?.StatusDescription ?? '');
+        const hasReturnCode = lastCode === GLS_AMBIGUOUS_DELIVERED_CODE
+          ? statusList.some(s => GLS_RETURN_CODES.includes(parseInt(String(s?.StatusCode ?? ''), 10)))
+          : GLS_RETURN_CODES.includes(lastCode);
         results.set(tn, {
-          newStatus:      mapGlsStatus(code, desc),
-          glsCode:        code,
+          newStatus:      hasReturnCode ? ShipmentStatus.RETURNED : mapGlsStatus(lastCode, desc),
+          glsCode:        lastCode,
           glsDescription: desc,
-          lastEvent:      `${String(last?.Date ?? '')} ${String(last?.Time ?? '')} — ${desc}`.trim(),
+          lastEvent:      `${parseGlsDate(last?.StatusDate)} — ${desc}`.trim(),
         });
       } catch (err) {
         const msg = (err as Error).message;
