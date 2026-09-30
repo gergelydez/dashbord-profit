@@ -72,7 +72,7 @@ const PRESETS = [
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORT EXCEL
 // ─────────────────────────────────────────────────────────────────────────────
-async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed, from, to }) {
+async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed, from, to, currency = 'RON' }) {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
   const fromD = new Date(from + 'T00:00:00');
@@ -87,8 +87,8 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
   };
 
   // ── Sheet 1 – Rezumat pe zile ──────────────────────────────────────────────
-  const hdr1 = ['Data Incasare', 'Nr. Comenzi', 'GLS Ramburs (RON)', 'Sameday Ramburs (RON)',
-    'Card Brut (RON)', 'Comision Shopify (RON)', 'Card Net (RON)', 'TOTAL INCASAT (RON)'];
+  const hdr1 = ['Data Incasare', 'Nr. Comenzi', `GLS Ramburs (${currency})`, `Sameday Ramburs (${currency})`,
+    `Card Brut (${currency})`, `Comision Shopify (${currency})`, `Card Net (${currency})`, `TOTAL INCASAT (${currency})`];
   const rows1 = [hdr1];
   let tGLS=0,tSD=0,tSPBrut=0,tSPCom=0,tSPNet=0,tTot=0,tCnt=0;
   (incasariList||[]).forEach(([zi,v]) => {
@@ -109,8 +109,8 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     'Data Incasare','Sursa Incasare',
     'Nr. Comanda','Nr. Factura',
     'Client','Adresa','Oras',
-    'Valoare Factura (RON)',
-    'Valoare Bruta (RON)','Comision Shopify (RON)','NET Incasat (RON)',
+    `Valoare Factura (${currency})`,
+    `Valoare Bruta (${currency})`,`Comision Shopify (${currency})`,`NET Incasat (${currency})`,
     'AWB','Courier'
   ];
   detailRows.push(hdr5);
@@ -288,7 +288,7 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     if (getFinalStatus(o, sdAwbMap) !== 'livrat') return false;
     const c = new Date(o.createdAt); return c >= fromD && c <= toD;
   });
-  const hdr2 = ['Data Comanda','Data Incasare (est.)','Nr. Comanda','AWB','Client','Adresa','Oras','Nr. Factura','Valoare Incasata (RON)'];
+  const hdr2 = ['Data Comanda','Data Incasare (est.)','Nr. Comanda','AWB','Client','Adresa','Oras','Nr. Factura',`Valoare Incasata (${currency})`];
   const rows2 = [hdr2];
   let totGLS2 = 0;
   glsOrders.forEach(o => {
@@ -317,7 +317,7 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
     if (getFinalStatus(o, sdAwbMap) !== 'livrat') return false;
     const c = new Date(o.createdAt); return c >= fromD && c <= toD;
   });
-  const hdr3 = ['Data Comanda','Data Incasare (est.)','Nr. Comanda','AWB','Client','Adresa','Oras','Nr. Factura','Valoare Incasata (RON)'];
+  const hdr3 = ['Data Comanda','Data Incasare (est.)','Nr. Comanda','AWB','Client','Adresa','Oras','Nr. Factura',`Valoare Incasata (${currency})`];
   const rows3 = [hdr3];
   let totSD3 = 0;
   sdOrders.forEach(o => {
@@ -346,7 +346,7 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
   });
   const hdr4 = [
     'Data Comanda','Data Incasare (est.)','Nr. Comanda','Client','Adresa','Oras','Nr. Factura',
-    'Valoare Comanda (RON)','Comision % (' + shopifyFeePercent + '%)','Comision Fix (RON)','Comision TOTAL (RON)','NET Incasat (RON)'
+    `Valoare Comanda (${currency})`,'Comision % (' + shopifyFeePercent + '%)',`Comision Fix (${currency})`,`Comision TOTAL (${currency})`,`NET Incasat (${currency})`
   ];
   const rows4 = [hdr4];
   let spTotBrut=0, spTotCom=0, spTotNet=0;
@@ -384,7 +384,7 @@ async function exportExcel({ incasariList, allOrders, onlineIds, sdAwbMap, shopi
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORT PDF
 // ─────────────────────────────────────────────────────────────────────────────
-async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, to, shopifyFeePercent, shopifyFeeFixed }) {
+async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, to, shopifyFeePercent, shopifyFeeFixed, currency = 'RON' }) {
   const { jsPDF } = await import('jspdf');
   await import('jspdf-autotable');
 
@@ -471,7 +471,7 @@ async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, t
     doc.text(`Raport Incasari  ${label}`, 40, 13);
     doc.setTextColor(...C.text2);
     doc.setFontSize(7.5);
-    doc.text(`Comision Shopify: ${shopifyFeePercent}% + ${shopifyFeeFixed} RON  |  Generat: ${new Date().toLocaleDateString('ro-RO')}`, pageW - 14, 13, { align: 'right' });
+    doc.text(`Comision Shopify: ${shopifyFeePercent}% + ${shopifyFeeFixed} ${currency}  |  Generat: ${new Date().toLocaleDateString('ro-RO')}`, pageW - 14, 13, { align: 'right' });
   };
 
   // ── Funcție footer pagină ──────────────────────────────────────────────────
@@ -603,8 +603,8 @@ async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, t
       });
 
       const head = isShopify
-        ? [['Nr. Comandă','Nr. Factură','Client','Oraș','Valoare (RON)','Comision (RON)','NET (RON)']]
-        : [['Nr. Comandă','Nr. Factură','Client','Oraș','Valoare Incasată (RON)']];
+        ? [['Nr. Comandă','Nr. Factură','Client','Oraș',`Valoare (${currency})`,`Comision (${currency})`,`NET (${currency})`]]
+        : [['Nr. Comandă','Nr. Factură','Client','Oraș',`Valoare Incasată (${currency})`]];
 
       const colStyles = isShopify ? {
         0: { cellWidth: 28 }, 1: { cellWidth: 26 }, 2: { cellWidth: 55 },
@@ -638,12 +638,12 @@ async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, t
       doc.setTextColor(...subTextColor);
       doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
       const subLabel = isShopify
-        ? `  ► Shopify/Card ${ziLabel}  |  ${rows.length} comenzi  |  Brut: ${fmtNum(dayBrut + (secTotal - dayNet || 0))} RON  |  Comision: ${fmtNum(dayCom)} RON  |  NET: `
+        ? `  ► Shopify/Card ${ziLabel}  |  ${rows.length} comenzi  |  Brut: ${fmtNum(dayBrut + (secTotal - dayNet || 0))} ${currency}  |  Comision: ${fmtNum(dayCom)} ${currency}  |  NET: `
         : `  ► ${sursa} ${ziLabel}  |  ${rows.length} comenzi  |  Total incasat: `;
       doc.text(subLabel, 16, yPos + 5);
       doc.setTextColor(...C.yellow);
       const subValX = 14 + doc.getTextWidth(subLabel) + 2;
-      doc.text(`${fmtNum(secTotal)} RON`, subValX, yPos + 5);
+      doc.text(`${fmtNum(secTotal)} ${currency}`, subValX, yPos + 5);
       yPos += 10;
 
       return secTotal;
@@ -676,10 +676,10 @@ async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, t
     doc.rect(14, yPos, 3, 9, 'F');
     doc.setTextColor(...C.white);
     doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
-    const totLine = `  ▶▶ TOTAL INCASAT ${ziLabel}   |   GLS: ${fmtNum(dayGLS)} RON   |   Sameday: ${fmtNum(daySD)} RON   |   Shopify NET: ${fmtNum(dayNet)} RON   |   TOTAL: `;
+    const totLine = `  ▶▶ TOTAL INCASAT ${ziLabel}   |   GLS: ${fmtNum(dayGLS)} ${currency}   |   Sameday: ${fmtNum(daySD)} ${currency}   |   Shopify NET: ${fmtNum(dayNet)} ${currency}   |   TOTAL: `;
     doc.text(totLine, 17, yPos + 6.5);
     doc.setTextColor(...C.yellow);
-    doc.text(`${fmtNum(totalZi)} RON`, 17 + doc.getTextWidth(totLine), yPos + 6.5);
+    doc.text(`${fmtNum(totalZi)} ${currency}`, 17 + doc.getTextWidth(totLine), yPos + 6.5);
     yPos += 12;
   });
 
@@ -700,7 +700,7 @@ async function exportPDF({ incasariList, allOrders, onlineIds, sdAwbMap, from, t
 
   doc.autoTable({
     startY: yPos,
-    head: [['Sursa Incasare', 'Total Brut (RON)', 'Comision (RON)', 'NET Incasat (RON)']],
+    head: [['Sursa Incasare', `Total Brut (${currency})`, `Comision (${currency})`, `NET Incasat (${currency})`]],
     body: [
       ['GLS Ramburs', fmtNum(grandGLS), '0.00', fmtNum(grandGLS)],
       ['Sameday Ramburs', fmtNum(grandSD), '0.00', fmtNum(grandSD)],
@@ -747,16 +747,18 @@ export default function Stats() {
   const [shopifyFeePercent, setShopifyFeePercent] = useState(() => parseFloat(ls.get('sp_fee_pct') || '1.9'));
   const [shopifyFeeFixed, setShopifyFeeFixed]     = useState(() => parseFloat(ls.get('sp_fee_fix') || '1.25'));
   const [incasatModal, setIncasatModal] = useState(null); // dateStr — ce zi arătăm în modalul cu lista de comenzi
+  const [currency, setCurrency] = useState('RON'); // moneda magazinului activ — HUF pentru Glato HU
 
   useEffect(() => {
     const loadForShop = (sk) => {
       const saved = ls.get(ordersKey(sk));
-      if (!saved) { setAllOrders([]); return; }
+      if (!saved) { setAllOrders([]); setCurrency('RON'); return; }
       try {
         const parsed = JSON.parse(saved);
         const ts = ls.get('gx_fetch_time');
         if (ts) setLastFetch(new Date(ts));
         setAllOrders(applyOverrides(parsed));
+        setCurrency(parsed.find(o => o.currency)?.currency || 'RON');
       } catch {}
     };
     loadForShop(getShopKey());
@@ -984,18 +986,18 @@ export default function Stats() {
     setExporting('excel');
     try {
       await exportExcel({ incasariList: stats.incasariList, allOrders, onlineIds, sdAwbMap,
-        shopifyFeePercent, shopifyFeeFixed, from, to });
+        shopifyFeePercent, shopifyFeeFixed, from, to, currency });
     } catch(e) { console.error(e); alert('Eroare export Excel: ' + e.message); }
     setExporting('');
-  }, [stats.incasariList, allOrders, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed, from, to]);
+  }, [stats.incasariList, allOrders, onlineIds, sdAwbMap, shopifyFeePercent, shopifyFeeFixed, from, to, currency]);
 
   const handlePDFExport = useCallback(async () => {
     setExporting('pdf');
     try {
-      await exportPDF({ incasariList: stats.incasariList, allOrders, onlineIds, sdAwbMap, from, to, shopifyFeePercent, shopifyFeeFixed });
+      await exportPDF({ incasariList: stats.incasariList, allOrders, onlineIds, sdAwbMap, from, to, shopifyFeePercent, shopifyFeeFixed, currency });
     } catch(e) { console.error(e); alert('Eroare export PDF: ' + e.message); }
     setExporting('');
-  }, [stats.incasariList, from, to, shopifyFeePercent, shopifyFeeFixed]);
+  }, [stats.incasariList, from, to, shopifyFeePercent, shopifyFeeFixed, currency]);
 
   const Bar = ({ pct, color }) => (
     <div style={{height:4,background:'#1e2a35',borderRadius:2,overflow:'hidden',marginTop:4}}>
@@ -1125,23 +1127,23 @@ export default function Stats() {
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:10,marginBottom:8}}>
           <div style={{background:'#0d1520',border:'1px solid #10b981',borderRadius:12,padding:'16px 18px'}}>
             <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Incasat (livrate)</div>
-            <div style={{fontSize:26,fontWeight:800,color:'#10b981'}}>{fmt(stats.sumLivrate)} <span style={{fontSize:13}}>RON</span></div>
-            <div style={{fontSize:11,color:'#4a5568',marginTop:4}}>din {stats.livrate} comenzi livrate · avg {fmt(stats.avgOrder)} RON</div>
+            <div style={{fontSize:26,fontWeight:800,color:'#10b981'}}>{fmt(stats.sumLivrate)} <span style={{fontSize:13}}>{currency}</span></div>
+            <div style={{fontSize:11,color:'#4a5568',marginTop:4}}>din {stats.livrate} comenzi livrate · avg {fmt(stats.avgOrder)} {currency}</div>
           </div>
           <div style={{background:'#0d1520',border:'1px solid #f59e0b',borderRadius:12,padding:'16px 18px'}}>
             <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>COD ramburs</div>
-            <div style={{fontSize:26,fontWeight:800,color:'#f59e0b'}}>{fmt(stats.sumCOD)} <span style={{fontSize:13}}>RON</span></div>
+            <div style={{fontSize:26,fontWeight:800,color:'#f59e0b'}}>{fmt(stats.sumCOD)} <span style={{fontSize:13}}>{currency}</span></div>
             <div style={{fontSize:11,color:'#4a5568',marginTop:4}}>{stats.codCount} comenzi COD</div>
           </div>
           <div style={{background:'#0d1520',border:'1px solid #3b82f6',borderRadius:12,padding:'16px 18px'}}>
             <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Shopify Payments</div>
-            <div style={{fontSize:26,fontWeight:800,color:'#3b82f6'}}>{fmt(stats.sumOnline)} <span style={{fontSize:13}}>RON</span></div>
+            <div style={{fontSize:26,fontWeight:800,color:'#3b82f6'}}>{fmt(stats.sumOnline)} <span style={{fontSize:13}}>{currency}</span></div>
             <div style={{fontSize:11,color:'#4a5568',marginTop:4}}>{stats.onlineCount} comenzi card · toate din perioada</div>
           </div>
           {stats.sumRetur > 0 && (
             <div style={{background:'#0d1520',border:'1px solid #f43f5e',borderRadius:12,padding:'16px 18px'}}>
               <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Pierdut retur</div>
-              <div style={{fontSize:26,fontWeight:800,color:'#f43f5e'}}>{fmt(stats.sumRetur)} <span style={{fontSize:13}}>RON</span></div>
+              <div style={{fontSize:26,fontWeight:800,color:'#f43f5e'}}>{fmt(stats.sumRetur)} <span style={{fontSize:13}}>{currency}</span></div>
               <div style={{fontSize:11,color:'#4a5568',marginTop:4}}>{stats.retururi} retururi</div>
             </div>
           )}
@@ -1158,9 +1160,9 @@ export default function Stats() {
             <input type="number" step="0.01" min="0" value={shopifyFeeFixed}
               onChange={e=>{const v=parseFloat(e.target.value)||0;setShopifyFeeFixed(v);try{localStorage.setItem('sp_fee_fix',String(v));}catch{}}}
               style={{width:60,background:'#161d24',border:'1px solid #3b82f6',color:'#e8edf2',padding:'4px 8px',borderRadius:6,fontSize:12,outline:'none',textAlign:'center'}}/>
-            <span style={{fontSize:11,color:'#94a3b8'}}>RON fix</span>
+            <span style={{fontSize:11,color:'#94a3b8'}}>{currency} fix</span>
           </div>
-          <span style={{fontSize:10,color:'#4a5568'}}>ex: 399 x (1-{shopifyFeePercent}%) = {fmt(399*(1-shopifyFeePercent/100)-shopifyFeeFixed)} RON net</span>
+          <span style={{fontSize:10,color:'#4a5568'}}>ex: 399 x (1-{shopifyFeePercent}%) = {fmt(399*(1-shopifyFeePercent/100)-shopifyFeeFixed)} {currency} net</span>
         </div>
 
         <Section title="De incasat"/>
@@ -1174,10 +1176,10 @@ export default function Stats() {
               <div key={dateStr} onClick={()=>p.total>0&&setIncasatModal(dateStr)}
                 style={{background:'#0d1520',border:`1px solid ${color}`,borderRadius:12,padding:'14px 16px',cursor:p.total>0?'pointer':'default'}}>
                 <div style={{fontSize:10,color,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{label}</div>
-                <div style={{fontSize:24,fontWeight:800,color,marginBottom:8}}>{fmt(p.total)} <span style={{fontSize:12}}>RON</span></div>
-                {p.gls>0     && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>📦 GLS: <strong style={{color:'#f97316'}}>{fmt(p.gls)} RON</strong></div>}
-                {p.sameday>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>🚀 SD: <strong style={{color:'#3b82f6'}}>{fmt(p.sameday)} RON</strong></div>}
-                {p.shopify>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>💳 Card: <strong style={{color:'#a855f7'}}>{fmt(p.shopify)} RON</strong></div>}
+                <div style={{fontSize:24,fontWeight:800,color,marginBottom:8}}>{fmt(p.total)} <span style={{fontSize:12}}>{currency}</span></div>
+                {p.gls>0     && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>📦 GLS: <strong style={{color:'#f97316'}}>{fmt(p.gls)} {currency}</strong></div>}
+                {p.sameday>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>🚀 SD: <strong style={{color:'#3b82f6'}}>{fmt(p.sameday)} {currency}</strong></div>}
+                {p.shopify>0 && <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>💳 Card: <strong style={{color:'#a855f7'}}>{fmt(p.shopify)} {currency}</strong></div>}
                 {p.total===0 && <div style={{fontSize:11,color:'#4a5568'}}>Nimic programat</div>}
                 {p.total>0 && <div style={{fontSize:10,color:'#334155',marginTop:6}}>👆 Vezi comenzile</div>}
               </div>
@@ -1188,18 +1190,18 @@ export default function Stats() {
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:10}}>
           <div style={{background:'#0d1520',border:'1px solid #f97316',borderRadius:12,padding:'14px 16px'}}>
             <div style={{fontSize:10,color:'#f97316',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>📦 GLS Total</div>
-            <div style={{fontSize:22,fontWeight:800,color:'#f97316'}}>{fmt(stats.totalGLS||0)} <span style={{fontSize:11}}>RON</span></div>
+            <div style={{fontSize:22,fontWeight:800,color:'#f97316'}}>{fmt(stats.totalGLS||0)} <span style={{fontSize:11}}>{currency}</span></div>
             <div style={{fontSize:10,color:'#4a5568',marginTop:3}}>ramburs COD livrate</div>
           </div>
           <div style={{background:'#0d1520',border:'1px solid #3b82f6',borderRadius:12,padding:'14px 16px'}}>
             <div style={{fontSize:10,color:'#3b82f6',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>🚀 Sameday Total</div>
-            <div style={{fontSize:22,fontWeight:800,color:'#3b82f6'}}>{fmt(stats.totalSameday||0)} <span style={{fontSize:11}}>RON</span></div>
+            <div style={{fontSize:22,fontWeight:800,color:'#3b82f6'}}>{fmt(stats.totalSameday||0)} <span style={{fontSize:11}}>{currency}</span></div>
             <div style={{fontSize:10,color:'#4a5568',marginTop:3}}>ramburs COD livrate</div>
           </div>
           <div style={{background:'#0d1520',border:'1px solid #a855f7',borderRadius:12,padding:'14px 16px'}}>
             <div style={{fontSize:10,color:'#a855f7',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>💳 Shopify Payments</div>
-            <div style={{fontSize:22,fontWeight:800,color:'#a855f7'}}>{fmt(stats.totalShopify||0)} <span style={{fontSize:11}}>RON</span></div>
-            <div style={{fontSize:10,color:'#4a5568',marginTop:3}}>brut: {fmt(stats.totalShopifyBrut||0)} · comision: {fmt((stats.totalShopifyBrut||0)-(stats.totalShopify||0))} RON</div>
+            <div style={{fontSize:22,fontWeight:800,color:'#a855f7'}}>{fmt(stats.totalShopify||0)} <span style={{fontSize:11}}>{currency}</span></div>
+            <div style={{fontSize:10,color:'#4a5568',marginTop:3}}>brut: {fmt(stats.totalShopifyBrut||0)} · comision: {fmt((stats.totalShopifyBrut||0)-(stats.totalShopify||0))} {currency}</div>
           </div>
           {(stats.workDays||[]).slice(2).some(d=>(stats.previziuni?.[d]?.total||0)>0) && (
             <div style={{background:'#0d1520',border:'1px solid #f59e0b',borderRadius:12,padding:'14px 16px'}}>
@@ -1249,12 +1251,12 @@ export default function Stats() {
                   <tr key={zi} style={{borderTop:'1px solid #1e2a35'}}>
                     <td style={{padding:'8px 12px',color:'#e8edf2',fontFamily:'monospace',fontWeight:500}}>{zi.split('-').reverse().join('.')}</td>
                     <td style={{padding:'8px 12px',textAlign:'right',color:'#94a3b8'}}>{v.count}</td>
-                    <td style={{padding:'8px 12px',textAlign:'right',color:v.gls>0?'#f97316':'#4a5568',fontFamily:'monospace'}}>{v.gls>0?fmt(v.gls)+' RON':'—'}</td>
-                    <td style={{padding:'8px 12px',textAlign:'right',color:v.sameday>0?'#3b82f6':'#4a5568',fontFamily:'monospace'}}>{v.sameday>0?fmt(v.sameday)+' RON':'—'}</td>
-                    <td style={{padding:'8px 12px',textAlign:'right',color:(v.shopifyBrut||0)>0?'#a855f7':'#4a5568',fontFamily:'monospace'}}>{(v.shopifyBrut||0)>0?fmt(v.shopifyBrut)+' RON':'—'}</td>
-                    <td style={{padding:'8px 12px',textAlign:'right',color:(v.shopifyComision||0)>0?'#f43f5e':'#4a5568',fontFamily:'monospace',fontSize:11}}>{(v.shopifyComision||0)>0?'-'+fmt(v.shopifyComision)+' RON':'—'}</td>
-                    <td style={{padding:'8px 12px',textAlign:'right',color:v.shopify>0?'#a855f7':'#4a5568',fontFamily:'monospace'}}>{v.shopify>0?fmt(v.shopify)+' RON':'—'}</td>
-                    <td style={{padding:'8px 12px',textAlign:'right',color:'#10b981',fontFamily:'monospace',fontWeight:700}}>{fmt(v.total)} RON</td>
+                    <td style={{padding:'8px 12px',textAlign:'right',color:v.gls>0?'#f97316':'#4a5568',fontFamily:'monospace'}}>{v.gls>0?fmt(v.gls)+' '+currency:'—'}</td>
+                    <td style={{padding:'8px 12px',textAlign:'right',color:v.sameday>0?'#3b82f6':'#4a5568',fontFamily:'monospace'}}>{v.sameday>0?fmt(v.sameday)+' '+currency:'—'}</td>
+                    <td style={{padding:'8px 12px',textAlign:'right',color:(v.shopifyBrut||0)>0?'#a855f7':'#4a5568',fontFamily:'monospace'}}>{(v.shopifyBrut||0)>0?fmt(v.shopifyBrut)+' '+currency:'—'}</td>
+                    <td style={{padding:'8px 12px',textAlign:'right',color:(v.shopifyComision||0)>0?'#f43f5e':'#4a5568',fontFamily:'monospace',fontSize:11}}>{(v.shopifyComision||0)>0?'-'+fmt(v.shopifyComision)+' '+currency:'—'}</td>
+                    <td style={{padding:'8px 12px',textAlign:'right',color:v.shopify>0?'#a855f7':'#4a5568',fontFamily:'monospace'}}>{v.shopify>0?fmt(v.shopify)+' '+currency:'—'}</td>
+                    <td style={{padding:'8px 12px',textAlign:'right',color:'#10b981',fontFamily:'monospace',fontWeight:700}}>{fmt(v.total)} {currency}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1330,7 +1332,7 @@ export default function Stats() {
                   {stats.topProd.sku&&<div style={{fontSize:11,color:'#4a5568',fontFamily:'monospace'}}>SKU: {stats.topProd.sku}</div>}
                 </div>
                 <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
-                  {[{v:fmtInt(stats.topProd.qty),l:'buc vandute',c:'#f97316'},{v:fmt(stats.avgPrice),l:'RON pret mediu',c:'#10b981'},{v:fmt(stats.topProd.revenue),l:'RON total',c:'#f59e0b'}].map(({v,l,c})=>(
+                  {[{v:fmtInt(stats.topProd.qty),l:'buc vandute',c:'#f97316'},{v:fmt(stats.avgPrice),l:currency+' pret mediu',c:'#10b981'},{v:fmt(stats.topProd.revenue),l:currency+' total',c:'#f59e0b'}].map(({v,l,c})=>(
                     <div key={l} style={{textAlign:'center'}}>
                       <div style={{fontSize:28,fontWeight:800,color:c}}>{v}</div>
                       <div style={{fontSize:10,color:'#94a3b8'}}>{l}</div>
@@ -1358,8 +1360,8 @@ export default function Stats() {
                           <td style={{padding:'8px 12px',color:'#e8edf2',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.name}>{p.name}</td>
                           <td style={{padding:'8px 12px',color:'#4a5568',fontFamily:'monospace',fontSize:11}}>{p.sku||'—'}</td>
                           <td style={{padding:'8px 12px',color:i===0?'#f97316':'#10b981',fontWeight:700,fontFamily:'monospace'}}>{fmtInt(p.qty)}</td>
-                          <td style={{padding:'8px 12px',color:'#94a3b8',fontFamily:'monospace'}}>{fmt(p.revenue/p.qty)} RON</td>
-                          <td style={{padding:'8px 12px',color:'#f59e0b',fontFamily:'monospace',fontWeight:600}}>{fmt(p.revenue)} RON</td>
+                          <td style={{padding:'8px 12px',color:'#94a3b8',fontFamily:'monospace'}}>{fmt(p.revenue/p.qty)} {currency}</td>
+                          <td style={{padding:'8px 12px',color:'#f59e0b',fontFamily:'monospace',fontWeight:600}}>{fmt(p.revenue)} {currency}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1384,7 +1386,7 @@ export default function Stats() {
               <div style={{padding:'16px 18px',borderBottom:'1px solid #1e2a35',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
                 <div>
                   <div style={{fontSize:14,fontWeight:800,color:'#e8edf2'}}>💰 De incasat — {dayLabel}</div>
-                  <div style={{fontSize:11,color:'#4a5568',marginTop:2}}>{p.orders.length} comenzi · {fmt(p.total)} RON</div>
+                  <div style={{fontSize:11,color:'#4a5568',marginTop:2}}>{p.orders.length} comenzi · {fmt(p.total)} {currency}</div>
                 </div>
                 <button onClick={()=>setIncasatModal(null)}
                   style={{background:'rgba(255,255,255,.07)',border:'1px solid rgba(255,255,255,.1)',color:'#94a3b8',padding:'6px 12px',borderRadius:8,cursor:'pointer',fontSize:13}}>✕</button>
@@ -1402,7 +1404,7 @@ export default function Stats() {
                       </div>
                       <div style={{textAlign:'right',flexShrink:0}}>
                         <div style={{fontSize:10,color:cm.color,fontWeight:700}}>{cm.icon} {cm.label}</div>
-                        <div style={{fontSize:13,fontWeight:700,color:'#10b981',fontFamily:'monospace'}}>{fmt(o.val)} RON</div>
+                        <div style={{fontSize:13,fontWeight:700,color:'#10b981',fontFamily:'monospace'}}>{fmt(o.val)} {currency}</div>
                       </div>
                     </div>
                   );
