@@ -479,9 +479,56 @@ export default function Dashboard() {
     setRangeLabel(`${fmtD(from+'T00:00:00')} — ${fmtD(to+'T00:00:00')}`);
   }, []);
 
+  // Un singur citit din trackingOverrides pe randare — refolosit de
+  // getSdStatus/getGlsStatusFinal mai jos (un colet e verificat individual,
+  // deci trackingOverrides e mereu mai proaspăt decât un glsAwbMap/sdAwbMap
+  // populat cândva printr-un import/sincronizare pe altă perioadă).
+  const trackingOverridesMap = trackingOverrides.get();
+
+  const getSdStatus = (order) => {
+    if (!order) return null;
+    const ov = trackingOverridesMap[order.id];
+    if (ov?.ts) return ov.ts;
+    const awb = (order.trackingNo || '').trim();
+    if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
+    return order.ts !== 'pending' ? order.ts : null;
+  };
+
+  // GLS status: prioritizăm Excel din MyGLS > Shopify/xConnector
+  const getGlsStatusFinal = (o) => {
+    const ov = trackingOverridesMap[o.id];
+    if (ov?.ts) return ov.ts;
+    const awb = (o.trackingNo || '').trim();
+    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
+    return o.ts;
+  };
+
+  // Rezoluție de status folosită PESTE TOT în pagină (tab-uri, bife de rând,
+  // KPI-uri) — mutată aici (era definită mult mai jos) fiindcă applyFilters
+  // și badge-ul de status pe rând foloseau o.ts brut, fără trackingOverrides/
+  // glsAwbMap/sdAwbMap, deci un colet putea arăta "Livrat" la statistici
+  // (care foloseau getFinalStatus) dar "Tranzit" în lista de Comenzi.
+  const getFinalStatus = (o) => {
+    const s = o.courier === 'gls' ? getGlsStatusFinal(o)
+            : o.courier === 'sameday' ? (getSdStatus(o) || o.ts)
+            : o.ts;
+    // Regula "peste 30 zile blocat = anulat" există deja în
+    // applyTrackingOverrides (mai sus, pe o.ts), dar glsAwbMap/sdAwbMap sau
+    // un trackingOverride mai vechi pot întoarce tot 'incurs'/'outfor' pentru
+    // un AWB pe care curierul însuși l-a abandonat cu luni în urmă (înregistrat
+    // dar niciodată ridicat, adresă greșită nerezolvată etc.) — fără ea, un
+    // colet mort rămâne etern în "Colete în tranzit". O aplicăm aici, la
+    // final, ca să conteze indiferent din ce sursă vine statusul.
+    if (['incurs','outfor','easybox'].includes(s) && o.createdAt) {
+      const daysSince = (new Date() - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
+      if (daysSince > 30) return 'anulat';
+    }
+    return s;
+  };
+
   const applyFilters = useCallback((ords, f, q, sc, sd, cf) => {
     let result = ords.filter(o => {
-      if (f !== 'toate' && o.ts !== f) return false;
+      if (f !== 'toate' && getFinalStatus(o) !== f) return false;
       if (cf && cf !== 'toate' && o.courier !== cf) return false;
       if (!q) return true;
       return [o.name,o.client,o.oras,o.prods,o.trackingNo].some(v => (v||'').toLowerCase().includes(q.toLowerCase()));
@@ -489,7 +536,10 @@ export default function Dashboard() {
     if (sc) result = [...result].sort((a,b) => sc==='total' ? (a.total-b.total)*sd : (a[sc]||'').localeCompare(b[sc]||'','ro')*sd);
     setFiltered(result);
     setPg(1);
-  }, []);
+    // getFinalStatus e recreat la fiecare randare (nu memoizat) — dependința reală
+    // e glsAwbMap/sdAwbMap (trackingOverridesMap e citit mereu proaspăt din
+    // localStorage la fiecare apel, deci nu are nevoie să fie în dependențe).
+  }, [glsAwbMap, sdAwbMap]);
 
   const getLivrateInPeriod = useCallback((p, cf, ct) => {
     const { from, to } = getRange(p, cf, ct);
@@ -780,20 +830,8 @@ export default function Dashboard() {
     return null; // null = folosim statusul din Shopify
   };
 
-  // Un singur citit din trackingOverrides pe randare — refolosit de
-  // getSdStatus/getGlsStatusFinal mai jos (un colet e verificat individual,
-  // deci trackingOverrides e mereu mai proaspăt decât un glsAwbMap/sdAwbMap
-  // populat cândva printr-un import/sincronizare pe altă perioadă).
-  const trackingOverridesMap = trackingOverrides.get();
-
-  const getSdStatus = (order) => {
-    if (!order) return null;
-    const ov = trackingOverridesMap[order.id];
-    if (ov?.ts) return ov.ts;
-    const awb = (order.trackingNo || '').trim();
-    if (awb && sdAwbMap[awb]) return sdAwbMap[awb];
-    return order.ts !== 'pending' ? order.ts : null;
-  };
+  // trackingOverridesMap / getSdStatus mutate mai sus (lângă applyFilters) —
+  // vezi comentariul de acolo.
 
   // Aceeași clasificare ca la comenzile Shopify (vezi procOrder mai sus) —
   // reused ca să nu inventăm un al doilea vocabular de statusuri pentru
@@ -1340,36 +1378,8 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
 
   // ── KPI ──
   const n = orders.length;
-  // Folosim getFinalStatus pentru KPI — nu o.ts direct
-  // Dar getFinalStatus e definit mai jos — folosim trackingOverrides direct aici
-  // Folosim o.ts direct din allOrders (care include overrides aplicate)
-  // Nu mai recalculăm — o.ts e deja corect după applyTrackingOverrides
-  // GLS status: prioritizăm Excel din MyGLS > Shopify/xConnector
-  const getGlsStatusFinal = (o) => {
-    const ov = trackingOverridesMap[o.id];
-    if (ov?.ts) return ov.ts;
-    const awb = (o.trackingNo || '').trim();
-    if (awb && glsAwbMap[awb]) return glsAwbMap[awb];
-    return o.ts;
-  };
-
-  const getFinalStatus = (o) => {
-    const s = o.courier === 'gls' ? getGlsStatusFinal(o)
-            : o.courier === 'sameday' ? (getSdStatus(o) || o.ts)
-            : o.ts;
-    // Regula "peste 30 zile blocat = anulat" există deja în
-    // applyTrackingOverrides (mai sus, pe o.ts), dar glsAwbMap/sdAwbMap sau
-    // un trackingOverride mai vechi pot întoarce tot 'incurs'/'outfor' pentru
-    // un AWB pe care curierul însuși l-a abandonat cu luni în urmă (înregistrat
-    // dar niciodată ridicat, adresă greșită nerezolvată etc.) — fără ea, un
-    // colet mort rămâne etern în "Colete în tranzit". O aplicăm aici, la
-    // final, ca să conteze indiferent din ce sursă vine statusul.
-    if (['incurs','outfor','easybox'].includes(s) && o.createdAt) {
-      const daysSince = (new Date() - new Date(o.createdAt)) / (1000 * 60 * 60 * 24);
-      if (daysSince > 30) return 'anulat';
-    }
-    return s;
-  };
+  // getGlsStatusFinal/getFinalStatus mutate mai sus (lângă applyFilters) —
+  // vezi comentariul de acolo.
 
   const cnt = s => orders.filter(o=>getFinalStatus(o)===s).length;
   const sum = ss => orders.filter(o=>ss.includes(getFinalStatus(o))).reduce((a,o)=>a+o.total,0);
@@ -1517,7 +1527,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   const courierBadgeCount = (courierId) => {
     return orders.filter(o => {
       if (o.courier !== courierId) return false;
-      if (filter !== 'toate' && o.ts !== filter) return false;
+      if (filter !== 'toate' && getFinalStatus(o) !== filter) return false;
       if (search) return [o.name,o.client,o.oras,o.prods,o.trackingNo].some(v => (v||'').toLowerCase().includes(search.toLowerCase()));
       return true;
     }).length;
@@ -2767,9 +2777,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     {slice.length===0?(
                       <tr><td colSpan={13}><div className="empty">📭 Nicio comandă în perioada selectată.</div></td></tr>
                     ):slice.map(o=>{
-                      const st=STATUS_MAP[o.ts]||{label:o.ts};
-                      const bcc=bc[o.ts]||'badge-gray';
-                      const mc=o.ts==='livrat'&&o.fin==='paid'?'mg-g':o.ts==='retur'||o.ts==='anulat'?'mg-r':o.ts==='pending'?'mg-m':o.ts==='easybox'?'mg-y':'mg-y';
+                      const fs=getFinalStatus(o);
+                      const st=STATUS_MAP[fs]||{label:fs};
+                      const bcc=bc[fs]||'badge-gray';
+                      const mc=fs==='livrat'&&o.fin==='paid'?'mg-g':fs==='retur'||fs==='anulat'?'mg-r':fs==='pending'?'mg-m':fs==='easybox'?'mg-y':'mg-y';
                       return (
                         <tr key={o.id} style={o.fin==='paid'&&!o.hasInvoice?{background:'rgba(245,158,11,0.05)'}:{}}>
                           <td style={{position:'sticky',left:0,background:o.fin==='paid'&&!o.hasInvoice?'#0f1217':'#0a0f14',zIndex:1,boxShadow:'2px 0 6px rgba(0,0,0,.4)'}}><span className="ref">{o.name}</span></td>
@@ -2815,7 +2826,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                             }
                             // Comenzile ramburs (fin=pending) nu devin niciodată "paid" automat în Shopify —
                             // dar odată livrate, rambursul a fost încasat de curier, deci se poate factura.
-                            if(o.fin==='paid'||o.ts==='livrat') return <button onClick={()=>openInvoiceModal(o)} disabled={invLoading} style={{fontSize:9,background:'rgba(245,158,11,.15)',border:'1px solid rgba(245,158,11,.4)',color:'#f59e0b',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:invLoading?.5:1}}>{invLoading?'⟳':'+ Factură'}</button>;
+                            if(o.fin==='paid'||getFinalStatus(o)==='livrat') return <button onClick={()=>openInvoiceModal(o)} disabled={invLoading} style={{fontSize:9,background:'rgba(245,158,11,.15)',border:'1px solid rgba(245,158,11,.4)',color:'#f59e0b',borderRadius:5,padding:'2px 7px',cursor:'pointer',whiteSpace:'nowrap',opacity:invLoading?.5:1}}>{invLoading?'⟳':'+ Factură'}</button>;
                             return <span style={{fontSize:10,color:'#4a5568'}}>—</span>;
                           })()}</td>
                           <td style={{fontSize:'10px',color:'#94a3b8',whiteSpace:'nowrap'}}>{fmtD(o.createdAt)}</td>
