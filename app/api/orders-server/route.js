@@ -122,8 +122,11 @@ function mapDbOrder(o) {
     }
   }
 
-  const gateway = o.paymentGateway || '';
-  const ONLINE_GW = ['shopify_payments', 'stripe', 'paypal'];
+  // o.paymentGateway poate fi gol pentru comenzi salvate înainte de fix-ul care
+  // citea payment_gateway (câmp aproape mereu absent) în loc de
+  // payment_gateway_names (array, cel trimis de fapt de Shopify) — recurgem la
+  // rawPayload ca fallback, ca afișarea să fie corectă chiar fără un nou webhook.
+  const gateway = o.paymentGateway || (o.rawPayload?.payment_gateway_names || [])[0] || '';
   // isPaid vine direct din DB (setat de webhook)
 
   return {

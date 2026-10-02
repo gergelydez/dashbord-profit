@@ -260,7 +260,8 @@ export interface WebhookOrderPayload {
   phone?:               string;
   financial_status:     string;
   fulfillment_status?:  string | null;
-  payment_gateway?:     string;
+  payment_gateway?:     string;         // legacy/rarely present — prefer payment_gateway_names
+  payment_gateway_names?: string[];     // the field Shopify's REST webhooks actually send
   total_price:          string;
   currency?:            string;
   created_at?:          string;
@@ -358,7 +359,13 @@ export async function upsertOrderFromWebhook(
     totalPrice:       parseFloat(payload.total_price ?? '0'),
     currency:         payload.currency ?? 'RON',
     isPaid,
-    paymentGateway:   payload.payment_gateway ?? '',
+    // Shopify's REST webhook payload sends payment_gateway_names (array) —
+    // payment_gateway (singular) is essentially never populated there, so
+    // reading it alone left paymentGateway empty for every webhook-ingested
+    // order, making every COD/card detection downstream (Comenzi page split,
+    // auto-invoice payment type, auto-collect) default to "COD" even for
+    // orders paid online by card.
+    paymentGateway:   payload.payment_gateway || (payload.payment_gateway_names ?? [])[0] || '',
     fulfillmentStatus: payload.fulfillment_status ?? null,
     customerName:     (addr as { name?: string }).name ?? '',
     customerEmail:    payload.email ?? '',
@@ -383,6 +390,7 @@ export async function upsertOrderFromWebhook(
       financialStatus:  data.financialStatus,
       totalPrice:       data.totalPrice,
       isPaid:           data.isPaid,
+      paymentGateway:   data.paymentGateway,
       fulfillmentStatus: data.fulfillmentStatus,
       customerName:     data.customerName,
       customerEmail:    data.customerEmail,
