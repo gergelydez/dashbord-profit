@@ -6,6 +6,33 @@ const ls = {
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
 };
 
+function getShopKey() {
+  try {
+    const s = typeof window !== 'undefined' ? localStorage.getItem('glamx-shop') : null;
+    const p = s ? JSON.parse(s) : null;
+    return p?.state?.currentShop || 'ro';
+  } catch { return 'ro'; }
+}
+const isHuShop = (sk) => sk === 'hu' || sk === 'glatohu';
+
+const RO_TEMPLATE = `👋 Bună ziua, {{client}}! Vă contactăm din partea glamx.ro în legătură cu comanda dumneavoastră {{nr}} pentru {{produse}}.
+📦 Pentru a putea expedia comanda în valoare de {{total}} RON, vă rugăm să ne confirmați dacă aceasta rămâne valabilă.
+
+👉 Răspundeți cu:
+DA – dacă doriți să primiți comanda
+NU – dacă doriți anularea acesteia
+
+Vă mulțumim! 🤍`;
+
+const HU_TEMPLATE = `👋 Jó napot, {{client}}! A glato.hu nevében keressük Önt a(z) {{nr}} rendelésével kapcsolatban, amely a következőt tartalmazza: {{produse}}.
+📦 A rendelés kiszállításához ({{total}} Ft értékben) kérjük, erősítse meg, hogy a rendelés továbbra is érvényes.
+
+👉 Válaszoljon:
+IGEN – ha szeretné megkapni a rendelést
+NEM – ha szeretné lemondani azt
+
+Köszönjük! 🤍`;
+
 const fmtTime = (iso) => {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -85,6 +112,7 @@ const STATUS_CONFIG = {
 
 export default function WhatsAppPage() {
   const [mounted, setMounted] = useState(false);
+  const [shop, setShop] = useState('ro');
   const [config, setConfig] = useState({ twilioSid: '', twilioToken: '', twilioFrom: '', shopDomain: '', shopToken: '' });
   const [orders, setOrders] = useState([]);
   const [waOrders, setWaOrders] = useState({}); // { orderId: { status, sentAt, confirmedAt, ... } }
@@ -96,6 +124,13 @@ export default function WhatsAppPage() {
   const [autoCheck, setAutoCheck] = useState(false);
   const [filter, setFilter] = useState('all');
 
+  const loadForShop = (sk) => {
+    setShop(sk);
+    setOrders([]);
+    const savedTpl = ls.get(`wa_template_${sk}`);
+    setMsgTemplate(savedTpl || (isHuShop(sk) ? HU_TEMPLATE : RO_TEMPLATE));
+  };
+
   useEffect(() => {
     setMounted(true);
     const savedCfg = ls.get('wa_config');
@@ -106,15 +141,10 @@ export default function WhatsAppPage() {
     if (savedOrders) {
       try { setWaOrders(JSON.parse(savedOrders)); } catch {}
     }
-    const savedTpl = ls.get('wa_template');
-    setMsgTemplate(savedTpl || `👋 Bună ziua, {{client}}! Vă contactăm din partea glamx.ro în legătură cu comanda dumneavoastră {{nr}} pentru {{produse}}. 
-📦 Pentru a putea expedia comanda în valoare de {{total}} RON, vă rugăm să ne confirmați dacă aceasta rămâne valabilă.
-
-👉 Răspundeți cu:
-DA – dacă doriți să primiți comanda
-NU – dacă doriți anularea acesteia
-
-Vă mulțumim! 🤍`);
+    loadForShop(getShopKey());
+    const onShopChange = (e) => loadForShop(e.detail || getShopKey());
+    window.addEventListener('glamx:shop', onShopChange);
+    return () => window.removeEventListener('glamx:shop', onShopChange);
   }, []);
 
   const saveConfig = () => {
@@ -128,19 +158,48 @@ Vă mulțumim! 🤍`);
     ls.set('wa_orders', JSON.stringify(data));
   };
 
+  // Normalizează un order din /api/orders-server (shape simplificat, specific
+  // DB-ului nostru) în forma "REST-like" pe care restul paginii o așteaptă
+  // deja (shipping_address/line_items/total_price/phone) — aceeași formă pe
+  // care o întoarce /api/orders (domeniu RO, cu domain+token manual).
+  const toRestLike = (o) => ({
+    id: o.id,
+    name: o.name,
+    fulfillment_status: o.fulfillmentStatus,
+    created_at: o.createdAt,
+    total_price: String(o.total || 0),
+    phone: o.phone || '',
+    shipping_address: { name: o.client || '', phone: o.phone || '', address1: o.address || '', city: o.oras || '' },
+    line_items: (o.items || []).map(i => ({ name: i.name })),
+    note_attributes: [],
+  });
+
   const loadShopifyOrders = async () => {
-    if (!config.shopDomain || !config.shopToken) {
-      setError('Completează datele Shopify în configurație!'); return;
-    }
+    const sk = getShopKey();
     setLoading('orders'); setError('');
     try {
       const d7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      const url = `/api/orders?domain=${encodeURIComponent(config.shopDomain)}&token=${encodeURIComponent(config.shopToken)}&created_at_min=${d7}T00:00:00`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (!res.ok || !data.orders) throw new Error(data.error || 'Eroare');
+      let allOrders;
+      if (sk !== 'ro') {
+        // Magazinele non-RO (Glato, Glato HU, HU) nu folosesc domain+token din
+        // configurația manuală de mai jos — citesc din DB, la fel ca restul
+        // aplicației, cu credențialele setate în Vercel pentru magazinul activ.
+        const res = await fetch(`/api/orders-server?shop=${sk}&created_at_min=${d7}`);
+        const data = await res.json();
+        if (!res.ok || !data.orders) throw new Error(data.error || data.warning || 'Eroare');
+        allOrders = data.orders.map(toRestLike);
+      } else {
+        if (!config.shopDomain || !config.shopToken) {
+          setError('Completează datele Shopify în configurație!'); setLoading(''); return;
+        }
+        const url = `/api/orders?domain=${encodeURIComponent(config.shopDomain)}&token=${encodeURIComponent(config.shopToken)}&created_at_min=${d7}T00:00:00`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!res.ok || !data.orders) throw new Error(data.error || 'Eroare');
+        allOrders = data.orders;
+      }
       // Doar comenzile UNFULFILLED
-      const unfulfilled = data.orders.filter(o =>
+      const unfulfilled = allOrders.filter(o =>
         o.fulfillment_status === null || o.fulfillment_status === 'unfulfilled' || !o.fulfillment_status
       );
       setOrders(unfulfilled);
@@ -173,13 +232,24 @@ Vă mulțumim! 🤍`);
     if (!phone) return '';
     // Normalizăm: scoatem spații și caractere speciale
     phone = phone.replace(/[\s\-().+]/g, '');
-    // România: 07xx sau 02xx → +407xx
-    if (phone.startsWith('07') || phone.startsWith('02') || phone.startsWith('03')) {
-      phone = '+4' + phone;
-    } else if (phone.startsWith('40') && !phone.startsWith('+')) {
-      phone = '+' + phone;
-    } else if (!phone.startsWith('+')) {
-      phone = '+4' + phone; // asumăm RO
+    if (isHuShop(getShopKey())) {
+      // Ungaria: 06xx (naţional) → +36xx
+      if (phone.startsWith('06')) {
+        phone = '+36' + phone.slice(2);
+      } else if (phone.startsWith('36') && !phone.startsWith('+')) {
+        phone = '+' + phone;
+      } else if (!phone.startsWith('+')) {
+        phone = '+36' + phone;
+      }
+    } else {
+      // România: 07xx sau 02xx → +407xx
+      if (phone.startsWith('07') || phone.startsWith('02') || phone.startsWith('03')) {
+        phone = '+4' + phone;
+      } else if (phone.startsWith('40') && !phone.startsWith('+')) {
+        phone = '+' + phone;
+      } else if (!phone.startsWith('+')) {
+        phone = '+4' + phone; // asumăm RO
+      }
     }
     return phone;
   };
@@ -343,9 +413,9 @@ Vă mulțumim! 🤍`);
             </div>
             <div style={{marginBottom:12}}>
               <label className="lbl">Template mesaj</label>
-              <textarea className="inp" rows={3} value={msgTemplate} onChange={e=>{setMsgTemplate(e.target.value);ls.set('wa_template',e.target.value);}}
+              <textarea className="inp" rows={3} value={msgTemplate} onChange={e=>{setMsgTemplate(e.target.value);ls.set(`wa_template_${shop}`,e.target.value);}}
                 style={{resize:'vertical',lineHeight:1.5}}/>
-              <div style={{fontSize:10,color:'#475569',marginTop:4}}>Variabile: {'{{client}}'} {'{{nr}}'} {'{{total}}'} {'{{produse}}'}</div>
+              <div style={{fontSize:10,color:'#475569',marginTop:4}}>Variabile: {'{{client}}'} {'{{nr}}'} {'{{total}}'} {'{{produse}}'} · text separat pentru fiecare magazin</div>
             </div>
             <button className="btn-green" onClick={saveConfig}>💾 Salvează configurație</button>
           </div>

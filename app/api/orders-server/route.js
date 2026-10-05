@@ -133,6 +133,7 @@ function mapDbOrder(o) {
     id: o.shopifyId,
     name: o.shopifyName,
     fin: (o.financialStatus || '').toLowerCase(),
+    fulfillmentStatus: o.fulfillmentStatus || null,
     ts,
     trackingNo,
     client: o.customerName || '',
