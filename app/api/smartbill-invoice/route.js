@@ -42,8 +42,12 @@ async function getSeriesAndWarehouses(auth, cif) {
 
 // ── Încasare factură prin /payment (endpoint corect din documentație) ──────────
 // Structura corectă: POST /payment cu invoicesList pentru a lega chitanța de factură
-async function collectInvoice(auth, cif, invoiceSeries, invoiceNumber, value, clientName, paymentSeries) {
+async function collectInvoice(auth, cif, invoiceSeries, invoiceNumber, value, clientName, paymentSeries, paymentType) {
   const issueDate = new Date().toISOString().slice(0, 10);
+  // Card/online: banii au intrat deja prin Shopify Payments, nu s-a predat
+  // niciun numerar — încasare "Alta incasare", nu chitanță de numerar.
+  // Ramburs: curierul chiar a încasat cash la predare — chitanță reală.
+  const isCardPayment = (paymentType || '').toLowerCase() === 'card';
 
   const body = {
     companyVatCode: cif,
@@ -62,9 +66,8 @@ async function collectInvoice(auth, cif, invoiceSeries, invoiceNumber, value, cl
     precision: 2,
     value: Math.round(parseFloat(value) * 100) / 100,
     isDraft: false,
-    // Chitanță pentru plată ramburs / numerar; folosim "Alta incasare" dacă e online
-    type: 'Chitanta',
-    isCash: true,
+    type: isCardPayment ? 'Alta incasare' : 'Chitanta',
+    isCash: !isCardPayment,
     useInvoiceDetails: false,
     // Legăm chitanța de factură prin invoicesList
     invoicesList: [
@@ -319,6 +322,7 @@ export async function POST(request) {
         order.total,
         order.client,
         paymentSeries || order.paymentSeries || null,
+        order.paymentType,
       );
       collected    = collectResult.ok;
       collectError = collectResult.error || null;

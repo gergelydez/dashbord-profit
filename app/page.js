@@ -1027,7 +1027,12 @@ export default function Dashboard() {
             currency: order.currency || 'RON',
             total: order.total,
             items: customItems || order.items || [],
-            isPaid: order.fin === 'paid',
+            // Livrat = banii au fost deja colectați (online la comandă SAU
+            // ramburs de curier la predare) — altfel comenzile COD livrate nu
+            // primeau niciodată încasare automată, fiindcă fin rămâne mereu
+            // "pending" pentru ramburs, indiferent dacă a fost livrat și încasat.
+            isPaid: order.fin === 'paid' || getFinalStatus(order) === 'livrat',
+            paymentType: isOnlinePayment(order) ? 'Card' : 'Ramburs',
             useStock: sbUseStock,
             warehouseName: sbUseStock ? sbWarehouse : '',
           },
