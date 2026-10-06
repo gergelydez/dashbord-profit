@@ -20,6 +20,8 @@ function getShopKey() {
   } catch { return 'ro'; }
 }
 const ordersKey = (sk) => sk === 'ro' ? 'gx_orders_all' : `gx_orders_all_${sk}`;
+const isHuShopKey = (sk) => sk === 'hu' || sk === 'glatohu';
+const defaultCountryForShop = (sk) => isHuShopKey(sk) ? 'Ungaria' : 'România';
 
 const pad = n => String(n).padStart(2, '0');
 const fmtD = d => { if (!d) return '—'; try { const p = (d.split('T')[0]).split('-'); return `${p[2]}.${p[1]}.${p[0]}`; } catch { return d.slice(0, 10); } };
@@ -142,6 +144,7 @@ function procOrder(o) {
     address2: addr.address2 || '',
     city: addr.city || '',
     county: addr.province || addr.province_code || '',
+    country: addr.country || addr.country_code || '',
     zip: (addr.zip || '').replace(/\s/g, ''),
     fin: (o.financial_status || '').toLowerCase(),
     fulfillmentStatus: (o.fulfillment_status || '').toLowerCase(),
@@ -445,7 +448,7 @@ export default function GLSPage() {
   // ── Manual AWB (Etichetă nouă — client telefonic/WhatsApp, fără comandă Shopify) ──
   const [manualClientSearch, setManualClientSearch] = useState('');
   const [manualSelectedClient, setManualSelectedClient] = useState(null);
-  const [manualAddr, setManualAddr] = useState({ name: '', phone: '', email: '', address: '', city: '', county: '', zip: '' });
+  const [manualAddr, setManualAddr] = useState(() => ({ name: '', phone: '', email: '', address: '', city: '', county: '', zip: '', country: defaultCountryForShop(getShopKey()) }));
   const [manualCityOptions, setManualCityOptions] = useState([]); // sugestii localitate în timp ce se scrie orașul
   const [manualStreetOptions, setManualStreetOptions] = useState([]); // străzi cu coduri poștale diferite pentru localitatea aleasă
   const [manualZipNote, setManualZipNote] = useState('');
@@ -598,15 +601,20 @@ export default function GLSPage() {
     (sum, li) => sum + (li.price || 0) * (li.qty || 1) - (li.discount || 0), 0
   ));
 
+  const manualCountryNorm = (manualAddr.country || '').trim().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const isRoRecipient = manualCountryNorm === '' || manualCountryNorm === 'ro' || manualCountryNorm.includes('roman');
+  const isHuRecipient = manualCountryNorm === 'hu' || manualCountryNorm.includes('ungar') || manualCountryNorm.includes('hungar');
+  const isSupportedCountry = isRoRecipient || isHuRecipient;
+
   const pickManualClient = (c) => {
     setManualSelectedClient(c);
-    setManualAddr({ name: c.name || '', phone: c.phone || '', email: c.email || '', address: c.address || '', city: c.city || '', county: c.county || '', zip: c.zip || '' });
+    setManualAddr(p => ({ name: c.name || '', phone: c.phone || '', email: c.email || '', address: c.address || '', city: c.city || '', county: c.county || '', zip: c.zip || '', country: c.country || p.country || defaultCountryForShop(getShopKey()) }));
     setManualClientSearch('');
   };
 
   const clearManualClient = () => {
     setManualSelectedClient(null);
-    setManualAddr({ name: '', phone: '', email: '', address: '', city: '', county: '', zip: '' });
+    setManualAddr({ name: '', phone: '', email: '', address: '', city: '', county: '', zip: '', country: defaultCountryForShop(getShopKey()) });
   };
 
   // Client tastat direct (nu ales din căutare) — dacă telefonul se potrivește
@@ -625,24 +633,27 @@ export default function GLSPage() {
       city: p.city || match.city || '',
       county: p.county || match.county || '',
       zip: p.zip || match.zip || '',
+      country: p.country || match.country || defaultCountryForShop(getShopKey()),
     }));
   };
 
   const [showManualCityDropdown, setShowManualCityDropdown] = useState(false);
 
-  // Sugestii de localitate în timp ce se scrie orașul (autocomplete pe RoPostalCode).
+  // Sugestii de localitate în timp ce se scrie orașul (autocomplete RO/HU, în
+  // funcție de Țara aleasă — altfel orice localitate maghiară nu se găsea
+  // niciodată, fiindcă lookup-ul folosea mereu doar setul de date românesc).
   useEffect(() => {
     const q = (manualAddr.city || '').trim();
-    if (q.length < 2) { setManualCityOptions([]); return; }
+    if (!isSupportedCountry || q.length < 2) { setManualCityOptions([]); return; }
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(q)}&country=${encodeURIComponent(manualAddr.country)}`);
         const data = await res.json();
         setManualCityOptions(data.localities || []);
       } catch {}
     }, 300);
     return () => clearTimeout(t);
-  }, [manualAddr.city]);
+  }, [manualAddr.city, manualAddr.country, isSupportedCountry]);
 
   // Odată ce avem oraș + județ, aflăm codul poștal exact — dacă localitatea
   // are un singur cod, îl completăm automat; dacă are mai multe (străzi
@@ -650,10 +661,10 @@ export default function GLSPage() {
   useEffect(() => {
     const city = (manualAddr.city || '').trim();
     const county = (manualAddr.county || '').trim();
-    if (city.length < 2 || county.length < 2) { setManualStreetOptions([]); setManualZipNote(''); return; }
+    if (!isSupportedCountry || city.length < 2 || county.length < 2) { setManualStreetOptions([]); setManualZipNote(''); return; }
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(city)}&county=${encodeURIComponent(county)}`);
+        const res = await fetch(`/api/postal-lookup?city=${encodeURIComponent(city)}&county=${encodeURIComponent(county)}&country=${encodeURIComponent(manualAddr.country)}`);
         const data = await res.json();
         if (!data.ok || !data.found) { setManualStreetOptions([]); setManualZipNote(''); return; }
         if (data.streets?.length > 1) {
@@ -672,7 +683,7 @@ export default function GLSPage() {
       } catch {}
     }, 400);
     return () => clearTimeout(t);
-  }, [manualAddr.city, manualAddr.county]);
+  }, [manualAddr.city, manualAddr.county, manualAddr.country, isSupportedCountry]);
 
   const pickManualCity = (opt) => {
     setManualAddr(p => ({ ...p, city: opt.localitate, county: opt.judet, zip: '' }));
@@ -740,8 +751,9 @@ export default function GLSPage() {
       city: manualAddr.city,
       county: manualAddr.county,
       zip: manualAddr.zip,
+      country: manualAddr.country || defaultCountryForShop(getShopKey()),
       total,
-      currency: 'RON',
+      currency: isHuShopKey(getShopKey()) ? 'HUF' : 'RON',
       isCOD: manualIsCOD,
       prods: prodLabel,
       isManual: true,
@@ -901,6 +913,7 @@ export default function GLSPage() {
       city:          addr.city    || order.city,
       county:        addr.county  || order.county,
       zip:           (addr.zip    || order.zip || '').replace(/\s/g, ''),
+      country:       addr.country || order.country || '',
       weight:        parseFloat(w) || 1,
       parcels:       parseInt(p)  || 1,
       content:       cnt || order.prods?.slice(0, 40) || 'Colet',
@@ -984,6 +997,7 @@ export default function GLSPage() {
           city:     editAddr?.city    || awbModal.city,
           county:   editAddr?.county  || awbModal.county,
           zip:      editAddr?.zip     || awbModal.zip,
+          country:  editAddr?.country || awbModal.country || '',
         },
         lineItems:      awbModal.lineItems || [],
         isPaid:         !awbModal.isCOD,
@@ -1545,9 +1559,10 @@ export default function GLSPage() {
                     { key: 'name', label: 'Nume complet', placeholder: 'Ion Popescu' },
                     { key: 'phone', label: 'Telefon', placeholder: '07xx xxx xxx' },
                     { key: 'email', label: 'Email', placeholder: 'email@exemplu.ro (opțional)' },
-                    { key: 'city', label: 'Oraș', placeholder: 'Bucuresti' },
-                    { key: 'county', label: 'Județ', placeholder: 'Ilfov' },
-                    { key: 'zip', label: 'Cod poștal', placeholder: '123456', maxLength: 6 },
+                    { key: 'country', label: 'Țară', placeholder: 'România' },
+                    { key: 'city', label: 'Oraș', placeholder: isRoRecipient ? 'Bucuresti' : 'Debrecen' },
+                    { key: 'county', label: isRoRecipient ? 'Județ' : 'Județ / Megye', placeholder: isRoRecipient ? 'Ilfov' : 'Pest megye' },
+                    { key: 'zip', label: 'Cod poștal', placeholder: isRoRecipient ? '123456' : '4031', maxLength: isRoRecipient ? 6 : 4 },
                   ].map(f => (
                     <div key={f.key} className="gls-field" style={f.key === 'city' ? { position: 'relative' } : undefined}>
                       <label className="gls-lbl">{f.label}</label>
@@ -2143,6 +2158,7 @@ export default function GLSPage() {
                         { key: 'name', label: 'Nume complet', placeholder: 'Ion Popescu' },
                         { key: 'phone', label: 'Telefon', placeholder: '07xx xxx xxx' },
                         { key: 'email', label: 'Email', placeholder: 'email@exemplu.ro' },
+                        { key: 'country', label: 'Țară', placeholder: awbModal.country || 'România' },
                         { key: 'city', label: 'Oraș', placeholder: 'Bucuresti' },
                         { key: 'county', label: 'Județ', placeholder: 'Ilfov' },
                         { key: 'zip', label: 'Cod poștal', placeholder: '123456', maxLength: 6 },

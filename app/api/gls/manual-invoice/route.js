@@ -43,7 +43,7 @@ export async function POST(request) {
     catch { return NextResponse.json({ error: `Shop "${shopKey}" not configured` }, { status: 400 }); }
 
     const token = await getAccessToken(shopCfg);
-    const currency = shopKey === 'hu' ? 'HUF' : 'RON';
+    const currency = (shopKey === 'hu' || shopKey === 'glatohu') ? 'HUF' : 'RON';
 
     let shop = await db.shop.findFirst({ where: { domain: shopCfg.domain } });
     if (!shop) {
@@ -69,6 +69,7 @@ export async function POST(request) {
         shippingCity:     address.city || '',
         shippingProvince: address.county || '',
         shippingZip:      address.zip || '',
+        shippingCountry:  address.country || ((shopKey === 'hu' || shopKey === 'glatohu') ? 'Ungaria' : 'RO'),
         lineItems:        lineItems.map(i => ({ name: i.name, sku: i.sku || '', qty: parseFloat(i.qty) || 0, price: parseFloat(i.price) || 0 })),
         shopifyCreatedAt: new Date(),
       },
