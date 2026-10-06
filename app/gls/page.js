@@ -453,9 +453,9 @@ export default function GLSPage() {
   const [manualProductsLoading, setManualProductsLoading] = useState(false);
   const [manualProductsErr, setManualProductsErr] = useState('');
   const [manualProductSearch, setManualProductSearch] = useState('');
-  const [manualSelectedProduct, setManualSelectedProduct] = useState(null);
-  const [manualQty, setManualQty] = useState('1');
-  const [manualDiscount, setManualDiscount] = useState('0');
+  // Linii de produs pentru AWB manual — { key, title, sku, price, qty, discount }.
+  // Poate avea oricâte produse (ex: ceas + folie de protecție în același colet).
+  const [manualLineItems, setManualLineItems] = useState([]);
   const [manualIsCOD, setManualIsCOD] = useState(true);
   const [manualCodAmount, setManualCodAmount] = useState('');
   const [manualRef, setManualRef] = useState('');
@@ -594,8 +594,9 @@ export default function GLSPage() {
     ).slice(0, 20);
   }, [manualProducts, manualProductSearch]);
 
-  const manualQtyNum = parseFloat(manualQty) || 1;
-  const manualSuggestedTotal = Math.max(0, (manualSelectedProduct?.price || 0) * manualQtyNum - (parseFloat(manualDiscount) || 0));
+  const manualSuggestedTotal = Math.max(0, manualLineItems.reduce(
+    (sum, li) => sum + (li.price || 0) * (li.qty || 1) - (li.discount || 0), 0
+  ));
 
   const pickManualClient = (c) => {
     setManualSelectedClient(c);
@@ -684,26 +685,49 @@ export default function GLSPage() {
     setManualZipNote(`✓ Cod poștal ${opt.zip} pentru strada ${opt.strada}.`);
   };
 
+  // Adaugă un produs ca linie nouă — dacă același SKU e deja în listă, doar
+  // îi crește cantitatea (util când cineva mai caută o dată același produs).
   const pickManualProduct = (p) => {
-    setManualSelectedProduct(p);
+    setManualLineItems(prev => {
+      const existingIdx = p.sku ? prev.findIndex(li => li.sku && li.sku === p.sku) : -1;
+      if (existingIdx >= 0) {
+        const next = [...prev];
+        next[existingIdx] = { ...next[existingIdx], qty: next[existingIdx].qty + 1 };
+        return next;
+      }
+      return [...prev, { key: `${p.id}-${Date.now()}`, title: p.title, sku: p.sku || '', price: p.price || 0, qty: 1, discount: 0 }];
+    });
     setManualProductSearch('');
     if (!manualRef) setManualRef(p.title);
+  };
+
+  const updateManualLineItem = (key, patch) => {
+    setManualLineItems(prev => prev.map(li => li.key === key ? { ...li, ...patch } : li));
+  };
+
+  const removeManualLineItem = (key) => {
+    setManualLineItems(prev => prev.filter(li => li.key !== key));
   };
 
   // Construiește o "comandă" sintetică și deschide exact același modal de generare AWB
   const startManualAwb = () => {
     const issues = validateAddr(manualAddr);
-    const qty = manualQtyNum;
     const suggested = manualSuggestedTotal;
     const total = manualCodAmount !== '' ? (parseFloat(manualCodAmount) || 0) : suggested;
-    const prodLabel = manualSelectedProduct
-      ? `${manualSelectedProduct.title}${qty > 1 ? ` ×${qty}` : ''}`
+    const prodLabel = manualLineItems.length > 0
+      ? manualLineItems.map(li => `${li.title}${li.qty > 1 ? ` ×${li.qty}` : ''}`).join(', ')
       : (manualRef || 'Colet');
 
-    // Linia de produs pentru factură — doar dacă a fost ales un produs real din catalog
-    // (are SKU + preț; un colet generic/înlocuire nu poate fi facturat fără ele)
-    const lineItems = manualSelectedProduct
-      ? [{ name: manualSelectedProduct.title, sku: manualSelectedProduct.sku || '', qty, price: manualSelectedProduct.price }]
+    // Liniile de produs pentru factură — doar pentru produse alese real din
+    // catalog (au SKU + preț; un colet generic/înlocuire nu poate fi facturat
+    // fără ele). Suportă oricâte produse (ex: ceas + folie de protecție).
+    const lineItems = manualLineItems.length > 0
+      ? manualLineItems.map(li => ({
+          name: li.title, sku: li.sku || '', qty: li.qty,
+          // Discount-ul telefonic se scade direct din prețul unitar — nu are
+          // sens o linie separată de discount pentru o reducere ad-hoc fără cod.
+          price: li.discount > 0 ? Math.max(0, li.price - li.discount / (li.qty || 1)) : li.price,
+        }))
       : null;
 
     openAwbModal({
@@ -926,7 +950,7 @@ export default function GLSPage() {
           }).catch(() => {});
         }
         toast(`✅ AWB GLS ${data.awb} generat!`, 'success');
-        if (awbModal.isManual) { clearManualClient(); setManualSelectedProduct(null); setManualRef(''); setManualCodAmount(''); setManualDiscount('0'); setManualQty('1'); }
+        if (awbModal.isManual) { clearManualClient(); setManualLineItems([]); setManualRef(''); setManualCodAmount(''); }
       } else {
         toast('Eroare: ' + data.error, 'error');
       }
@@ -1578,63 +1602,70 @@ export default function GLSPage() {
 
                 <div className="gls-divider" />
 
-                {/* ── Produs ── */}
+                {/* ── Produse (poți adăuga oricâte) ── */}
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 8 }}>📦 Produs (opțional)</div>
-                  {manualSelectedProduct ? (
-                    <div className="gls-awb-card" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div>
-                        <div style={{ fontWeight: 700, color: '#e2e8f0' }}>{manualSelectedProduct.title}</div>
-                        <div style={{ fontSize: 11, color: '#64748b' }}>{manualSelectedProduct.sku || '—'} • {fmt(manualSelectedProduct.price)} RON/buc</div>
-                      </div>
-                      <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={() => setManualSelectedProduct(null)}>✕ Schimbă</button>
-                    </div>
-                  ) : (
-                    <>
-                      <input className="gls-search" style={{ width: '100%' }}
-                        placeholder="🔍 Caută produs de pe site (nume sau SKU)..."
-                        value={manualProductSearch} onChange={e => setManualProductSearch(e.target.value)} />
-                      {manualProductsLoading && (
-                        <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}><span className="gls-spin">↻</span> Se încarcă produsele din Shopify...</div>
-                      )}
-                      {manualProductsErr && (
-                        <div className="gls-errbox" style={{ marginTop: 6 }}>
-                          ❌ {manualProductsErr}
-                          <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={loadManualProducts} style={{ marginLeft: 8 }}>Reîncearcă</button>
-                        </div>
-                      )}
-                      {!manualProductsLoading && filteredManualProducts.length > 0 && (
-                        <div style={{ marginTop: 6, border: '1px solid rgba(255,255,255,.06)', borderRadius: 8, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
-                          {filteredManualProducts.map(p => (
-                            <div key={p.id} onClick={() => pickManualProduct(p)}
-                              style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.04)', fontSize: 12 }}>
-                              <span style={{ fontWeight: 700, color: '#e2e8f0' }}>{p.title}</span>
-                              <span style={{ float: 'right', color: '#f97316', fontWeight: 700 }}>{fmt(p.price)} RON</span>
-                              {p.sku && <div style={{ fontSize: 9, color: '#475569' }}>SKU: {p.sku}</div>}
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 8 }}>📦 Produse (opțional)</div>
+
+                  {manualLineItems.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                      {manualLineItems.map(li => (
+                        <div key={li.key} className="gls-awb-card" style={{ gap: 8 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{li.title}</div>
+                              <div style={{ fontSize: 11, color: '#64748b' }}>{li.sku || '—'} • {fmt(li.price)} RON/buc</div>
                             </div>
-                          ))}
+                            <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={() => removeManualLineItem(li.key)}>✕</button>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                            <div className="gls-field">
+                              <label className="gls-lbl">Cantitate</label>
+                              <input className="gls-inp" type="number" min="1" value={li.qty}
+                                onChange={e => updateManualLineItem(li.key, { qty: parseFloat(e.target.value) || 1 })} />
+                            </div>
+                            <div className="gls-field">
+                              <label className="gls-lbl">Discount (RON)</label>
+                              <input className="gls-inp" type="number" min="0" value={li.discount}
+                                onChange={e => updateManualLineItem(li.key, { discount: parseFloat(e.target.value) || 0 })} />
+                            </div>
+                          </div>
                         </div>
-                      )}
-                      <div style={{ fontSize: 10, color: '#334155', marginTop: 6 }}>Fără produs selectat = colet generic (ex: înlocuire produs la client).</div>
-                    </>
+                      ))}
+                    </div>
                   )}
+
+                  <input className="gls-search" style={{ width: '100%' }}
+                    placeholder="🔍 Caută și adaugă un produs de pe site (nume sau SKU)..."
+                    value={manualProductSearch} onChange={e => setManualProductSearch(e.target.value)} />
+                  {manualProductsLoading && (
+                    <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}><span className="gls-spin">↻</span> Se încarcă produsele din Shopify...</div>
+                  )}
+                  {manualProductsErr && (
+                    <div className="gls-errbox" style={{ marginTop: 6 }}>
+                      ❌ {manualProductsErr}
+                      <button className="gls-btn gls-btn-ghost gls-btn-sm" onClick={loadManualProducts} style={{ marginLeft: 8 }}>Reîncearcă</button>
+                    </div>
+                  )}
+                  {!manualProductsLoading && manualProductSearch.trim() && filteredManualProducts.length > 0 && (
+                    <div style={{ marginTop: 6, border: '1px solid rgba(255,255,255,.06)', borderRadius: 8, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
+                      {filteredManualProducts.map(p => (
+                        <div key={p.id} onClick={() => pickManualProduct(p)}
+                          style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.04)', fontSize: 12 }}>
+                          <span style={{ fontWeight: 700, color: '#e2e8f0' }}>{p.title}</span>
+                          <span style={{ float: 'right', color: '#f97316', fontWeight: 700 }}>{fmt(p.price)} RON</span>
+                          {p.sku && <div style={{ fontSize: 9, color: '#475569' }}>SKU: {p.sku}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 10, color: '#334155', marginTop: 6 }}>Poți adăuga mai multe produse (ex: ceas + folie de protecție). Fără niciun produs = colet generic (ex: înlocuire produs la client).</div>
                 </div>
 
-                {/* ── Cantitate / discount / referință ── */}
-                <div className="gls-grid2">
-                  <div className="gls-field">
-                    <label className="gls-lbl">Cantitate</label>
-                    <input className="gls-inp" type="number" min="1" value={manualQty} onChange={e => setManualQty(e.target.value)} />
-                  </div>
-                  <div className="gls-field">
-                    <label className="gls-lbl">Discount (RON)</label>
-                    <input className="gls-inp" type="number" min="0" value={manualDiscount} onChange={e => setManualDiscount(e.target.value)} />
-                  </div>
-                  <div className="gls-field" style={{ gridColumn: '1/-1' }}>
-                    <label className="gls-lbl">Referință comandă</label>
-                    <input className="gls-inp" value={manualRef} maxLength={40} placeholder="ex: Comandă telefonică Ion Popescu"
-                      onChange={e => setManualRef(e.target.value)} />
-                  </div>
+                {/* ── Referință ── */}
+                <div className="gls-field">
+                  <label className="gls-lbl">Referință comandă</label>
+                  <input className="gls-inp" value={manualRef} maxLength={40} placeholder="ex: Comandă telefonică Ion Popescu"
+                    onChange={e => setManualRef(e.target.value)} />
                 </div>
 
                 {/* ── Ramburs ── */}
@@ -1648,7 +1679,7 @@ export default function GLSPage() {
                 {manualIsCOD && (
                   <div className="gls-field">
                     <label className="gls-lbl">
-                      Sumă ramburs (RON){manualSelectedProduct ? ` — sugerat: ${fmt(manualSuggestedTotal)} RON` : ''}
+                      Sumă ramburs (RON){manualLineItems.length > 0 ? ` — sugerat: ${fmt(manualSuggestedTotal)} RON` : ''}
                     </label>
                     <input className="gls-inp" type="number" min="0" step="0.01"
                       value={manualCodAmount} placeholder={fmt(manualSuggestedTotal)}
