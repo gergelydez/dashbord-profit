@@ -1019,6 +1019,7 @@ export default function Dashboard() {
           paymentSeries: sbPaySeries || undefined,
           shopifyDomain: ls.get(domainKey(getShopKey())) || ls.get('gx_d') || '',
           shopifyToken:  ls.get(tokenKey(getShopKey()))  || ls.get('gx_t') || '',
+          shop: getShopKey(),
           order: {
             id: order.id, name: order.name, client: order.client,
             address: order.address || '', city: order.oras || '',
@@ -1096,6 +1097,7 @@ export default function Dashboard() {
           seriesName: sbInvSeries || undefined,
           shopifyDomain,
           shopifyToken,
+          shop: getShopKey(),
           orders: pending.map(o => ({
             id:     o.id,
             name:   o.name,
@@ -2470,6 +2472,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
                             cif, shopifyDomain, shopifyToken,
+                            shop: getShopKey(),
                             xlsData: rows,
                             orders: pending.map(o => ({ id: o.id, name: o.name, client: o.client, total: o.total })),
                           }),

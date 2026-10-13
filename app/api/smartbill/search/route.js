@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+export const dynamic = 'force-dynamic';
+
+import { resolveShopDomainAndToken, ensureShopRow, ensureOrderRow, recordInvoice } from '@/lib/services/legacy-order-link';
 
 const BASE = 'https://ws.smartbill.ro/SBORO/api';
 
@@ -79,15 +82,20 @@ function parseSmartBillXLS(base64xls) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { email, token, cif, orders, shopifyDomain, shopifyToken, seriesName, xlsData } = body;
+    const { email, token, cif, orders, shopifyDomain, shopifyToken, seriesName, xlsData, shop: shopKey } = body;
 
     if (!orders?.length) {
       return NextResponse.json({ error: 'Lista comenzi lipsă.' }, { status: 400 });
     }
 
+    // Domeniul/tokenul real al magazinului (server-side) — mai de încredere
+    // decât cel trimis de client (gol pentru magazinele non-RO) — folosit
+    // atât pentru notarea Shopify, cât și pentru persistarea facturii în DB.
+    const { domain: realDomain, token: realToken } = await resolveShopDomainAndToken(shopKey, shopifyDomain, shopifyToken);
+
     // ── CALEA 1: XLS upload ───────────────────────────────────────────────────
     if (xlsData) {
-      return await searchFromXLS(xlsData, orders, shopifyDomain, shopifyToken, cif);
+      return await searchFromXLS(xlsData, orders, realDomain, realToken, cif);
     }
 
     // ── CALEA 2: API SmartBill (fallback) ─────────────────────────────────────
@@ -96,10 +104,25 @@ export async function POST(request) {
     }
 
     const auth = makeAuth(email, token);
-    return await searchViaAPI(auth, cif, orders, shopifyDomain, shopifyToken, seriesName);
+    return await searchViaAPI(auth, cif, orders, realDomain, realToken, seriesName);
 
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
+  }
+}
+
+// Comenzile verificate aici vin din lista "plătite fără factură" a paginii
+// Comenzi — deci sunt mereu încasate; persistăm rândul Invoice (+ Order dacă
+// nu există deja) ca `hasInvoice` să nu le mai arate ca nefacturate la
+// următorul sync, chiar dacă factura a fost creată acum mult timp și nu
+// prin acest pipeline.
+async function persistMatch({ domain, token, order, series, number, invoiceUrl, shopifyUpdated }) {
+  try {
+    const shop = await ensureShopRow(domain, token);
+    const dbOrder = await ensureOrderRow(shop, { ...order, isPaid: true });
+    await recordInvoice({ shop, order: dbOrder, series, number, invoiceUrl, collected: true, shopifyUpdated });
+  } catch (e) {
+    console.error('[smartbill/search] persistMatch failed:', e.message);
   }
 }
 
@@ -150,6 +173,7 @@ async function searchFromXLS(xlsBase64, orders, shopifyDomain, shopifyToken, cif
 
         found[order.name] = { series, number, url: invUrl, matchType, client: clientRow };
 
+        let marked = false;
         if (shopifyDomain && shopifyToken && order.id) {
           const r = await markInvoiceInShopify({
             shopifyDomain, shopifyToken,
@@ -158,8 +182,10 @@ async function searchFromXLS(xlsBase64, orders, shopifyDomain, shopifyToken, cif
             invoiceNumber: number,
             invoiceUrl: invUrl,
           });
+          marked = r.ok;
           if (r.ok) shopifyUpdated.push(order.name);
         }
+        await persistMatch({ domain: shopifyDomain, token: shopifyToken, order, series, number, invoiceUrl: invUrl, shopifyUpdated: marked });
         break;
       }
     }
@@ -247,10 +273,13 @@ async function searchViaAPI(auth, cif, orders, shopifyDomain, shopifyToken, seri
 
           if (matchType) {
             found[order.name] = { series: sName, number: String(invNum), url: invUrl, matchType, client: clientInv };
+            let marked = false;
             if (shopifyDomain && shopifyToken && order.id) {
               const r = await markInvoiceInShopify({ shopifyDomain, shopifyToken, orderId: order.id, invoiceSeries: sName, invoiceNumber: String(invNum), invoiceUrl: invUrl });
+              marked = r.ok;
               if (r.ok) shopifyUpdated.push(order.name);
             }
+            await persistMatch({ domain: shopifyDomain, token: shopifyToken, order, series: sName, number: String(invNum), invoiceUrl: invUrl, shopifyUpdated: marked });
           }
         }
       }

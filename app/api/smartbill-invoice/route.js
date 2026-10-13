@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+export const dynamic = 'force-dynamic';
+
+import { resolveShopDomainAndToken, ensureShopRow, ensureOrderRow, recordInvoice } from '@/lib/services/legacy-order-link';
 
 const BASE = 'https://ws.smartbill.ro/SBORO/api';
 
@@ -164,6 +167,7 @@ export async function POST(request) {
       order,
       shopifyDomain,
       shopifyToken,
+      shop: shopKey,    // cheie magazin ("ro"/"hu"/"glato"/"glatohu") — pentru DB
     } = body;
 
     if (!email || !token || !cif || !order) {
@@ -328,15 +332,36 @@ export async function POST(request) {
       collectError = collectResult.error || null;
     }
 
-    // ── Notare în Shopify ────────────────────────────────────────────────────
+    // ── Notare în Shopify + persistare DB ───────────────────────────────────
+    // Domeniul/tokenul trimis de client din localStorage e mereu gol pentru
+    // magazinele non-RO (glato/glatohu/hu țin credențialele server-side, nu
+    // în browser) — rezolvăm varianta reală server-side, de încredere, și
+    // cădem pe cea trimisă de client doar dacă shopKey nu e configurat.
+    const { domain: realDomain, token: realToken } = await resolveShopDomainAndToken(shopKey, shopifyDomain, shopifyToken);
+
     let shopifyMarked = false;
-    if (shopifyDomain && shopifyToken && order.id) {
+    if (realDomain && realToken && order.id) {
       const r = await markInvoiceInShopify({
-        shopifyDomain, shopifyToken,
+        shopifyDomain: realDomain, shopifyToken: realToken,
         orderId: order.id,
         invoiceSeries, invoiceNumber, invoiceUrl,
       });
       shopifyMarked = r.ok;
+    }
+
+    // Scriem factura și în Postgres-ul nostru — altfel `hasInvoice` (pagina
+    // Comenzi) nu are cum să o vadă vreodată, indiferent dacă notarea
+    // Shopify de mai sus a mers sau nu.
+    try {
+      const dbShop = await ensureShopRow(realDomain, realToken);
+      const dbOrder = await ensureOrderRow(dbShop, order);
+      await recordInvoice({
+        shop: dbShop, order: dbOrder,
+        series: invoiceSeries, number: invoiceNumber, invoiceUrl,
+        collected, shopifyUpdated: shopifyMarked,
+      });
+    } catch (e) {
+      console.error('[SmartBill Invoice] DB persist failed:', e.message);
     }
 
     return NextResponse.json({
