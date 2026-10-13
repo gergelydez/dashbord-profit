@@ -45,7 +45,7 @@ async function getSeriesAndWarehouses(auth, cif) {
 
 // ── Încasare factură prin /payment (endpoint corect din documentație) ──────────
 // Structura corectă: POST /payment cu invoicesList pentru a lega chitanța de factură
-async function collectInvoice(auth, cif, invoiceSeries, invoiceNumber, value, clientName, paymentSeries, paymentType) {
+async function collectInvoice(auth, cif, invoiceSeries, invoiceNumber, value, clientName, paymentSeries, paymentType, currency, country) {
   const issueDate = new Date().toISOString().slice(0, 10);
   // Card/online: banii au intrat deja prin Shopify Payments, nu s-a predat
   // niciun numerar — încasare "Alta incasare", nu chitanță de numerar.
@@ -61,11 +61,15 @@ async function collectInvoice(auth, cif, invoiceSeries, invoiceNumber, value, cl
       address: '',
       city: '',
       county: '',
-      country: 'Romania',
+      country: country || 'Romania',
       saveToDb: false,
     },
     issueDate,
-    currency: 'RON',
+    // Trebuie să fie IDENTICĂ cu moneda facturii legate prin invoicesList —
+    // SmartBill respinge/ignoră încasarea silențios dacă nu se potrivesc.
+    // Era mereu hardcodat 'RON', deci încasarea pica mereu la comenzile HUF
+    // (glato.hu) fără niciun mesaj de eroare vizibil în UI.
+    currency: currency || 'RON',
     precision: 2,
     value: Math.round(parseFloat(value) * 100) / 100,
     isDraft: false,
@@ -327,6 +331,8 @@ export async function POST(request) {
         order.client,
         paymentSeries || order.paymentSeries || null,
         order.paymentType,
+        order.currency,
+        order.country,
       );
       collected    = collectResult.ok;
       collectError = collectResult.error || null;

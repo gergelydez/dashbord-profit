@@ -1046,7 +1046,7 @@ export default function Dashboard() {
       if (data.ok) {
         setSbInvResults(prev => ({ ...prev, [order.id]: {
           ok: true, number: data.number, series: data.series,
-          collected: data.collected, shopifyMarked: data.shopifyMarked,
+          collected: data.collected, collectError: data.collectError, shopifyMarked: data.shopifyMarked,
           invoiceUrl: data.invoiceUrl, stockDecreased: data.stockDecreased, _debug: data._debug,
         }}));
         setAllOrders(prev => prev.map(o => o.id === order.id
@@ -2821,6 +2821,9 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                                   {invRes.collected&&'💰 '}{invRes.shopifyMarked&&'🔗 '}
                                   {invRes.stockDecreased?<span style={{color:'#10b981'}}>📦 stoc scăzut</span>:<span style={{color:'#f59e0b'}}>⚠ fără gestiune</span>}
                                 </span>
+                                {!invRes.collected&&invRes.collectError&&(
+                                  <span style={{fontSize:8,color:'#f43f5e',lineHeight:1.3}} title={invRes.collectError}>✗ Încasare eșuată: {invRes.collectError.slice(0,50)}</span>
+                                )}
                               </div>
                             );
                             if(invRes?.error) return <div style={{display:'flex',flexDirection:'column',gap:2}}>
