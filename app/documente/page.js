@@ -1134,6 +1134,26 @@ export default function DocumentePage() {
     }
   };
 
+  /** Mută un fișier deja clasificat într-un alt folder (categorie/subcategorie) —
+   * folosește același PATCH care clasifică "Neclasificate", dar fără a crea
+   * vreo regulă automată (e o mutare punctuală, nu o sortare pe viitor). */
+  const moveDocument = async (doc, category, subcategory) => {
+    if (!category) { toast('Alege un folder', 'error'); return; }
+    if (category === doc.category && (subcategory || null) === (doc.subcategory || null)) return;
+    try {
+      const res = await fetch('/api/mail/documents', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: doc.id, category, subcategory: subcategory || null, createRule: false }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Eroare');
+      toast(`✅ Mutat în ${category}${subcategory ? ` / ${subcategory}` : ''}`, 'success');
+      loadDocuments();
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    }
+  };
+
   const ignoreSender = async (doc) => {
     if (!confirm(`Ignori toate email-urile de la ${doc.senderEmail}? Documentul curent va fi șters din Drive (coș de gunoi) și din listă, iar cele viitoare de la acest expeditor nu vor mai fi importate deloc.`)) return;
     try {
@@ -1172,6 +1192,20 @@ export default function DocumentePage() {
       }
     }
     return Object.values(map).sort((a, b) => a.category.localeCompare(b.category));
+  }, [documents]);
+
+  /** Toate folderele existente (categorie, sau categorie/subcategorie) — pentru
+   * selectul de "mută în" de pe fiecare fișier. Include și presetările, chiar
+   * dacă încă nu au niciun fișier în luna curentă. */
+  const folderOptions = useMemo(() => {
+    const seen = new Map(); // "cat||sub" -> { category, subcategory, label }
+    const add = (category, subcategory) => {
+      const key = `${category}||${subcategory || ''}`;
+      if (!seen.has(key)) seen.set(key, { category, subcategory: subcategory || null, label: subcategory ? `${category} / ${subcategory}` : category });
+    };
+    for (const d of documents) add(d.category, d.subcategory);
+    for (const c of CATEGORY_PRESETS) add(c.category, null);
+    return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label));
   }, [documents]);
 
   const toggleCat = (cat) => setOpenCats(p => ({ ...p, [cat]: !p[cat] }));
@@ -1510,12 +1544,12 @@ export default function DocumentePage() {
               </div>
               {open && (
                 <div className="doc-cat-body">
-                  {cat.files.map(f => <FileRow key={f.id} doc={f} />)}
+                  {cat.files.map(f => <FileRow key={f.id} doc={f} folderOptions={folderOptions} onMove={moveDocument} />)}
                   {renderCombineRow(cat.files, cat.category, null)}
                   {Object.entries(cat.subcats).map(([sub, files]) => (
                     <div key={sub}>
                       <div style={{ fontSize: 10, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', marginTop: 8 }}>{sub}</div>
-                      {files.map(f => <FileRow key={f.id} doc={f} />)}
+                      {files.map(f => <FileRow key={f.id} doc={f} folderOptions={folderOptions} onMove={moveDocument} />)}
                       {renderCombineRow(files, cat.category, sub)}
                     </div>
                   ))}
@@ -1619,17 +1653,61 @@ export default function DocumentePage() {
   );
 }
 
-function FileRow({ doc }) {
+function FileRow({ doc, folderOptions, onMove }) {
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [target, setTarget] = useState('');
+  const [newCategory, setNewCategory] = useState('');
+  const [newSubcategory, setNewSubcategory] = useState('');
+
+  const currentKey = `${doc.category}||${doc.subcategory || ''}`;
+
+  const confirmMove = () => {
+    if (target === '__new__') {
+      const category = newCategory.trim();
+      if (!category) return;
+      onMove(doc, category, newSubcategory.trim() || null);
+    } else {
+      const opt = (folderOptions || []).find(o => `${o.category}||${o.subcategory || ''}` === target);
+      if (!opt) return;
+      onMove(doc, opt.category, opt.subcategory);
+    }
+    setMoveOpen(false); setTarget(''); setNewCategory(''); setNewSubcategory('');
+  };
+
   return (
-    <div className="doc-file">
+    <div className="doc-file" style={{ flexWrap: 'wrap' }}>
       <div style={{ minWidth: 0 }}>
         <div className="doc-file-name">{doc.filename}</div>
         <div className="doc-file-meta">{doc.senderEmail} · {new Date(doc.receivedAt).toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit' })}</div>
       </div>
-      {doc.driveUrl ? (
-        <a className="doc-btn doc-btn-blue" href={doc.driveUrl} target="_blank" rel="noopener noreferrer">Vezi</a>
-      ) : (
-        <span className="doc-badge doc-badge-warn">eșuat</span>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        {doc.driveUrl ? (
+          <a className="doc-btn doc-btn-blue" href={doc.driveUrl} target="_blank" rel="noopener noreferrer">Vezi</a>
+        ) : (
+          <span className="doc-badge doc-badge-warn">eșuat</span>
+        )}
+        {onMove && (
+          <button className="doc-btn doc-btn-ghost" title="Mută în alt folder" onClick={() => setMoveOpen(v => !v)}>🔀</button>
+        )}
+      </div>
+      {moveOpen && (
+        <div style={{ width: '100%', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8, paddingTop: 8, borderTop: '1px dashed #243040' }}>
+          <select className="doc-select" value={target} onChange={e => setTarget(e.target.value)}>
+            <option value="">Mută în folderul...</option>
+            {(folderOptions || []).filter(o => `${o.category}||${o.subcategory || ''}` !== currentKey).map(o => (
+              <option key={`${o.category}||${o.subcategory || ''}`} value={`${o.category}||${o.subcategory || ''}`}>{o.label}</option>
+            ))}
+            <option value="__new__">+ Folder nou...</option>
+          </select>
+          {target === '__new__' && (
+            <>
+              <input className="doc-inp" placeholder="Categorie (ex: GLS)" value={newCategory} onChange={e => setNewCategory(e.target.value)} style={{ width: 140 }} />
+              <input className="doc-inp" placeholder="Subcategorie (opțional)" value={newSubcategory} onChange={e => setNewSubcategory(e.target.value)} style={{ width: 160 }} />
+            </>
+          )}
+          <button className="doc-btn doc-btn-primary" disabled={!target || (target === '__new__' && !newCategory.trim())} onClick={confirmMove}>Mută</button>
+          <button className="doc-btn doc-btn-ghost" onClick={() => setMoveOpen(false)}>Anulează</button>
+        </div>
       )}
     </div>
   );
