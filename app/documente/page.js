@@ -85,6 +85,10 @@ const CSS = `
   .doc-cat-name{font-size:13px;font-weight:700;color:#e2e8f0;}
   .doc-cat-count{font-size:10px;color:#475569;margin-left:8px;}
   .doc-cat-body{padding:0 16px 12px;}
+  .doc-subcat{background:#070a0f;border:1px solid rgba(255,255,255,.05);border-left:3px solid rgba(249,115,22,.35);border-radius:10px;margin:10px 0;overflow:hidden;}
+  .doc-subcat-hdr{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;cursor:pointer;}
+  .doc-subcat-name{font-size:11px;font-weight:700;color:#cbd5e1;text-transform:uppercase;letter-spacing:.4px;}
+  .doc-subcat-body{padding:0 12px 10px;}
   .doc-file{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid #161d24;}
   .doc-file-name{font-size:11px;color:#cbd5e1;font-weight:600;}
   .doc-file-meta{font-size:9px;color:#475569;margin-top:1px;}
@@ -219,6 +223,7 @@ export default function DocumentePage() {
   const [documents, setDocuments] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [openCats, setOpenCats] = useState({});
+  const [openSubcats, setOpenSubcats] = useState({});
 
   const [stat, setStat] = useState(null);
   const [savingStat, setSavingStat] = useState(false);
@@ -1154,6 +1159,22 @@ export default function DocumentePage() {
     }
   };
 
+  /** Șterge un singur fișier — îl mută la coș pe Drive și îi scoate rândul din
+   * DB. Spre deosebire de "Ignoră expeditor", NU creează nicio regulă de
+   * blocare — e doar ștergerea acestui fișier, viitoare email-uri de la
+   * același expeditor tot ajung aici. */
+  const deleteDocument = async (doc) => {
+    if (!confirm(`Ștergi definitiv „${doc.filename}"? Fișierul e mutat la coșul de gunoi pe Drive.`)) return;
+    try {
+      const res = await fetch(`/api/mail/documents?id=${doc.id}`, { method: 'DELETE' });
+      if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Eroare'); }
+      toast('🗑 Șters', 'success');
+      loadDocuments(); loadUnclassified();
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    }
+  };
+
   const ignoreSender = async (doc) => {
     if (!confirm(`Ignori toate email-urile de la ${doc.senderEmail}? Documentul curent va fi șters din Drive (coș de gunoi) și din listă, iar cele viitoare de la acest expeditor nu vor mai fi importate deloc.`)) return;
     try {
@@ -1209,6 +1230,7 @@ export default function DocumentePage() {
   }, [documents]);
 
   const toggleCat = (cat) => setOpenCats(p => ({ ...p, [cat]: !p[cat] }));
+  const toggleSubcat = (cat, sub) => setOpenSubcats(p => { const k = `${cat}::${sub}`; return { ...p, [k]: !p[k] }; });
 
   /** Only worth offering when there's more than one file to actually combine. */
   const renderCombineRow = (files, category, subcategory) => {
@@ -1372,6 +1394,7 @@ export default function DocumentePage() {
                         creează regulă automată
                       </label>
                       <button className="doc-btn doc-btn-primary" onClick={() => assignDocument(doc.id)}>Atribuie</button>
+                      <button className="doc-btn doc-btn-red" onClick={() => deleteDocument(doc)}>🗑 Șterge</button>
                       <button className="doc-btn doc-btn-red" onClick={() => ignoreSender(doc)}>🚫 Ignoră expeditor</button>
                     </div>
                   </div>
@@ -1544,15 +1567,29 @@ export default function DocumentePage() {
               </div>
               {open && (
                 <div className="doc-cat-body">
-                  {cat.files.map(f => <FileRow key={f.id} doc={f} folderOptions={folderOptions} onMove={moveDocument} />)}
+                  {cat.files.map(f => <FileRow key={f.id} doc={f} folderOptions={folderOptions} onMove={moveDocument} onDelete={deleteDocument} />)}
                   {renderCombineRow(cat.files, cat.category, null)}
-                  {Object.entries(cat.subcats).map(([sub, files]) => (
-                    <div key={sub}>
-                      <div style={{ fontSize: 10, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', marginTop: 8 }}>{sub}</div>
-                      {files.map(f => <FileRow key={f.id} doc={f} folderOptions={folderOptions} onMove={moveDocument} />)}
-                      {renderCombineRow(files, cat.category, sub)}
-                    </div>
-                  ))}
+                  {Object.entries(cat.subcats).map(([sub, files]) => {
+                    const subKey = `${cat.category}::${sub}`;
+                    const subOpen = !!openSubcats[subKey];
+                    return (
+                      <div className="doc-subcat" key={sub}>
+                        <div className="doc-subcat-hdr" onClick={() => toggleSubcat(cat.category, sub)}>
+                          <div>
+                            <span className="doc-subcat-name">📁 {sub}</span>
+                            <span className="doc-cat-count">{files.length} fișiere</span>
+                          </div>
+                          <span style={{ color: '#475569' }}>{subOpen ? '▲' : '▼'}</span>
+                        </div>
+                        {subOpen && (
+                          <div className="doc-subcat-body">
+                            {files.map(f => <FileRow key={f.id} doc={f} folderOptions={folderOptions} onMove={moveDocument} onDelete={deleteDocument} />)}
+                            {renderCombineRow(files, cat.category, sub)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1653,7 +1690,7 @@ export default function DocumentePage() {
   );
 }
 
-function FileRow({ doc, folderOptions, onMove }) {
+function FileRow({ doc, folderOptions, onMove, onDelete }) {
   const [moveOpen, setMoveOpen] = useState(false);
   const [target, setTarget] = useState('');
   const [newCategory, setNewCategory] = useState('');
@@ -1688,6 +1725,9 @@ function FileRow({ doc, folderOptions, onMove }) {
         )}
         {onMove && (
           <button className="doc-btn doc-btn-ghost" title="Mută în alt folder" onClick={() => setMoveOpen(v => !v)}>🔀</button>
+        )}
+        {onDelete && (
+          <button className="doc-btn doc-btn-red" title="Șterge fișierul" onClick={() => onDelete(doc)}>🗑</button>
         )}
       </div>
       {moveOpen && (
