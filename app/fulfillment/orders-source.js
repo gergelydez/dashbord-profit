@@ -50,6 +50,11 @@ export function mapConnectorOrder(o) {
     county: o.address?.province || '',
     zip: o.address?.zip || '',
     address: [o.address?.address1, o.address?.address2].filter(Boolean).join(', '),
+    address1: o.address?.address1 || '',
+    address2: o.address?.address2 || '',
+    // Indicii pentru auto-detectarea livrării la easybox (vezi detectEasyboxHint în awb-flow.js)
+    shippingMethod: o.shippingMethod || '',
+    noteAttributes: o.noteAttributes || {},
     phone: o.customer?.phone || '',
     clientEmail: o.customer?.email || '',
     total: o.totalPrice || 0,

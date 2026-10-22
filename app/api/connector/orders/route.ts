@@ -208,6 +208,9 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
     currency:          o.currency || 'RON',
     financialStatus:   fin,
     fulfillmentStatus: ful || null,
+    // Numele metodei de shipping alese la checkout (ex: "Sameday Easybox") —
+    // folosit ca indiciu pentru auto-detectarea livrării la easybox.
+    shippingMethod:    o.shipping_lines?.[0]?.title || '',
     invoice,
     // Merge DB shipment with Shopify fulfillment (fallback for xConnector original AWBs)
     shipment: shipment || (shopifyAwb ? {

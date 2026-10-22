@@ -6,11 +6,13 @@
  * same label download logic), instead of the old fulfillment page's separate
  * (less tested) payload-building code.
  *
- * Sameday is kept as a lightweight secondary courier option via the existing
- * /api/sameday-awb endpoint (credentials still user-supplied, stored in
- * localStorage — unchanged from before), without the full locker/easybox UI.
+ * Sameday runs through the unified /api/connector/shipment pipeline (same
+ * one xConnector's "Procesare" page uses for GLS), with full easybox support:
+ * locker picker (manual search or auto-detected from the order's shipping
+ * method/address/note_attributes), sender easybox drop-off, and the
+ * "verificare colet" (openPackage) delivery option.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export const GLS_SERVICES = {
   SM1: { code: 'SM1', label: '📱 SMS Livrare',       desc: 'SMS trimis destinatarului la livrare',      param: 'phone',  group: 'Notificări' },
@@ -25,11 +27,6 @@ export const GLS_SERVICES = {
   SDS: { code: 'SDS', label: '↩️ Shop Return',        desc: 'Return facilitat prin shop GLS',            param: null,     group: 'Extra' },
 };
 export const SERVICE_GROUPS = ['Notificări', 'Flex', 'Livrare', 'Extra'];
-
-const ls = {
-  get: k => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
-  set: (k, v) => { try { if (typeof window !== 'undefined') localStorage.setItem(k, v); } catch {} },
-};
 
 function b64ToBlob(b64, mime) {
   const bytes = atob(b64);
@@ -94,28 +91,116 @@ export async function createGlsAwb(order, addr, services, weight, parcels, conte
   return data;
 }
 
-/** Minimal Sameday AWB — secondary option, core fields only (no locker/easybox UI). */
-export async function createSamedayAwb(order, addr, weight, parcels, content, observation, sdUser, sdPass) {
+/**
+ * Caută lockere Sameday (easybox) după județ/oraș — folosește credențialele
+ * server (SAMEDAY_USERNAME/PASSWORD din Vercel env vars, la fel ca restul
+ * integrării Sameday — xConnector trimite deja username/password goale pe
+ * /api/sameday-awb și se bazează pe acest fallback server-side).
+ */
+export async function fetchSamedayLockers(county, city) {
+  const res = await fetch('/api/sameday-awb', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'get_lockers', county: county || '', city: city || '' }),
+  });
+  return res.json(); // { ok, lockers:[{id,name,address,city,county,postalCode}], total } | { ok:false, error }
+}
+
+const stripDiacritics = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+/**
+ * Best-effort: detectează dacă o comandă a fost plasată pentru livrare la
+ * easybox, pe baza a ce trimite Shopify — nu există un câmp standard, deci
+ * verificăm toate sursele plauzibile:
+ *  1. numele metodei de shipping alese la checkout (ex: "Sameday Easybox") —
+ *     cel mai de încredere semnal că a fost aleasă livrarea la locker.
+ *  2. note_attributes cu "locker"/"easybox" în nume — dacă valoarea e un
+ *     număr, îl tratăm direct ca ID de locker (cel mai precis caz posibil).
+ *  3. address2 — unele aplicații de easybox scriu acolo numele/adresa
+ *     locker-ului ales.
+ * Dacă nu găsește nimic clar, întoarce null — nu activăm nimic automat, UI-ul
+ * rămâne pe livrare normală și utilizatorul poate activa manual easybox-ul.
+ */
+export function detectEasyboxHint(order) {
+  const notes = order.noteAttributes || {};
+  for (const [k, v] of Object.entries(notes)) {
+    if (/locker|easybox/i.test(k) && /^\d+$/.test(String(v).trim())) {
+      return { lockerId: String(v).trim(), nameHint: '', source: `atribut comandă "${k}"` };
+    }
+  }
+
+  const shippingMethod = order.shippingMethod || '';
+  const address2 = order.address2 || '';
+  const noteText = Object.entries(notes).filter(([k]) => /locker|easybox/i.test(k)).map(([, v]) => v).join(' ');
+
+  const haystacks = [
+    { text: shippingMethod, source: `metoda de livrare „${shippingMethod}"` },
+    { text: noteText, source: 'atribut comandă' },
+    { text: address2, source: `adresă (rând 2): „${address2}"` },
+  ];
+  for (const { text, source } of haystacks) {
+    if (text && /easybox|locker/.test(stripDiacritics(text))) {
+      return { lockerId: '', nameHint: (address2 || text).trim(), source };
+    }
+  }
+  return null;
+}
+
+/** Caută cea mai bună potrivire pentru un nume/adresă de locker într-o listă deja încărcată. */
+export function matchLockerByName(lockers, nameHint) {
+  if (!nameHint || !lockers?.length) return null;
+  const h = stripDiacritics(nameHint);
+  return lockers.find(l => h.includes(stripDiacritics(l.name)) || stripDiacritics(l.name).includes(h))
+    || lockers.find(l => h.includes(stripDiacritics(l.address)) || stripDiacritics(l.address).includes(h))
+    || null;
+}
+
+/**
+ * Sameday AWB — trece prin pipeline-ul unificat /api/connector/shipment
+ * (lib/services/shipment-service.ts → lib/couriers/sameday.ts), exact ca
+ * xConnector: idempotent, descarcă + salvează eticheta PDF reală de la
+ * Sameday, scrie rândul Shipment în DB și creează fulfillment-ul în Shopify
+ * — nimic din asta nu se întâmpla înainte (AWB-ul exista doar la Sameday și
+ * în starea locală a paginii, dispărea la refresh).
+ */
+export async function createSamedayAwb(order, addr, weight, parcels, content, observation, shopKey, extra = {}) {
   const payload = {
-    username: sdUser, password: sdPass,
-    recipientName: addr.name    || order.client,
-    phone:         addr.phone   || order.phone,
-    email:         addr.email   || order.clientEmail,
-    address:       addr.address || order.address,
-    city:          addr.city    || order.oras,
-    county:        addr.county  || order.county,
-    zip:           (addr.zip    || order.zip || '').replace(/\s/g, ''),
-    weight:        parseFloat(weight) || 1,
-    parcels:       parseInt(parcels)  || 1,
-    content:       (content || order.prods || 'Colet').slice(0, 100),
-    isCOD:         order.isCOD,
-    total:         order.total,
-    orderName:     order.name,
-    orderId:       order.id,
-    observations:  observation || (order.prods || '').slice(0, 100) || `Comanda ${order.name}`,
+    shopifyOrderId: order.id,
+    shop: shopKey,
+    courier: 'sameday',
+    courierOptions: {
+      weight: parseFloat(weight) || 1,
+      parcels: parseInt(parcels) || 1,
+      content: (content || order.prods || 'Colet').slice(0, 100),
+      insuredValue: extra.insuredValue || undefined,
+      openPackage: !!extra.openPackage,
+      saturdayDelivery: !!extra.saturdayDelivery,
+      repaymentTransport: !!extra.repaymentTransport,
+      thermo: !!extra.thermo,
+      lockerId: extra.lockerId || undefined,
+      senderEasyboxId: extra.senderEasyboxId || undefined,
+      notifyCustomer: !!extra.notifyCustomer,
+    },
+    overrides: {
+      recipientName: addr.name || order.client,
+      recipientPhone: addr.phone || order.phone,
+      recipientEmail: addr.email || order.clientEmail,
+      recipientAddress: addr.address || order.address,
+      recipientCity: addr.city || order.oras,
+      recipientCounty: addr.county || order.county,
+      recipientZip: (addr.zip || order.zip || '').replace(/\s/g, ''),
+      productName: content || order.prods,
+      observations: observation || '',
+      isCOD: !!order.isCOD,
+      codAmount: order.total,
+    },
   };
-  const res = await fetch('/api/sameday-awb', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  return res.json();
+  const res = await fetch('/api/connector/shipment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const data = await res.json();
+  if (!data.ok && !data.error) return { ok: false, error: 'Eroare necunoscută Sameday' };
+  if (data.trackingNumber) {
+    return { ok: true, awb: data.trackingNumber, trackUrl: data.trackingUrl, labelUrl: data.labelUrl, mode: (extra.lockerId || extra.senderEasyboxId) ? 'easybox' : 'standard' };
+  }
+  return data;
 }
 
 /** Re-download a GLS label — same fallback chain as app/gls/page.js's downloadLabel. */
@@ -150,6 +235,223 @@ export async function downloadGlsLabel(awbData, orderName, fallbackAwb) {
 }
 
 /**
+ * "Verifică colet" — istoricul complet de scanări al unui AWB (GLS sau
+ * Sameday), prin /api/tracking — același endpoint deja dovedit în pagina
+ * Comenzi. Util mai ales pentru easybox: arată exact dacă/când coletul a
+ * ajuns la locker, nu doar statusul curent.
+ */
+export function TrackingHistoryModal({ order, onClose }) {
+  const [state, setState] = useState({ loading: true, history: [], error: '' });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/tracking?awb=${order.trackingNo}&courier=${order.courier || 'gls'}`);
+        const d = await r.json();
+        if (cancelled) return;
+        if (d.error) setState({ loading: false, history: [], error: d.error });
+        else setState({ loading: false, history: d.history || [], error: '' });
+      } catch (e) {
+        if (!cancelled) setState({ loading: false, history: [], error: e.message });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order.trackingNo, order.courier]);
+
+  return (
+    <div className="ff-overlay" onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}>
+      <div className="ff-modal" style={{ maxWidth: 480 }}>
+        <div className="ff-modal-hdr">
+          <div>
+            <div className="ff-modal-title">📋 Istoric scanări {order.name}</div>
+            <div className="ff-modal-sub" style={{ fontFamily: 'monospace' }}>{order.trackingNo} · {order.courier === 'sameday' ? 'Sameday' : 'GLS'}</div>
+          </div>
+          <button className="ff-modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="ff-modal-body">
+          {state.loading ? (
+            <div style={{ textAlign: 'center', color: '#475569', fontSize: 12, padding: '24px 0' }}>⟳ Se încarcă...</div>
+          ) : state.error ? (
+            <div className="ff-errbox">⚠ {state.error}</div>
+          ) : state.history.length === 0 ? (
+            <div style={{ textAlign: 'center', color: '#475569', fontSize: 12, padding: '24px 0' }}>Niciun eveniment de tracking găsit.</div>
+          ) : (
+            <div>
+              {state.history.map((h, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, padding: '9px 0', borderBottom: i < state.history.length - 1 ? '1px solid #1e2a35' : 'none' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, paddingTop: 2 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: i === 0 ? '#f97316' : '#334155' }} />
+                    {i < state.history.length - 1 && <div style={{ width: 1, flex: 1, background: '#1e2a35', marginTop: 4 }} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      {h.code != null && h.code !== '' && <span style={{ fontSize: 10, fontWeight: 800, background: 'rgba(59,130,246,.15)', color: '#93c5fd', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>#{h.code}</span>}
+                      <span style={{ fontSize: 12, fontWeight: 600, color: i === 0 ? '#f97316' : '#cbd5e1' }}>{h.description || '—'}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                      {h.date && <span>{String(h.date).slice(0, 16).replace('T', ' ')}</span>}
+                      {h.location && <span> · 📍{h.location}</span>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="ff-modal-ftr">
+          <button className="ff-btn ff-btn-ghost" onClick={onClose}>Închide</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Căutare + selectare easybox Sameday după județ/oraș. `selectedId` arată ca
+ * selectat chiar dacă nu mai e în ultimele rezultate afișate (ex. ales prin
+ * auto-detectare, înainte de orice căutare manuală).
+ */
+function LockerPicker({ defaultCounty, defaultCity, selectedId, onSelect, nameHint }) {
+  const [county, setCounty] = useState(defaultCounty || '');
+  const [city, setCity] = useState(defaultCity || '');
+  const [lockers, setLockers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [error, setError] = useState('');
+
+  const search = async () => {
+    setLoading(true); setError(''); setSearched(true);
+    const data = await fetchSamedayLockers(county, city);
+    setLoading(false);
+    if (!data.ok) { setError(data.error || 'Eroare la căutarea lockerelor.'); setLockers([]); return; }
+    setLockers(data.lockers || []);
+    return data.lockers || [];
+  };
+
+  // Avem un indiciu de nume (din auto-detectare) dar nu un ID exact — căutăm
+  // automat în județul/orașul comenzii și încercăm o potrivire fuzzy, fără
+  // să-l obligăm pe utilizator să apese el însuși "Caută lockere".
+  useEffect(() => {
+    if (!nameHint || selectedId) return;
+    (async () => {
+      const found = await search();
+      const match = matchLockerByName(found, nameHint);
+      if (match) onSelect(String(match.id));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div style={{ background: '#080d12', border: '1px solid #1a2535', borderRadius: 10, padding: 10, marginTop: 8 }}>
+      <div className="ff-grid2" style={{ marginBottom: 8 }}>
+        <div className="ff-field"><label className="ff-lbl">Județ</label><input className="ff-inp" value={county} onChange={e => setCounty(e.target.value)} /></div>
+        <div className="ff-field"><label className="ff-lbl">Oraș</label><input className="ff-inp" value={city} onChange={e => setCity(e.target.value)} /></div>
+      </div>
+      <button type="button" className="ff-btn ff-btn-ghost" style={{ width: '100%', justifyContent: 'center' }} disabled={loading} onClick={search}>
+        {loading ? <span className="ff-spin">↻</span> : '🔍'} Caută lockere
+      </button>
+
+      {selectedId && (() => {
+        const sel = lockers.find(l => String(l.id) === String(selectedId));
+        return (
+          <div style={{ marginTop: 8, background: 'rgba(16,185,129,.08)', border: '1px solid rgba(16,185,129,.25)', borderRadius: 8, padding: '8px 10px', fontSize: 11, color: '#10b981' }}>
+            ✓ Selectat: {sel ? `${sel.name} — ${sel.address}, ${sel.city}` : `locker #${selectedId}`}
+          </div>
+        );
+      })()}
+      {error && <div className="ff-errbox" style={{ marginTop: 8 }}>{error}</div>}
+      {searched && !loading && !error && lockers.length === 0 && (
+        <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>Niciun easybox găsit pentru acest județ/oraș.</div>
+      )}
+      {lockers.length > 0 && (
+        <div style={{ maxHeight: 220, overflowY: 'auto', marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {lockers.map(l => {
+            const active = String(l.id) === String(selectedId);
+            return (
+              <div
+                key={l.id}
+                onClick={() => onSelect(String(l.id))}
+                style={{
+                  background: active ? 'rgba(249,115,22,.1)' : '#0c1018',
+                  border: `1px solid ${active ? '#f97316' : 'rgba(255,255,255,.07)'}`,
+                  borderRadius: 8, padding: '8px 10px', cursor: 'pointer',
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, color: active ? '#f97316' : '#e2e8f0' }}>{active ? '✓ ' : ''}{l.name}</div>
+                <div style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>{l.address}, {l.city} {l.county ? `(${l.county})` : ''}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Toggle chip reutilizat pentru livrare/predare easybox și opțiuni Sameday. */
+function Chip({ active, onClick, children }) {
+  return (
+    <button type="button" onClick={onClick} className={`ff-courier-tab${active ? ' active' : ''}`} style={{ flex: 'none', padding: '7px 12px' }}>
+      {children}
+    </button>
+  );
+}
+
+/** Secțiunea completă de opțiuni Sameday: livrare la easybox, predare la easybox, servicii extra. */
+function SamedayOptions({ editAddr, deliveryMode, setDeliveryMode, pickupMode, setPickupMode, lockerId, setLockerId, senderLockerId, setSenderLockerId, autoDetected, options, setOptions }) {
+  const toggleOpt = key => setOptions(p => ({ ...p, [key]: !p[key] }));
+  return (
+    <div>
+      {autoDetected && (
+        <div className="ff-infobox" style={{ marginBottom: 8 }}>
+          📍 Easybox detectat automat din comandă ({autoDetected.source}). Verifică mai jos că e cel corect.
+        </div>
+      )}
+
+      <div className="ff-section-title">📦 Livrare către destinatar</div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+        <Chip active={deliveryMode === 'address'} onClick={() => setDeliveryMode('address')}>🏠 La adresă</Chip>
+        <Chip active={deliveryMode === 'easybox'} onClick={() => setDeliveryMode('easybox')}>🔒 La easybox</Chip>
+      </div>
+      {deliveryMode === 'easybox' && (
+        <LockerPicker
+          defaultCounty={editAddr.county} defaultCity={editAddr.city}
+          selectedId={lockerId} onSelect={setLockerId}
+          nameHint={autoDetected?.nameHint}
+        />
+      )}
+
+      <div className="ff-section-title" style={{ marginTop: 14 }}>🏭 Predare colet (expeditor)</div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+        <Chip active={pickupMode === 'courier'} onClick={() => setPickupMode('courier')}>🚐 Ridicare de curier</Chip>
+        <Chip active={pickupMode === 'easybox'} onClick={() => setPickupMode('easybox')}>🔒 Predau la easybox</Chip>
+      </div>
+      {pickupMode === 'easybox' && (
+        <LockerPicker selectedId={senderLockerId} onSelect={(id) => setSenderLockerId(id)} />
+      )}
+
+      <div className="ff-section-title" style={{ marginTop: 14 }}>⚙️ Opțiuni livrare</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#cbd5e1', cursor: 'pointer' }}>
+          <input type="checkbox" checked={options.openPackage} onChange={() => toggleOpt('openPackage')} />
+          📦 Verificare colet la livrare (destinatarul poate deschide coletul înainte să plătească ramburs)
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#cbd5e1', cursor: 'pointer' }}>
+          <input type="checkbox" checked={options.saturdayDelivery} onChange={() => toggleOpt('saturdayDelivery')} />
+          📅 Livrare sâmbăta
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#cbd5e1', cursor: 'pointer' }}>
+          <input type="checkbox" checked={options.notifyCustomer} onChange={() => toggleOpt('notifyCustomer')} />
+          🔔 Notifică clientul în Shopify (fulfillment)
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Self-contained AWB creation modal.
  * Props: order (id,name,client,phone,email,address,city,county,zip,isCOD,total,currency,prods,addrIssues,trackingNo,courier),
  *        onClose(), onSuccess(awbData), toast(msg,type)
@@ -165,26 +467,50 @@ export function AwbModal({ order, shopKey, onClose, onSuccess, toast }) {
     name: order.client, phone: order.phone, email: order.clientEmail,
     address: order.address, city: order.oras, county: order.county, zip: order.zip,
   });
-  const [sdUser, setSdUser] = useState(() => ls.get('fb_sd_user') || '');
-  const [sdPass, setSdPass] = useState(() => ls.get('fb_sd_pass') || '');
   const [awbLoading, setAwbLoading] = useState(false);
   const [awbResult, setAwbResult] = useState(null);
   const [downloadingAwb, setDownloadingAwb] = useState(false);
+
+  // ── Sameday: easybox / opțiuni livrare ──────────────────────────────────
+  const [sdDeliveryMode, setSdDeliveryMode] = useState('address'); // 'address' | 'easybox'
+  const [sdPickupMode, setSdPickupMode] = useState('courier');     // 'courier' | 'easybox' — predare colet
+  const [sdLockerId, setSdLockerId] = useState('');                // locker DESTINATAR ales
+  const [sdSenderLockerId, setSdSenderLockerId] = useState('');    // locker PREDARE ales
+  const [sdAutoDetected, setSdAutoDetected] = useState(null);      // { source } când detectat automat
+  const [sdOptions, setSdOptions] = useState({ openPackage: false, saturdayDelivery: false, repaymentTransport: false, thermo: false, notifyCustomer: true });
+
+  // Auto-detectare easybox din comandă — o singură dată, la deschiderea modalului.
+  useEffect(() => {
+    const hint = detectEasyboxHint(order);
+    if (!hint) return;
+    setSdDeliveryMode('easybox');
+    setSdAutoDetected(hint);
+    if (hint.lockerId) setSdLockerId(hint.lockerId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleSvc = code => setSelectedServices(p => { const n = { ...p }; if (n[code]) delete n[code]; else n[code] = true; return n; });
 
   const alreadyHasAwb = !!order.trackingNo;
 
   const submit = async () => {
+    if (courier === 'sameday' && sdDeliveryMode === 'easybox' && !sdLockerId) {
+      setAwbResult({ ok: false, error: 'Alege un easybox pentru destinatar (sau comută pe livrare la adresă).' });
+      return;
+    }
+    if (courier === 'sameday' && sdPickupMode === 'easybox' && !sdSenderLockerId) {
+      setAwbResult({ ok: false, error: 'Alege un easybox pentru predarea coletului (sau comută pe ridicare de curier).' });
+      return;
+    }
     setAwbLoading(true); setAwbResult(null);
     try {
-      if (courier === 'sameday') {
-        if (!sdUser || !sdPass) { setAwbResult({ ok: false, error: 'Completează username/parolă Sameday.' }); setAwbLoading(false); return; }
-        ls.set('fb_sd_user', sdUser); ls.set('fb_sd_pass', sdPass);
-      }
       const data = courier === 'gls'
         ? await createGlsAwb(order, editAddr, selectedServices, weight, parcels, content, observation, shopKey)
-        : await createSamedayAwb(order, editAddr, weight, parcels, content, observation, sdUser, sdPass);
+        : await createSamedayAwb(order, editAddr, weight, parcels, content, observation, shopKey, {
+            ...sdOptions,
+            lockerId: sdDeliveryMode === 'easybox' ? sdLockerId : undefined,
+            senderEasyboxId: sdPickupMode === 'easybox' ? sdSenderLockerId : undefined,
+          });
 
       setAwbResult(data);
       if (data.ok) {
@@ -225,12 +551,19 @@ export function AwbModal({ order, shopKey, onClose, onSuccess, toast }) {
               <div style={{ fontSize: 12, color: '#10b981', marginBottom: 4 }}>✅ AWB generat cu succes!</div>
               <div className="ff-okbox-big">{awbResult.awb}</div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginTop: 10 }}>
-                {courier === 'gls' && (
+                {courier === 'gls' ? (
                   <button className="ff-btn ff-btn-green" disabled={downloadingAwb} onClick={download}>
                     {downloadingAwb ? <span className="ff-spin">↻</span> : '⬇'} Descarcă PDF
                   </button>
+                ) : (
+                  awbResult.labelUrl && (
+                    <a href={awbResult.labelUrl} target="_blank" rel="noopener noreferrer" className="ff-btn ff-btn-green">⬇ Descarcă PDF</a>
+                  )
                 )}
-                <a href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${awbResult.awb}`} target="_blank" rel="noopener noreferrer" className="ff-btn ff-btn-blue">📍 Tracking</a>
+                <a
+                  href={courier === 'gls' ? `https://gls-group.eu/RO/ro/urmarire-colet?match=${awbResult.awb}` : `https://sameday.ro/awb/${awbResult.awb}`}
+                  target="_blank" rel="noopener noreferrer" className="ff-btn ff-btn-blue"
+                >📍 Tracking</a>
               </div>
             </div>
           ) : (
@@ -252,10 +585,15 @@ export function AwbModal({ order, shopKey, onClose, onSuccess, toast }) {
               </div>
 
               {courier === 'sameday' && (
-                <div className="ff-grid2">
-                  <div className="ff-field"><label className="ff-lbl">Username Sameday</label><input className="ff-inp" value={sdUser} onChange={e => setSdUser(e.target.value)} /></div>
-                  <div className="ff-field"><label className="ff-lbl">Parolă Sameday</label><input type="password" className="ff-inp" value={sdPass} onChange={e => setSdPass(e.target.value)} /></div>
-                </div>
+                <SamedayOptions
+                  editAddr={editAddr}
+                  deliveryMode={sdDeliveryMode} setDeliveryMode={setSdDeliveryMode}
+                  pickupMode={sdPickupMode} setPickupMode={setSdPickupMode}
+                  lockerId={sdLockerId} setLockerId={setSdLockerId}
+                  senderLockerId={sdSenderLockerId} setSenderLockerId={setSdSenderLockerId}
+                  autoDetected={sdAutoDetected}
+                  options={sdOptions} setOptions={setSdOptions}
+                />
               )}
 
               <div>

@@ -18,7 +18,7 @@
  */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useShopStore } from '@/lib/store/shop-store';
-import { AwbModal } from './awb-flow';
+import { AwbModal, TrackingHistoryModal } from './awb-flow';
 import { InvoiceModal } from './invoice-flow';
 import { useProductImages } from './product-images';
 import { buildWaLink } from './whatsapp-template';
@@ -163,7 +163,15 @@ function badgeForCourier(courier) {
   return null;
 }
 
-function OrderCard({ order, addrCheck, catalog, onOpenAwb, onOpenInvoice, waTemplate }) {
+const LIVE_STATUS_LABEL = {
+  inregistrat: { l: '📥 La noi', c: 'ff-badge-gray' },
+  ridicat:     { l: '🚐 Ridicat de curier', c: 'ff-badge-blue' },
+  centru:      { l: '🏭 În tranzit', c: 'ff-badge-blue' },
+  livrare:     { l: '📬 Livrare azi', c: 'ff-badge-ok' },
+  easybox:     { l: '🔒 La easybox', c: 'ff-badge-warn' },
+};
+
+function OrderCard({ order, addrCheck, catalog, onOpenAwb, onOpenInvoice, onVerify, live, waTemplate }) {
   const ready = order.hasInvoice && !!order.trackingNo;
   const hasAddrIssues = !!(addrCheck && addrCheck.valid === false);
   const waLink = buildWaLink({ name: order.name, client: order.client, total: order.total, prods: order.prods, phone: order.phone }, waTemplate);
@@ -191,6 +199,11 @@ function OrderCard({ order, addrCheck, catalog, onOpenAwb, onOpenInvoice, waTemp
         {order.hasInvoice && <span className="ff-badge ff-badge-ok">🧾 {order.invoiceNumber}</span>}
         {order.trackingNo && <span className="ff-badge ff-badge-ok">📦 {order.trackingNo}</span>}
         {badgeForCourier(order.courier)}
+        {order.trackingNo && live && (() => {
+          const cat = classifyOrder(order.courier, live);
+          const st = LIVE_STATUS_LABEL[cat];
+          return st ? <span className={`ff-badge ${st.c}`}>{st.l}</span> : null;
+        })()}
         {hasAddrIssues && <span className="ff-badge ff-badge-warn">⚠ Adresă</span>}
       </div>
 
@@ -226,8 +239,10 @@ function OrderCard({ order, addrCheck, catalog, onOpenAwb, onOpenInvoice, waTemp
         {order.trackingNo
           ? (order.courier === 'gls'
               ? <button className="ff-btn ff-btn-green" onClick={() => onOpenAwb(order)}>📦 AWB ({order.trackingNo})</button>
-              : <a className="ff-btn ff-btn-green" href={`https://gls-group.eu/RO/ro/urmarire-colet?match=${order.trackingNo}`} target="_blank" rel="noopener noreferrer">📍 Track {order.trackingNo}</a>)
+              : <a className="ff-btn ff-btn-green" href={`https://sameday.ro/awb/${order.trackingNo}`} target="_blank" rel="noopener noreferrer">📍 Track {order.trackingNo}</a>)
           : <button className="ff-btn ff-btn-primary" onClick={() => onOpenAwb(order)}>🚚 Creează AWB</button>}
+
+        {order.trackingNo && <button className="ff-btn ff-btn-ghost" onClick={() => onVerify(order)}>🔍 Verifică colet</button>}
 
         {order.phone && <a className="ff-btn ff-btn-ghost" href={`tel:${order.phone}`}>📞 Sună</a>}
         {order.phone && <a className="ff-btn ff-btn-ghost" href={`sms:${order.phone}`}>💬 SMS</a>}
@@ -250,6 +265,7 @@ export default function FulfillmentPage() {
   const [addrChecks, setAddrChecks] = useState({}); // orderId -> validation result
   const [awbOrder, setAwbOrder] = useState(null);
   const [invoiceOrder, setInvoiceOrder] = useState(null);
+  const [verifyOrder, setVerifyOrder] = useState(null);
   const [liveTracking, setLiveTracking] = useState({}); // orderId -> /api/tracking result
 
   // Comenzi live din Shopify (enrichite cu factură/AWB din DB-ul nostru sau,
@@ -476,8 +492,10 @@ export default function FulfillmentPage() {
               order={o}
               addrCheck={addrChecks[o.id]}
               catalog={catalog}
+              live={liveTracking[o.id]}
               onOpenAwb={setAwbOrder}
               onOpenInvoice={setInvoiceOrder}
+              onVerify={setVerifyOrder}
             />
           ))
         )}
@@ -491,6 +509,10 @@ export default function FulfillmentPage() {
           onSuccess={data => handleAwbSuccess(awbOrder, data)}
           toast={toast}
         />
+      )}
+
+      {verifyOrder && (
+        <TrackingHistoryModal order={verifyOrder} onClose={() => setVerifyOrder(null)} />
       )}
 
       {invoiceOrder && (
