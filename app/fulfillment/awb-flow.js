@@ -110,37 +110,49 @@ const stripDiacritics = s => (s || '').toLowerCase().normalize('NFD').replace(/[
 /**
  * Best-effort: detectează dacă o comandă a fost plasată pentru livrare la
  * easybox, pe baza a ce trimite Shopify — nu există un câmp standard, deci
- * verificăm toate sursele plauzibile:
- *  1. numele metodei de shipping alese la checkout (ex: "Sameday Easybox") —
- *     cel mai de încredere semnal că a fost aleasă livrarea la locker.
- *  2. note_attributes cu "locker"/"easybox" în nume — dacă valoarea e un
- *     număr, îl tratăm direct ca ID de locker (cel mai precis caz posibil).
- *  3. address2 — unele aplicații de easybox scriu acolo numele/adresa
- *     locker-ului ales.
+ * verificăm toate sursele plauzibile, în ordinea încrederii:
+ *  1. atributele LocationId + LocationName (+ ConnectorType) — scrise de
+ *     aplicația de easybox folosită la checkout (confirmat pe o comandă
+ *     reală: "ConnectorType: Sameday", "LocationId: 1717", "LocationName:
+ *     easybox Fratiei"). LocationId poate fi un ID intern al aplicației, nu
+ *     neapărat identic cu ID-ul din /api/client/lockers al Sameday — de-aia
+ *     returnăm și LocationName ca nameHint, ca LockerPicker să confirme
+ *     locker-ul real prin căutare după nume și să folosească LocationId doar
+ *     ca ultimă soluție dacă nicio potrivire de nume nu iese.
+ *  2. numele metodei de shipping alese la checkout (ex: "Sameday Easybox").
+ *  3. alt atribut cu "locker"/"easybox" în nume — valoare numerică = ID direct.
+ *  4. address2 — unele aplicații de easybox scriu acolo numele/adresa locker-ului.
  * Dacă nu găsește nimic clar, întoarce null — nu activăm nimic automat, UI-ul
  * rămâne pe livrare normală și utilizatorul poate activa manual easybox-ul.
  */
 export function detectEasyboxHint(order) {
   const notes = order.noteAttributes || {};
+
+  const locationId   = notes.LocationId   || notes.locationId   || notes.location_id;
+  const locationName = notes.LocationName || notes.locationName || notes.location_name;
+  if (locationId || locationName) {
+    const connectorType = notes.ConnectorType || notes.connectorType || '';
+    return {
+      lockerId: /^\d+$/.test(String(locationId || '').trim()) ? String(locationId).trim() : '',
+      nameHint: (locationName || '').trim(),
+      source: `LocationName="${locationName || ''}"${locationId ? ` (LocationId ${locationId})` : ''}${connectorType ? `, ${connectorType}` : ''}`,
+    };
+  }
+
+  const shippingMethod = order.shippingMethod || '';
+  if (shippingMethod && /easybox|locker/.test(stripDiacritics(shippingMethod))) {
+    return { lockerId: '', nameHint: '', source: `metoda de livrare „${shippingMethod}"` };
+  }
+
   for (const [k, v] of Object.entries(notes)) {
     if (/locker|easybox/i.test(k) && /^\d+$/.test(String(v).trim())) {
       return { lockerId: String(v).trim(), nameHint: '', source: `atribut comandă "${k}"` };
     }
   }
 
-  const shippingMethod = order.shippingMethod || '';
   const address2 = order.address2 || '';
-  const noteText = Object.entries(notes).filter(([k]) => /locker|easybox/i.test(k)).map(([, v]) => v).join(' ');
-
-  const haystacks = [
-    { text: shippingMethod, source: `metoda de livrare „${shippingMethod}"` },
-    { text: noteText, source: 'atribut comandă' },
-    { text: address2, source: `adresă (rând 2): „${address2}"` },
-  ];
-  for (const { text, source } of haystacks) {
-    if (text && /easybox|locker/.test(stripDiacritics(text))) {
-      return { lockerId: '', nameHint: (address2 || text).trim(), source };
-    }
+  if (address2 && /easybox|locker/.test(stripDiacritics(address2))) {
+    return { lockerId: '', nameHint: address2.trim(), source: `adresă (rând 2): „${address2}"` };
   }
   return null;
 }
@@ -313,7 +325,7 @@ export function TrackingHistoryModal({ order, onClose }) {
  * selectat chiar dacă nu mai e în ultimele rezultate afișate (ex. ales prin
  * auto-detectare, înainte de orice căutare manuală).
  */
-function LockerPicker({ defaultCounty, defaultCity, selectedId, onSelect, nameHint }) {
+function LockerPicker({ defaultCounty, defaultCity, selectedId, onSelect, nameHint, fallbackId }) {
   const [county, setCounty] = useState(defaultCounty || '');
   const [city, setCity] = useState(defaultCity || '');
   const [lockers, setLockers] = useState([]);
@@ -325,20 +337,23 @@ function LockerPicker({ defaultCounty, defaultCity, selectedId, onSelect, nameHi
     setLoading(true); setError(''); setSearched(true);
     const data = await fetchSamedayLockers(county, city);
     setLoading(false);
-    if (!data.ok) { setError(data.error || 'Eroare la căutarea lockerelor.'); setLockers([]); return; }
+    if (!data.ok) { setError(data.error || 'Eroare la căutarea lockerelor.'); setLockers([]); return []; }
     setLockers(data.lockers || []);
     return data.lockers || [];
   };
 
   // Avem un indiciu de nume (din auto-detectare) dar nu un ID exact — căutăm
   // automat în județul/orașul comenzii și încercăm o potrivire fuzzy, fără
-  // să-l obligăm pe utilizator să apese el însuși "Caută lockere".
+  // să-l obligăm pe utilizator să apese el însuși "Caută lockere". Dacă nu
+  // găsim nicio potrivire de nume (aplicația de easybox poate folosi alt
+  // nume decât cel real la Sameday), cădem pe fallbackId brut, dacă există.
   useEffect(() => {
     if (!nameHint || selectedId) return;
     (async () => {
       const found = await search();
       const match = matchLockerByName(found, nameHint);
       if (match) onSelect(String(match.id));
+      else if (fallbackId) onSelect(fallbackId);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -419,7 +434,7 @@ function SamedayOptions({ editAddr, deliveryMode, setDeliveryMode, pickupMode, s
         <LockerPicker
           defaultCounty={editAddr.county} defaultCity={editAddr.city}
           selectedId={lockerId} onSelect={setLockerId}
-          nameHint={autoDetected?.nameHint}
+          nameHint={autoDetected?.nameHint} fallbackId={autoDetected?.lockerId}
         />
       )}
 
@@ -479,13 +494,16 @@ export function AwbModal({ order, shopKey, onClose, onSuccess, toast }) {
   const [sdAutoDetected, setSdAutoDetected] = useState(null);      // { source } când detectat automat
   const [sdOptions, setSdOptions] = useState({ openPackage: false, saturdayDelivery: false, repaymentTransport: false, thermo: false, notifyCustomer: true });
 
-  // Auto-detectare easybox din comandă — o singură dată, la deschiderea modalului.
+  // Auto-detectare easybox din comandă — o singură dată, la deschiderea
+  // modalului. Dacă avem un nume de locker (LocationName etc.), preferăm să-l
+  // căutăm la Sameday prin LockerPicker (garantează un ID real) — ID-ul brut
+  // detectat rămâne doar fallback dacă acea căutare nu găsește nicio potrivire.
   useEffect(() => {
     const hint = detectEasyboxHint(order);
     if (!hint) return;
     setSdDeliveryMode('easybox');
     setSdAutoDetected(hint);
-    if (hint.lockerId) setSdLockerId(hint.lockerId);
+    if (hint.lockerId && !hint.nameHint) setSdLockerId(hint.lockerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
