@@ -78,6 +78,34 @@ function loadXLSXLib() {
   });
 }
 
+/** Împarte [from,to] în bucăți lunare (sau mai scurte la capete) — MyGLS
+ * nu are o limită documentată de interval, dar tragem lună cu lună oricum ca
+ * să putem atribui fiecare colet lunii lui reale (din PickupDate). */
+function monthRanges(from, to) {
+  const ranges = [];
+  let cur = new Date(`${from}T00:00:00`);
+  const end = new Date(`${to}T00:00:00`);
+  while (cur <= end) {
+    const y = cur.getFullYear(), m = cur.getMonth();
+    const monthStart = new Date(y, m, 1);
+    const monthEnd = new Date(y, m + 1, 0);
+    const rangeFrom = monthStart < new Date(`${from}T00:00:00`) ? from : monthStart.toISOString().slice(0, 10);
+    const rangeTo = monthEnd > end ? to : monthEnd.toISOString().slice(0, 10);
+    ranges.push({ key: `${y}-${String(m + 1).padStart(2, '0')}`, from: rangeFrom, to: rangeTo });
+    cur = new Date(y, m + 1, 1);
+  }
+  return ranges;
+}
+
+/** Aceeași regulă deja dovedită pe pagina Comenzi (panoul "Colete în tranzit"
+ * / Live MyGLS): GLS reutilizează codul de "delivered" și pentru predarea
+ * coletului RETUR înapoi la depozit — fără ramburs sau serviciu COD pe AWB,
+ * "delivered" înseamnă de fapt retur, nu livrare la client. */
+function isGlsLiveDelivered(cod, services) {
+  if (Number(cod) > 0) return true;
+  return (services || []).some(s => String(s).toUpperCase().includes('COD'));
+}
+
 function downloadCsv(filename, rows) {
   const csv = rows.map(r => r.map(c => {
     const s = String(c ?? '');
@@ -103,6 +131,13 @@ export default function StatisticiTotalePage() {
   const [emagOrders, setEmagOrders] = useState([]);
   const [sbChecking, setSbChecking] = useState(false);
   const [sbResults, setSbResults] = useState(null); // { found: n, notFound: n }
+
+  // ── Volum real MyGLS (live) — vezi fetchLiveGls mai jos ──
+  const [liveGls, setLiveGls] = useState(null); // periods[monthKey][shopKey|'gls_neatribuit'] = bucket
+  const [liveGlsLoading, setLiveGlsLoading] = useState(false);
+  const [liveGlsProgress, setLiveGlsProgress] = useState(null); // { done, total }
+  const [liveGlsError, setLiveGlsError] = useState('');
+  const [liveGlsSummary, setLiveGlsSummary] = useState(null); // { totalParcels, matched, unmatched }
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -277,6 +312,107 @@ export default function StatisticiTotalePage() {
     }
   };
 
+  // ── Volum real MyGLS (live) ──────────────────────────────────────────────
+  // DB-ul nostru conține doar comenzile ingerate prin webhook — AWB-uri mai
+  // vechi, create direct din contul GLS sau prin aplicația xConnector
+  // originală (înainte să existe pipeline-ul nostru de webhook), nu au
+  // niciodată un rând Order/Shipment la noi și lipsesc complet din tabelul
+  // de mai sus. MyGLS e sursa de adevăr pentru câte colete chiar au plecat —
+  // tragem GetParcelList lună cu lună (owner: /api/gls-parcellist, folosește
+  // deja credențialele server din env), încercăm să atribuim fiecare colet
+  // unui magazin după ClientReference (= numele comenzii Shopify), și luăm
+  // statusul de livrare din /api/tracking — exact aceeași regulă deja
+  // dovedită pe pagina Comenzi (vezi isGlsLiveDelivered mai sus).
+  //
+  // Sameday nu oferă un echivalent: discovery-ul lui (/api/sameday-parcellist)
+  // întoarce doar numere de AWB, fără dată/referință/ramburs per colet — nu
+  // poate fi atribuit unei luni sau unui magazin fără apeluri suplimentare
+  // per-AWB, prea lente pentru un interval de luni multiple. Rămâne un gol
+  // cunoscut — numerele Sameday din tabelul de mai sus rămân cele din DB.
+  const fetchLiveGls = async () => {
+    setLiveGlsLoading(true); setLiveGlsError(''); setLiveGlsSummary(null);
+    const months = monthRanges(from, to);
+    setLiveGlsProgress({ done: 0, total: months.length });
+    try {
+      const allParcels = [];
+      for (const m of months) {
+        const res = await fetch('/api/gls-parcellist', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from: m.from, to: m.to }),
+        }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+        if (res.ok) {
+          for (const p of (res.parcels || [])) allParcels.push({ ...p, monthKey: m.key });
+        }
+        setLiveGlsProgress(p => ({ ...p, done: p.done + 1 }));
+      }
+
+      if (!allParcels.length) {
+        setLiveGls({});
+        setLiveGlsSummary({ totalParcels: 0, matched: 0, unmatched: 0 });
+        return;
+      }
+
+      // Atribuire magazin după ClientReference (numele comenzii Shopify, ex "#1042")
+      const refs = Array.from(new Set(allParcels.map(p => (p.clientRef || '').trim()).filter(Boolean)));
+      let shopMatches = {};
+      if (refs.length) {
+        const mr = await fetch('/api/stats-totale/match-shop', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ names: refs }),
+        }).then(r => r.json()).catch(() => ({ matches: {} }));
+        shopMatches = mr.matches || {};
+      }
+
+      // Status livrare per AWB — în loturi de 15 (aceeași mărime dovedită pe
+      // pagina Comenzi, ca fiecare cerere serverless să rămână scurtă).
+      const statusMap = new Map();
+      const awbs = allParcels.map(p => String(p.parcelNumber || '').trim()).filter(Boolean);
+      for (let i = 0; i < awbs.length; i += 15) {
+        const chunk = awbs.slice(i, i + 15);
+        const r = await fetch('/api/tracking', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orders: chunk.map(awb => ({ id: awb, awb, courier: 'gls' })) }),
+        }).then(r => r.json()).catch(() => ({ results: [] }));
+        for (const res of (r.results || [])) statusMap.set(res.id, res);
+      }
+
+      const live = {};
+      let matched = 0, unmatched = 0;
+      const toPeriod = (mk) => granularity === 'year' ? mk.slice(0, 4) : mk;
+      for (const p of allParcels) {
+        const ref = (p.clientRef || '').trim();
+        const shopKey = shopMatches[ref] || 'gls_neatribuit';
+        if (shopMatches[ref]) matched++; else unmatched++;
+        const t = statusMap.get(String(p.parcelNumber || '').trim());
+        let delivered = false, returned = false;
+        if (t?.hasReturnCode) returned = true;
+        else if (t?.status === 'delivered') { if (isGlsLiveDelivered(p.cod, p.services)) delivered = true; else returned = true; }
+        else if (['failure', 'failed_attempt', 'returned', 'failed_delivery', 'return_in_progress'].includes(t?.status)) returned = true;
+
+        const period = toPeriod(p.monthKey);
+        if (!live[period]) live[period] = {};
+        if (!live[period][shopKey]) live[period][shopKey] = emptyBucket();
+        const b = live[period][shopKey];
+        b.orders++; b.awbCreate++;
+        if (returned) b.retururi++;
+        const cod = Number(p.cod) || 0;
+        if (cod > 0) {
+          if (delivered) b.codIncasat += cod;
+          else if (!returned) b.codNeincasat += cod;
+        }
+      }
+
+      setLiveGls(live);
+      setLiveGlsSummary({ totalParcels: allParcels.length, matched, unmatched });
+    } catch (e) {
+      setLiveGlsError(e.message);
+    } finally {
+      setLiveGlsLoading(false);
+    }
+  };
+
+  const liveGlsPeriodsSorted = useMemo(() => Object.keys(liveGls || {}).sort().reverse(), [liveGls]);
+
   return (
     <div style={{ minHeight: '100vh', background: '#0a0e14', color: '#e2e8f0', padding: '16px 16px 100px', fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
@@ -394,6 +530,59 @@ export default function StatisticiTotalePage() {
                     );
                   })
                 ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* ── Volum real MyGLS (live) ── */}
+        <div style={{ background: '#0f1419', border: '1px solid rgba(249,115,22,.25)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316' }}>📡 Volum real MyGLS (live, direct din curier)</div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 560 }}>
+                Tabelul de mai sus arată doar ce avem noi în bază de date — AWB-uri mai vechi (ex. create prin aplicația xConnector originală) lipsesc complet din el.
+                Butonul de mai jos trage lista reală de colete direct din contul MyGLS pentru intervalul selectat, lună cu lună, și încearcă să le atribuie unui magazin.
+              </div>
+            </div>
+            <button onClick={fetchLiveGls} disabled={liveGlsLoading} style={btnPrimary}>
+              {liveGlsLoading ? `⟳ ${liveGlsProgress ? `${liveGlsProgress.done}/${liveGlsProgress.total} luni` : '...'}` : '🔴 Trage volum live MyGLS'}
+            </button>
+          </div>
+          {liveGlsError && <div style={errBox}>⚠️ {liveGlsError}</div>}
+          {liveGlsSummary && (
+            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+              <b style={{ color: '#e2e8f0' }}>{fmtInt(liveGlsSummary.totalParcels)}</b> colete găsite în MyGLS pentru interval · <b style={{ color: '#10b981' }}>{fmtInt(liveGlsSummary.matched)}</b> atribuite unui magazin (potrivire după numărul comenzii) · <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatched)}</b> neatribuite (posibil comenzi mai vechi, fără rând în baza noastră de date)
+            </div>
+          )}
+          {liveGlsPeriodsSorted.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 680 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
+                  {['Perioadă', 'Magazin', 'Colete (AWB)', 'COD încasat', 'COD neîncasat', 'Retururi'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: '#64748b', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {liveGlsPeriodsSorted.map(period => {
+                  const byShop = liveGls[period];
+                  const keys = Object.keys(byShop).sort((a, b) => (a === 'gls_neatribuit' ? 1 : 0) - (b === 'gls_neatribuit' ? 1 : 0));
+                  return keys.map((shopKey, i) => {
+                    const b = byShop[shopKey];
+                    const meta = shopKey === 'gls_neatribuit' ? { label: 'Neatribuit', flag: '❓', color: '#64748b' } : SHOP_META[shopKey];
+                    return (
+                      <tr key={`${period}-${shopKey}`} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
+                        <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: i === 0 ? 700 : 400 }}>{i === 0 ? period : ''}</td>
+                        <td style={{ padding: '5px 8px', color: meta?.color || '#94a3b8', fontWeight: 700, whiteSpace: 'nowrap' }}>{meta?.flag} {meta?.label || shopKey}</td>
+                        <td style={{ padding: '5px 8px' }}>{fmtInt(b.orders)}</td>
+                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#10b981' }}>{fmt(b.codIncasat)}</td>
+                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(b.codNeincasat)}</td>
+                        <td style={{ padding: '5px 8px', color: b.retururi ? '#f43f5e' : '#475569' }}>{fmtInt(b.retururi)}</td>
+                      </tr>
+                    );
+                  });
+                })}
               </tbody>
             </table>
           )}
