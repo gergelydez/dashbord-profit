@@ -28,14 +28,15 @@ const fmt = n => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits:
 const fmtInt = n => Number(n || 0).toLocaleString('ro-RO');
 
 const SHOP_META = {
-  ro:         { label: 'Romania',   flag: '🇷🇴', color: '#f97316' },
-  hu:         { label: 'Ungaria',   flag: '🇭🇺', color: '#3b82f6' },
-  glato:      { label: 'Glato',     flag: '🛍️', color: '#a855f7' },
-  glatohu:    { label: 'Glato HU',  flag: '🛍️', color: '#ec4899' },
-  emag:       { label: 'eMAG',      flag: '🛒', color: '#eab308' },
-  necunoscut: { label: 'Necunoscut', flag: '❓', color: '#64748b' },
+  ro:             { label: 'Romania',   flag: '🇷🇴', color: '#f97316' },
+  hu:             { label: 'Ungaria',   flag: '🇭🇺', color: '#3b82f6' },
+  glato:          { label: 'Glato',     flag: '🛍️', color: '#a855f7' },
+  glatohu:        { label: 'Glato HU',  flag: '🛍️', color: '#ec4899' },
+  emag:           { label: 'eMAG',      flag: '🛒', color: '#eab308' },
+  gls_neatribuit: { label: 'GLS neatribuit (live)', flag: '📡', color: '#64748b' },
+  necunoscut:     { label: 'Necunoscut', flag: '❓', color: '#64748b' },
 };
-const SHOP_ORDER = ['ro', 'hu', 'glato', 'glatohu', 'emag', 'necunoscut'];
+const SHOP_ORDER = ['ro', 'hu', 'glato', 'glatohu', 'emag', 'gls_neatribuit', 'necunoscut'];
 
 function emptyBucket() {
   return { orders: 0, cancelled: 0, valoare: 0, codIncasat: 0, codNeincasat: 0, cardIncasat: 0, retururi: 0, facturate: 0, nefacturate: 0, awbCreate: 0 };
@@ -150,6 +151,11 @@ export default function StatisticiTotalePage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Datele live MyGLS sunt legate de intervalul [from,to] cerut la acel
+  // moment — dacă utilizatorul schimbă intervalul fără să le re-tragă,
+  // le ștergem ca să nu rămână suprapuse peste o perioadă greșită.
+  useEffect(() => { setLiveGls(null); setLiveGlsSummary(null); }, [from, to]);
+
   useEffect(() => {
     try { setEmagOrders(JSON.parse(ls.get('emag_orders') || '[]')); } catch { setEmagOrders([]); }
   }, []);
@@ -226,6 +232,27 @@ export default function StatisticiTotalePage() {
       bump(toPeriodKey(monthKey), 'emag', b);
     }
 
+    // Volum real MyGLS (live, din fetchLiveGls) — SUPRASCRIE (nu adună)
+    // comenzi/AWB/COD/retururi pentru perioadele+magazinele unde avem date
+    // live, fiindcă GLS e mai complet decât ce avem în DB (vezi AWB-uri
+    // xConnector vechi). Păstrăm valoare/card/facturat din DB, pe care GLS
+    // nu le cunoaște. "gls_neatribuit" (colete fără magazin identificat)
+    // apare ca rând propriu, nu se pierde.
+    if (liveGls) {
+      for (const [period, byShop] of Object.entries(liveGls)) {
+        for (const [shopKey, liveBucket] of Object.entries(byShop)) {
+          if (!periods[period]) periods[period] = {};
+          if (!periods[period][shopKey]) periods[period][shopKey] = emptyBucket();
+          const target = periods[period][shopKey];
+          target.orders = liveBucket.orders;
+          target.awbCreate = liveBucket.awbCreate;
+          target.codIncasat = liveBucket.codIncasat;
+          target.codNeincasat = liveBucket.codNeincasat;
+          target.retururi = liveBucket.retururi;
+        }
+      }
+    }
+
     const shopTotals = {};
     for (const byShop of Object.values(periods)) {
       for (const [shopKey, bucket] of Object.entries(byShop)) {
@@ -236,7 +263,7 @@ export default function StatisticiTotalePage() {
 
     const periodKeysSorted = Object.keys(periods).sort().reverse();
     return { periods, shopCurrency, shopTotals, periodKeysSorted };
-  }, [serverData, emagOrders, granularity, from, to]);
+  }, [serverData, emagOrders, granularity, from, to, liveGls]);
 
   const visibleShops = SHOP_ORDER.filter(k => activeShops.has(k) && (shopTotals[k] || k === 'emag'));
 
@@ -478,7 +505,7 @@ export default function StatisticiTotalePage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {SHOP_ORDER.filter(k => k !== 'necunoscut').map(k => {
+            {SHOP_ORDER.filter(k => k !== 'necunoscut' && k !== 'gls_neatribuit').map(k => {
               const meta = SHOP_META[k];
               const active = activeShops.has(k);
               return (
@@ -504,8 +531,8 @@ export default function StatisticiTotalePage() {
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316' }}>📡 Volum real MyGLS (live, direct din curier)</div>
               <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 560 }}>
-                Tabelul de mai jos arată doar ce avem noi în bază de date — AWB-uri mai vechi (ex. create prin aplicația xConnector originală) lipsesc complet din el.
-                Butonul de mai jos trage lista reală de colete direct din contul MyGLS pentru intervalul selectat, lună cu lună, și încearcă să le atribuie unui magazin.
+                Tabelul de mai jos arată implicit doar ce avem noi în bază de date — AWB-uri mai vechi (ex. create prin aplicația xConnector originală) lipsesc complet din el.
+                Apasă butonul ca să tragi lista reală de colete direct din contul MyGLS (lună cu lună) — coloanele Comenzi/COD/Retururi din tabelul de mai jos se actualizează automat cu numerele reale (marcate 📡), pentru fiecare lună+magazin unde găsim date.
               </div>
             </div>
             <button onClick={fetchLiveGls} disabled={liveGlsLoading} style={btnPrimary}>
@@ -601,11 +628,12 @@ export default function StatisticiTotalePage() {
                     const b = periods[period][shopKey];
                     const meta = SHOP_META[shopKey];
                     const cur = shopCurrency[shopKey] || '';
+                    const isLive = !!liveGls?.[period]?.[shopKey];
                     return (
                       <tr key={`${period}-${shopKey}`} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
                         <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: i === 0 ? 700 : 400 }}>{i === 0 ? periodLabel(period) : ''}</td>
                         <td style={{ padding: '5px 8px', color: meta.color, fontWeight: 700, whiteSpace: 'nowrap' }}>{meta.flag} {meta.label}</td>
-                        <td style={{ padding: '5px 8px' }}>{fmtInt(b.orders)}</td>
+                        <td style={{ padding: '5px 8px' }} title={isLive ? 'Din MyGLS live, nu din baza de date' : ''}>{fmtInt(b.orders)}{isLive && <span style={{ marginLeft: 4, fontSize: 9, color: '#f97316' }}>📡</span>}</td>
                         <td style={{ padding: '5px 8px', color: '#64748b' }}>{fmtInt(b.cancelled)}</td>
                         <td style={{ padding: '5px 8px', fontFamily: 'monospace' }}>{fmt(b.valoare)} {cur}</td>
                         <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#10b981' }}>{fmt(b.codIncasat)}</td>
