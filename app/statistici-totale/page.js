@@ -456,12 +456,18 @@ export default function StatisticiTotalePage() {
       });
 
       const live = {};
-      let matched = 0, unmatched = 0;
+      let matched = 0, unmatched = 0, unmatchedBlankRef = 0;
+      const unmatchedSample = [];
       const toPeriod = (mk) => granularity === 'year' ? mk.slice(0, 4) : mk;
       for (const p of allParcels) {
         const ref = (p.clientRef || '').trim();
         const shopKey = shopMatches[ref] || 'gls_neatribuit';
-        if (shopMatches[ref]) matched++; else unmatched++;
+        if (shopMatches[ref]) matched++;
+        else {
+          unmatched++;
+          if (!ref) unmatchedBlankRef++;
+          else if (unmatchedSample.length < 20) unmatchedSample.push({ ref, name: p.deliveryName || '', city: p.deliveryCity || '', month: p.monthKey });
+        }
         const t = statusMap.get(String(p.parcelNumber || '').trim());
         let delivered = false, returned = false;
         if (t?.hasReturnCode) returned = true;
@@ -482,7 +488,7 @@ export default function StatisticiTotalePage() {
       }
 
       setLiveGls(live);
-      setLiveGlsSummary({ totalParcels: allParcels.length, matched, unmatched });
+      setLiveGlsSummary({ totalParcels: allParcels.length, matched, unmatched, unmatchedBlankRef, unmatchedSample });
     } catch (e) {
       setLiveGlsError(e.message);
     } finally {
@@ -583,7 +589,22 @@ export default function StatisticiTotalePage() {
           {liveGlsError && <div style={errBox}>⚠️ {liveGlsError}</div>}
           {liveGlsSummary && (
             <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
-              <b style={{ color: '#e2e8f0' }}>{fmtInt(liveGlsSummary.totalParcels)}</b> colete găsite în MyGLS pentru interval · <b style={{ color: '#10b981' }}>{fmtInt(liveGlsSummary.matched)}</b> atribuite unui magazin (potrivire după numărul comenzii) · <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatched)}</b> neatribuite (posibil comenzi mai vechi, fără rând în baza noastră de date)
+              <div>
+                <b style={{ color: '#e2e8f0' }}>{fmtInt(liveGlsSummary.totalParcels)}</b> colete găsite în MyGLS pentru interval · <b style={{ color: '#10b981' }}>{fmtInt(liveGlsSummary.matched)}</b> atribuite unui magazin (potrivire după numărul comenzii) · <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatched)}</b> neatribuite
+                {!!liveGlsSummary.unmatchedBlankRef && <> (din care <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatchedBlankRef)}</b> fără nicio referință setată pe AWB — vezi mai jos)</>}
+              </div>
+              {!!liveGlsSummary.unmatchedSample?.length && (
+                <details style={{ marginTop: 6 }}>
+                  <summary style={{ cursor: 'pointer', color: '#64748b' }}>🔍 Vezi un eșantion de referințe neatribuite (ca să vedem exact ce format au)</summary>
+                  <div style={{ marginTop: 6, maxHeight: 180, overflowY: 'auto', fontFamily: 'monospace', fontSize: 10, background: '#080d12', borderRadius: 8, padding: 8 }}>
+                    {liveGlsSummary.unmatchedSample.map((s, i) => (
+                      <div key={i} style={{ padding: '2px 0', borderBottom: i < liveGlsSummary.unmatchedSample.length - 1 ? '1px solid #1a2535' : 'none' }}>
+                        <span style={{ color: '#f97316' }}>{s.ref}</span> — {s.name || '(fără nume)'}, {s.city || '—'} <span style={{ color: '#475569' }}>({s.month})</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
           )}
           {liveGlsPeriodsSorted.length > 0 && (
