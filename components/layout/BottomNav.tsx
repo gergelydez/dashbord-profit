@@ -26,6 +26,7 @@ const Ico = {
   chat:    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>,
   docs:    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>,
   emag:    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2l1.5 4h9L18 2"/><path d="M3.5 6h17l-1.6 13a2 2 0 01-2 1.8H7.1a2 2 0 01-2-1.8L3.5 6z"/><path d="M9 10v4"/><path d="M15 10v4"/></svg>,
+  statsTotale: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/><circle cx="7" cy="15" r="1.3" fill="currentColor" stroke="none"/><circle cx="11" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="14" cy="13" r="1.3" fill="currentColor" stroke="none"/><circle cx="19" cy="6" r="1.3" fill="currentColor" stroke="none"/></svg>,
   more:    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>,
   close:   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
 };
@@ -40,6 +41,7 @@ const PRIMARY = [
 
 /* ─── Secondary tabs (inside "More" drawer) ─────────────────── */
 const SECONDARY = [
+  { href: '/statistici-totale', icon: Ico.statsTotale, label: 'Stat. Totale', desc: 'Toate magazinele + eMAG' },
   { href: '/meta-intelligence', icon: Ico.meta,   label: 'Meta Intel', desc: 'Ads Intelligence 🎯' },
   { href: '/fulfillment',       icon: Ico.fulfillment, label: 'Fulfillment', desc: 'Procesare & ambalare' },
   { href: '/gls',               icon: Ico.gls,    label: 'GLS',        desc: 'Colete & AWB'         },

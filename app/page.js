@@ -1026,6 +1026,7 @@ export default function Dashboard() {
             county: order.county || '', country: order.country || 'Romania',
             clientEmail: order.clientEmail || '',
             currency: order.currency || 'RON',
+            createdAt: order.createdAt || '',
             total: order.total,
             items: customItems || order.items || [],
             // Livrat = banii au fost deja colectați (online la comandă SAU
@@ -1099,11 +1100,12 @@ export default function Dashboard() {
           shopifyToken,
           shop: getShopKey(),
           orders: pending.map(o => ({
-            id:     o.id,
-            name:   o.name,
-            client: o.client,
-            oras:   o.oras,
-            total:  o.total,
+            id:        o.id,
+            name:      o.name,
+            client:    o.client,
+            oras:      o.oras,
+            total:     o.total,
+            createdAt: o.createdAt || '',
           })),
         }),
       });
@@ -1615,6 +1617,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
             <div className="header-nav">
               <a href="/profit"            className="nav-link" style={{background:'rgba(16,185,129,.12)', color:'#10b981',border:'1px solid rgba(16,185,129,.25)'}}>💹 Profit</a>
               <a href="/stats"             className="nav-link" style={{background:'rgba(59,130,246,.12)', color:'#3b82f6',border:'1px solid rgba(59,130,246,.25)'}}>📊 Stats</a>
+              <a href="/statistici-totale" className="nav-link" style={{background:'rgba(234,179,8,.12)',   color:'#eab308',border:'1px solid rgba(234,179,8,.25)'}}>📈 Stat. Totale</a>
               <a href="/xconnector"        className="nav-link" style={{background:'rgba(249,115,22,.12)', color:'#f97316',border:'1px solid rgba(249,115,22,.25)'}}>⚡ Procesare</a>
               <a href="/sales-engine-pro"  className="nav-link" style={{background:'rgba(234,179,8,.12)',   color:'#eab308',border:'1px solid rgba(234,179,8,.25)'}}>💰 Sales</a>
               <a href="/import"            className="nav-link" style={{background:'rgba(168,85,247,.12)', color:'#a855f7',border:'1px solid rgba(168,85,247,.25)'}}>🚢 Import</a>
@@ -2474,7 +2477,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                             cif, shopifyDomain, shopifyToken,
                             shop: getShopKey(),
                             xlsData: rows,
-                            orders: pending.map(o => ({ id: o.id, name: o.name, client: o.client, total: o.total })),
+                            orders: pending.map(o => ({ id: o.id, name: o.name, client: o.client, total: o.total, createdAt: o.createdAt || '' })),
                           }),
                         });
                         const data = await res.json();
