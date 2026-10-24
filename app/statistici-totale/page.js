@@ -79,6 +79,21 @@ function loadXLSXLib() {
   });
 }
 
+/** Rulează fn pe fiecare item, max `limit` în paralel — nu tot deodată (ar
+ * supraîncărca API-ul extern), dar nici strict secvențial, unul câte unul
+ * (prea lent pentru sute de cereri, ex. statusul de livrare al unui an
+ * întreg de AWB-uri). */
+async function mapWithConcurrency(items, limit, fn) {
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 /** Împarte [from,to] în bucăți lunare (sau mai scurte la capete) — MyGLS
  * nu are o limită documentată de interval, dar tragem lună cu lună oricum ca
  * să putem atribui fiecare colet lunii lui reale (din PickupDate). */
@@ -385,10 +400,13 @@ export default function StatisticiTotalePage() {
   const fetchLiveGls = async () => {
     setLiveGlsLoading(true); setLiveGlsError(''); setLiveGlsSummary(null);
     const months = monthRanges(from, to);
-    setLiveGlsProgress({ done: 0, total: months.length });
     try {
+      // Faza 1: colete pe lună — 3 cereri MyGLS simultane. Pur secvențial,
+      // pe un interval de un an (12-13 luni), dura inutil de mult pentru doar
+      // atâtea cereri rapide.
+      setLiveGlsProgress({ phase: 'Colete MyGLS', done: 0, total: months.length });
       const allParcels = [];
-      for (const m of months) {
+      await mapWithConcurrency(months, 3, async (m) => {
         const res = await fetch('/api/gls-parcellist', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ from: m.from, to: m.to }),
@@ -397,7 +415,7 @@ export default function StatisticiTotalePage() {
           for (const p of (res.parcels || [])) allParcels.push({ ...p, monthKey: m.key });
         }
         setLiveGlsProgress(p => ({ ...p, done: p.done + 1 }));
-      }
+      });
 
       if (!allParcels.length) {
         setLiveGls({});
@@ -405,7 +423,8 @@ export default function StatisticiTotalePage() {
         return;
       }
 
-      // Atribuire magazin după ClientReference (numele comenzii Shopify, ex "#1042")
+      // Faza 2: atribuire magazin după ClientReference (numele comenzii Shopify, ex "#1042")
+      setLiveGlsProgress({ phase: 'Atribuire magazine', done: 0, total: 1 });
       const refs = Array.from(new Set(allParcels.map(p => (p.clientRef || '').trim()).filter(Boolean)));
       let shopMatches = {};
       if (refs.length) {
@@ -415,19 +434,26 @@ export default function StatisticiTotalePage() {
         }).then(r => r.json()).catch(() => ({ matches: {} }));
         shopMatches = mr.matches || {};
       }
+      setLiveGlsProgress({ phase: 'Atribuire magazine', done: 1, total: 1 });
 
-      // Status livrare per AWB — în loturi de 15 (aceeași mărime dovedită pe
-      // pagina Comenzi, ca fiecare cerere serverless să rămână scurtă).
-      const statusMap = new Map();
+      // Faza 3: status livrare per AWB — loturi de 15 (mărime dovedită pe
+      // pagina Comenzi, ca fiecare cerere serverless să rămână scurtă), dar
+      // 4 loturi simultan — cu sute/mii de AWB-uri pe un an întreg, secvențial
+      // pur lua multe minute, fără niciun semn vizibil de progres (exact
+      // motivul pentru care părea "nu s-a actualizat" deși chiar lucra).
       const awbs = allParcels.map(p => String(p.parcelNumber || '').trim()).filter(Boolean);
-      for (let i = 0; i < awbs.length; i += 15) {
-        const chunk = awbs.slice(i, i + 15);
+      const chunks = [];
+      for (let i = 0; i < awbs.length; i += 15) chunks.push(awbs.slice(i, i + 15));
+      setLiveGlsProgress({ phase: 'Status livrare', done: 0, total: chunks.length });
+      const statusMap = new Map();
+      await mapWithConcurrency(chunks, 4, async (chunk) => {
         const r = await fetch('/api/tracking', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ orders: chunk.map(awb => ({ id: awb, awb, courier: 'gls' })) }),
         }).then(r => r.json()).catch(() => ({ results: [] }));
         for (const res of (r.results || [])) statusMap.set(res.id, res);
-      }
+        setLiveGlsProgress(p => ({ ...p, done: p.done + 1 }));
+      });
 
       const live = {};
       let matched = 0, unmatched = 0;
@@ -540,9 +566,20 @@ export default function StatisticiTotalePage() {
               </div>
             </div>
             <button onClick={fetchLiveGls} disabled={liveGlsLoading} style={btnPrimary}>
-              {liveGlsLoading ? `⟳ ${liveGlsProgress ? `${liveGlsProgress.done}/${liveGlsProgress.total} luni` : '...'}` : '🔴 Trage volum live MyGLS'}
+              {liveGlsLoading ? `⟳ ${liveGlsProgress ? `${liveGlsProgress.phase} (${liveGlsProgress.done}/${liveGlsProgress.total})` : '...'}` : '🔴 Trage volum live MyGLS'}
             </button>
           </div>
+          {liveGlsLoading && liveGlsProgress && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
+                {liveGlsProgress.phase}: {liveGlsProgress.done}/{liveGlsProgress.total}
+                {liveGlsProgress.phase === 'Status livrare' && ' — poate dura câteva minute pentru un interval lung, nu închide pagina'}
+              </div>
+              <div style={{ height: 6, background: '#1a2535', borderRadius: 99, overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: '#f97316', width: `${liveGlsProgress.total ? Math.round((liveGlsProgress.done / liveGlsProgress.total) * 100) : 0}%`, transition: 'width .3s' }} />
+              </div>
+            </div>
+          )}
           {liveGlsError && <div style={errBox}>⚠️ {liveGlsError}</div>}
           {liveGlsSummary && (
             <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
