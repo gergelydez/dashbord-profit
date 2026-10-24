@@ -423,18 +423,22 @@ export default function StatisticiTotalePage() {
         return;
       }
 
-      // Faza 2: atribuire magazin după ClientReference (numele comenzii Shopify, ex "#1042")
-      setLiveGlsProgress({ phase: 'Atribuire magazine', done: 0, total: 1 });
-      const refs = Array.from(new Set(allParcels.map(p => (p.clientRef || '').trim()).filter(Boolean)));
+      // Faza 2: atribuire magazin după ClientReference (numele comenzii
+      // Shopify, ex "#1042") — direct din Shopify LIVE (toate magazinele
+      // conectate), nu din DB-ul nostru. DB-ul e exact ce lipsește (de-aia
+      // facem tot pull-ul ăsta live) — a căuta un colet neatribuit tot în DB
+      // dădea mereu "neatribuit", chiar dacă comanda chiar există în Shopify.
+      setLiveGlsProgress({ phase: 'Atribuire magazine (Shopify live)', done: 0, total: 1 });
       let shopMatches = {};
-      if (refs.length) {
-        const mr = await fetch('/api/stats-totale/match-shop', {
+      {
+        const mr = await fetch('/api/stats-totale/shopify-order-names', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ names: refs }),
-        }).then(r => r.json()).catch(() => ({ matches: {} }));
-        shopMatches = mr.matches || {};
+          body: JSON.stringify({ from, to }),
+        }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+        if (mr.ok) shopMatches = mr.nameToShop || {};
+        else setLiveGlsError(`Atribuire magazine eșuată: ${mr.error || 'eroare necunoscută'} — coletele rămân neatribuite.`);
       }
-      setLiveGlsProgress({ phase: 'Atribuire magazine', done: 1, total: 1 });
+      setLiveGlsProgress({ phase: 'Atribuire magazine (Shopify live)', done: 1, total: 1 });
 
       // Faza 3: status livrare per AWB — loturi de 15 (mărime dovedită pe
       // pagina Comenzi, ca fiecare cerere serverless să rămână scurtă), dar
