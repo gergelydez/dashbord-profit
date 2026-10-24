@@ -154,6 +154,28 @@ export default function StatisticiTotalePage() {
     try { setEmagOrders(JSON.parse(ls.get('emag_orders') || '[]')); } catch { setEmagOrders([]); }
   }, []);
 
+  // Verificare rapidă, automată, la încărcarea paginii: câte colete ARE
+  // MyGLS în luna curentă, direct din contul GLS — comparabil imediat cu ce
+  // arată tabelul de mai jos (care, dacă e doar din baza noastră de date,
+  // poate fi mult sub realitate — vezi panoul "Volum real MyGLS" pentru
+  // detaliu pe magazine/istoric).
+  const [glsMonthCount, setGlsMonthCount] = useState(null);
+  const [glsMonthLoading, setGlsMonthLoading] = useState(true);
+  const [glsMonthError, setGlsMonthError] = useState('');
+  useEffect(() => {
+    const now = new Date();
+    const monthFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const monthTo = now.toISOString().slice(0, 10);
+    fetch('/api/gls-parcellist', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: monthFrom, to: monthTo }),
+    }).then(r => r.json()).then(d => {
+      if (!d.ok) { setGlsMonthError(d.error || 'Eroare MyGLS'); return; }
+      setGlsMonthCount(d.count ?? (d.parcels || []).length);
+    }).catch(e => setGlsMonthError(e.message))
+      .finally(() => setGlsMonthLoading(false));
+  }, []);
+
   const toggleShop = (key) => setActiveShops(prev => {
     const n = new Set(prev);
     if (n.has(key)) n.delete(key); else n.add(key);
@@ -424,6 +446,20 @@ export default function StatisticiTotalePage() {
           <a href="/" style={{ fontSize: 12, color: '#94a3b8', textDecoration: 'none', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, padding: '6px 12px' }}>← Comenzi</a>
         </div>
 
+        {/* ── Verificare rapidă MyGLS, luna curentă (automat la încărcare) ── */}
+        <div style={{ background: 'rgba(249,115,22,.08)', border: '1px solid rgba(249,115,22,.3)', borderRadius: 12, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 22 }}>📡</div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>Colete reale în contul MyGLS, luna curentă (toate magazinele, direct din curier — nu din baza noastră de date)</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#f97316', fontFamily: 'monospace' }}>
+              {glsMonthLoading ? '⟳ se verifică...' : glsMonthError ? `⚠️ ${glsMonthError}` : `${fmtInt(glsMonthCount)} colete`}
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: '#64748b', maxWidth: 260 }}>
+            Dacă diferă mult de ce arată tabelul de mai jos, folosește panoul „📡 Volum real MyGLS" (puțin mai jos) ca să vezi împărțirea reală pe magazine și pe lună.
+          </div>
+        </div>
+
         {/* ── Filtre ── */}
         <div style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: '14px 16px', marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -461,6 +497,59 @@ export default function StatisticiTotalePage() {
         </div>
 
         {error && <div style={errBox}>⚠️ {error}</div>}
+
+        {/* ── Volum real MyGLS (live) ── */}
+        <div style={{ background: '#0f1419', border: '1px solid rgba(249,115,22,.25)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316' }}>📡 Volum real MyGLS (live, direct din curier)</div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 560 }}>
+                Tabelul de mai jos arată doar ce avem noi în bază de date — AWB-uri mai vechi (ex. create prin aplicația xConnector originală) lipsesc complet din el.
+                Butonul de mai jos trage lista reală de colete direct din contul MyGLS pentru intervalul selectat, lună cu lună, și încearcă să le atribuie unui magazin.
+              </div>
+            </div>
+            <button onClick={fetchLiveGls} disabled={liveGlsLoading} style={btnPrimary}>
+              {liveGlsLoading ? `⟳ ${liveGlsProgress ? `${liveGlsProgress.done}/${liveGlsProgress.total} luni` : '...'}` : '🔴 Trage volum live MyGLS'}
+            </button>
+          </div>
+          {liveGlsError && <div style={errBox}>⚠️ {liveGlsError}</div>}
+          {liveGlsSummary && (
+            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+              <b style={{ color: '#e2e8f0' }}>{fmtInt(liveGlsSummary.totalParcels)}</b> colete găsite în MyGLS pentru interval · <b style={{ color: '#10b981' }}>{fmtInt(liveGlsSummary.matched)}</b> atribuite unui magazin (potrivire după numărul comenzii) · <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatched)}</b> neatribuite (posibil comenzi mai vechi, fără rând în baza noastră de date)
+            </div>
+          )}
+          {liveGlsPeriodsSorted.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 680 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
+                  {['Perioadă', 'Magazin', 'Colete (AWB)', 'COD încasat', 'COD neîncasat', 'Retururi'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: '#64748b', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {liveGlsPeriodsSorted.map(period => {
+                  const byShop = liveGls[period];
+                  const keys = Object.keys(byShop).sort((a, b) => (a === 'gls_neatribuit' ? 1 : 0) - (b === 'gls_neatribuit' ? 1 : 0));
+                  return keys.map((shopKey, i) => {
+                    const b = byShop[shopKey];
+                    const meta = shopKey === 'gls_neatribuit' ? { label: 'Neatribuit', flag: '❓', color: '#64748b' } : SHOP_META[shopKey];
+                    return (
+                      <tr key={`${period}-${shopKey}`} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
+                        <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: i === 0 ? 700 : 400 }}>{i === 0 ? period : ''}</td>
+                        <td style={{ padding: '5px 8px', color: meta?.color || '#94a3b8', fontWeight: 700, whiteSpace: 'nowrap' }}>{meta?.flag} {meta?.label || shopKey}</td>
+                        <td style={{ padding: '5px 8px' }}>{fmtInt(b.orders)}</td>
+                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#10b981' }}>{fmt(b.codIncasat)}</td>
+                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(b.codNeincasat)}</td>
+                        <td style={{ padding: '5px 8px', color: b.retururi ? '#f43f5e' : '#475569' }}>{fmtInt(b.retururi)}</td>
+                      </tr>
+                    );
+                  });
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
 
         {/* ── KPI cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10, marginBottom: 16 }}>
@@ -530,59 +619,6 @@ export default function StatisticiTotalePage() {
                     );
                   })
                 ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        {/* ── Volum real MyGLS (live) ── */}
-        <div style={{ background: '#0f1419', border: '1px solid rgba(249,115,22,.25)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316' }}>📡 Volum real MyGLS (live, direct din curier)</div>
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 560 }}>
-                Tabelul de mai sus arată doar ce avem noi în bază de date — AWB-uri mai vechi (ex. create prin aplicația xConnector originală) lipsesc complet din el.
-                Butonul de mai jos trage lista reală de colete direct din contul MyGLS pentru intervalul selectat, lună cu lună, și încearcă să le atribuie unui magazin.
-              </div>
-            </div>
-            <button onClick={fetchLiveGls} disabled={liveGlsLoading} style={btnPrimary}>
-              {liveGlsLoading ? `⟳ ${liveGlsProgress ? `${liveGlsProgress.done}/${liveGlsProgress.total} luni` : '...'}` : '🔴 Trage volum live MyGLS'}
-            </button>
-          </div>
-          {liveGlsError && <div style={errBox}>⚠️ {liveGlsError}</div>}
-          {liveGlsSummary && (
-            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
-              <b style={{ color: '#e2e8f0' }}>{fmtInt(liveGlsSummary.totalParcels)}</b> colete găsite în MyGLS pentru interval · <b style={{ color: '#10b981' }}>{fmtInt(liveGlsSummary.matched)}</b> atribuite unui magazin (potrivire după numărul comenzii) · <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatched)}</b> neatribuite (posibil comenzi mai vechi, fără rând în baza noastră de date)
-            </div>
-          )}
-          {liveGlsPeriodsSorted.length > 0 && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 680 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
-                  {['Perioadă', 'Magazin', 'Colete (AWB)', 'COD încasat', 'COD neîncasat', 'Retururi'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: '#64748b', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {liveGlsPeriodsSorted.map(period => {
-                  const byShop = liveGls[period];
-                  const keys = Object.keys(byShop).sort((a, b) => (a === 'gls_neatribuit' ? 1 : 0) - (b === 'gls_neatribuit' ? 1 : 0));
-                  return keys.map((shopKey, i) => {
-                    const b = byShop[shopKey];
-                    const meta = shopKey === 'gls_neatribuit' ? { label: 'Neatribuit', flag: '❓', color: '#64748b' } : SHOP_META[shopKey];
-                    return (
-                      <tr key={`${period}-${shopKey}`} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
-                        <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: i === 0 ? 700 : 400 }}>{i === 0 ? period : ''}</td>
-                        <td style={{ padding: '5px 8px', color: meta?.color || '#94a3b8', fontWeight: 700, whiteSpace: 'nowrap' }}>{meta?.flag} {meta?.label || shopKey}</td>
-                        <td style={{ padding: '5px 8px' }}>{fmtInt(b.orders)}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#10b981' }}>{fmt(b.codIncasat)}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(b.codNeincasat)}</td>
-                        <td style={{ padding: '5px 8px', color: b.retururi ? '#f43f5e' : '#475569' }}>{fmtInt(b.retururi)}</td>
-                      </tr>
-                    );
-                  });
-                })}
               </tbody>
             </table>
           )}
