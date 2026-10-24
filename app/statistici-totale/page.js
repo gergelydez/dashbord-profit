@@ -155,6 +155,12 @@ export default function StatisticiTotalePage() {
   const [liveGlsError, setLiveGlsError] = useState('');
   const [liveGlsSummary, setLiveGlsSummary] = useState(null); // { totalParcels, matched, unmatched }
 
+  // ── Sincronizare completă în DB (Shopify live → Order + Shipment, GLS+Sameday) ──
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(null); // { done, total }
+  const [syncError, setSyncError] = useState('');
+  const [syncSummary, setSyncSummary] = useState(null);
+
   const load = useCallback(() => {
     setLoading(true); setError('');
     fetch(`/api/stats-totale?from=${from}&to=${to}`)
@@ -380,23 +386,64 @@ export default function StatisticiTotalePage() {
     }
   };
 
-  // ── Volum real MyGLS (live) ──────────────────────────────────────────────
-  // DB-ul nostru conține doar comenzile ingerate prin webhook — AWB-uri mai
-  // vechi, create direct din contul GLS sau prin aplicația xConnector
-  // originală (înainte să existe pipeline-ul nostru de webhook), nu au
-  // niciodată un rând Order/Shipment la noi și lipsesc complet din tabelul
-  // de mai sus. MyGLS e sursa de adevăr pentru câte colete chiar au plecat —
-  // tragem GetParcelList lună cu lună (owner: /api/gls-parcellist, folosește
-  // deja credențialele server din env), încercăm să atribuim fiecare colet
-  // unui magazin după ClientReference (= numele comenzii Shopify), și luăm
-  // statusul de livrare din /api/tracking — exact aceeași regulă deja
-  // dovedită pe pagina Comenzi (vezi isGlsLiveDelivered mai sus).
-  //
-  // Sameday nu oferă un echivalent: discovery-ul lui (/api/sameday-parcellist)
-  // întoarce doar numere de AWB, fără dată/referință/ramburs per colet — nu
-  // poate fi atribuit unei luni sau unui magazin fără apeluri suplimentare
-  // per-AWB, prea lente pentru un interval de luni multiple. Rămâne un gol
-  // cunoscut — numerele Sameday din tabelul de mai sus rămân cele din DB.
+  // ── Sincronizare completă în DB ──────────────────────────────────────────
+  // Soluția definitivă la golul din DB: pentru fiecare magazin + lună din
+  // interval, aduce comenzile live din Shopify (sursa de adevăr, nu DB-ul
+  // nostru parțial) și le salvează prin upsertOrderFromWebhook — același cod
+  // folosit de webhook-uri, deci sigur. Pentru fiecare comandă cu fulfillment
+  // (tracking_company + tracking_number — GLS SAU Sameday, Shopify le ține
+  // la fel pe amândouă), creează/actualizează rândul Shipment și îi ia
+  // statusul live din /api/tracking. După asta tabelul principal de mai jos
+  // devine corect direct din DB, fără să mai fie nevoie să tragi date live
+  // de fiecare dată — și acoperă Sameday la fel ca GLS, nu doar GLS.
+  const syncToDb = async () => {
+    setSyncLoading(true); setSyncError(''); setSyncSummary(null);
+    try {
+      const months = monthRanges(from, to);
+      const jobs = [];
+      for (const shopKey of ['ro', 'hu', 'glato', 'glatohu']) {
+        for (const m of months) jobs.push({ shopKey, ...m });
+      }
+      setSyncProgress({ done: 0, total: jobs.length });
+
+      const totals = { ordersCreated: 0, ordersUpdated: 0, shipmentsCreated: 0, statusUpdated: 0 };
+      const errors = [];
+      await mapWithConcurrency(jobs, 3, async (job) => {
+        const res = await fetch('/api/stats-totale/sync-orders', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shop: job.shopKey, from: job.from, to: job.to }),
+        }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+        if (res.ok) {
+          totals.ordersCreated += res.ordersCreated || 0;
+          totals.ordersUpdated += res.ordersUpdated || 0;
+          totals.shipmentsCreated += res.shipmentsCreated || 0;
+          totals.statusUpdated += res.statusUpdated || 0;
+        } else {
+          errors.push(`${job.shopKey} ${job.key}: ${res.error || 'eroare necunoscută'}`);
+        }
+        setSyncProgress(p => ({ ...p, done: p.done + 1 }));
+      });
+
+      if (errors.length) console.error('[Statistici Totale] Erori sincronizare:', errors);
+      setSyncSummary({ ...totals, errors });
+      load(); // reîncarcă tabelul principal din DB, acum actualizat
+    } catch (e) {
+      setSyncError(e.message);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  // ── Volum real MyGLS (live, read-only — nu salvează nimic) ──────────────
+  // Variantă rapidă, DOAR pentru GLS, DOAR pentru o privire imediată, fără
+  // să scrie în DB — pentru sincronizare definitivă (ambii curieri, salvată
+  // permanent), vezi syncToDb mai sus.
+  // Tragem GetParcelList lună cu lună (owner: /api/gls-parcellist, folosește
+  // deja credențialele server din env), atribuim fiecare colet unui magazin
+  // după ClientReference (căutat LIVE în Shopify, nu în DB — vezi
+  // /api/stats-totale/shopify-order-names), și luăm statusul de livrare din
+  // /api/tracking — exact aceeași regulă deja dovedită pe pagina Comenzi
+  // (vezi isGlsLiveDelivered mai sus).
   const fetchLiveGls = async () => {
     setLiveGlsLoading(true); setLiveGlsError(''); setLiveGlsSummary(null);
     const months = monthRanges(from, to);
@@ -564,6 +611,40 @@ export default function StatisticiTotalePage() {
         </div>
 
         {error && <div style={errBox}>⚠️ {error}</div>}
+
+        {/* ── Sincronizare completă în DB ── */}
+        <div style={{ background: '#0f1419', border: '1px solid rgba(16,185,129,.3)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>💾 Sincronizare completă (Shopify → bază de date, GLS + Sameday)</div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 600 }}>
+                Aduce comenzile direct din Shopify (toate cele 4 magazine) pentru intervalul selectat și le salvează definitiv — inclusiv AWB-urile și statusul de livrare, pentru ambii curieri (nu doar GLS). O dată sincronizat, tabelul de mai jos devine corect direct din bază, fără să mai fie nevoie de „Trage live" de fiecare dată.
+              </div>
+            </div>
+            <button onClick={syncToDb} disabled={syncLoading} style={{ ...btnPrimary, background: '#10b981' }}>
+              {syncLoading ? `⟳ Sincronizare (${syncProgress ? `${syncProgress.done}/${syncProgress.total}` : '...'})` : '💾 Sincronizează tot în bază'}
+            </button>
+          </div>
+          {syncLoading && syncProgress && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
+                Magazin×lună {syncProgress.done}/{syncProgress.total} — poate dura câteva minute pentru un interval lung, nu închide pagina
+              </div>
+              <div style={{ height: 6, background: '#1a2535', borderRadius: 99, overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: '#10b981', width: `${syncProgress.total ? Math.round((syncProgress.done / syncProgress.total) * 100) : 0}%`, transition: 'width .3s' }} />
+              </div>
+            </div>
+          )}
+          {syncError && <div style={errBox}>⚠️ {syncError}</div>}
+          {syncSummary && (
+            <div style={{ fontSize: 11, color: '#94a3b8' }}>
+              <b style={{ color: '#10b981' }}>{fmtInt(syncSummary.ordersCreated)}</b> comenzi noi salvate · <b style={{ color: '#e2e8f0' }}>{fmtInt(syncSummary.ordersUpdated)}</b> actualizate · <b style={{ color: '#10b981' }}>{fmtInt(syncSummary.shipmentsCreated)}</b> AWB-uri noi legate · <b style={{ color: '#e2e8f0' }}>{fmtInt(syncSummary.statusUpdated)}</b> statusuri de livrare actualizate
+              {!!syncSummary.errors?.length && (
+                <div style={{ color: '#f59e0b', marginTop: 4 }}>⚠ {syncSummary.errors.length} erori parțiale (vezi consolă) — restul s-a salvat normal.</div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* ── Volum real MyGLS (live) ── */}
         <div style={{ background: '#0f1419', border: '1px solid rgba(249,115,22,.25)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
