@@ -39,7 +39,7 @@ const SHOP_META = {
 const SHOP_ORDER = ['ro', 'hu', 'glato', 'glatohu', 'emag', 'gls_neatribuit', 'necunoscut'];
 
 function emptyBucket() {
-  return { orders: 0, cancelled: 0, valoare: 0, codIncasat: 0, codNeincasat: 0, cardIncasat: 0, retururi: 0, facturate: 0, nefacturate: 0, awbCreate: 0 };
+  return { orders: 0, cancelled: 0, valoare: 0, codIncasat: 0, codNeincasat: 0, codFaraAwb: 0, cardIncasat: 0, retururi: 0, facturate: 0, nefacturate: 0, awbCreate: 0 };
 }
 function addBucket(a, b) {
   for (const k of Object.keys(a)) a[k] += b[k] || 0;
@@ -249,6 +249,10 @@ export default function StatisticiTotalePage() {
           target.codIncasat = liveBucket.codIncasat;
           target.codNeincasat = liveBucket.codNeincasat;
           target.retururi = liveBucket.retururi;
+          // Odată ce avem confirmare live pentru acest magazin+lună, "fără
+          // AWB (necunoscut)" calculat doar din DB nu mai e de încredere —
+          // MyGLS a lămurit deja ce s-a întâmplat cu coletele din bucket-ul ăsta.
+          target.codFaraAwb = 0;
         }
       }
     }
@@ -286,12 +290,12 @@ export default function StatisticiTotalePage() {
   })();
 
   const exportCsv = () => {
-    const rows = [['Perioadă', 'Magazin', 'Monedă', 'Comenzi', 'Anulate', 'Valoare', 'Încasat COD', 'Neîncasat COD', 'Încasat Card', 'Retururi', 'AWB create', 'Facturate', 'Nefacturate']];
+    const rows = [['Perioadă', 'Magazin', 'Monedă', 'Comenzi', 'Anulate', 'Valoare', 'Încasat COD', 'Neîncasat COD (AWB activ)', 'COD fără AWB (necunoscut)', 'Încasat Card', 'Retururi', 'AWB create', 'Facturate', 'Nefacturate']];
     for (const period of periodKeysSorted) {
       for (const shopKey of visibleShops) {
         const b = periods[period]?.[shopKey];
         if (!b) continue;
-        rows.push([periodLabel(period), SHOP_META[shopKey]?.label || shopKey, shopCurrency[shopKey] || '', b.orders, b.cancelled, fmt(b.valoare), fmt(b.codIncasat), fmt(b.codNeincasat), fmt(b.cardIncasat), b.retururi, b.awbCreate, b.facturate, b.nefacturate]);
+        rows.push([periodLabel(period), SHOP_META[shopKey]?.label || shopKey, shopCurrency[shopKey] || '', b.orders, b.cancelled, fmt(b.valoare), fmt(b.codIncasat), fmt(b.codNeincasat), fmt(b.codFaraAwb), fmt(b.cardIncasat), b.retururi, b.awbCreate, b.facturate, b.nefacturate]);
       }
     }
     downloadCsv(`statistici-totale_${from}_${to}.csv`, rows);
@@ -596,9 +600,14 @@ export default function StatisticiTotalePage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
                 <span style={{ color: '#94a3b8' }}>💳 Card încasat</span><span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#3b82f6' }}>{fmt(b.cardIncasat)}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                <span style={{ color: '#94a3b8' }}>⏳ COD neîncasat</span><span style={{ fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(b.codNeincasat)}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: b.codFaraAwb ? 3 : 0 }}>
+                <span style={{ color: '#94a3b8' }}>⏳ COD neîncasat (AWB activ)</span><span style={{ fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(b.codNeincasat)}</span>
               </div>
+              {!!b.codFaraAwb && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }} title="Comenzi COD fără niciun AWB urmărit la noi — nu știm dacă au fost livrate și încasate, sau abandonate. NU e bani garantat 'pe drum' — verifică manual.">
+                  <span style={{ color: '#64748b' }}>❓ COD fără AWB (necunoscut)</span><span style={{ fontFamily: 'monospace', color: '#64748b' }}>{fmt(b.codFaraAwb)}</span>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -617,7 +626,7 @@ export default function StatisticiTotalePage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 820 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
-                  {['Perioadă', 'Magazin', 'Comenzi', 'Anulate', 'Valoare', 'COD încasat', 'COD neîncasat', 'Card încasat', 'Retururi', 'AWB create', 'Facturate', 'Nefacturate'].map(h => (
+                  {['Perioadă', 'Magazin', 'Comenzi', 'Anulate', 'Valoare', 'COD încasat', 'COD neîncasat', 'COD fără AWB', 'Card încasat', 'Retururi', 'AWB create', 'Facturate', 'Nefacturate'].map(h => (
                     <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: '#64748b', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
                   ))}
                 </tr>
@@ -638,6 +647,7 @@ export default function StatisticiTotalePage() {
                         <td style={{ padding: '5px 8px', fontFamily: 'monospace' }}>{fmt(b.valoare)} {cur}</td>
                         <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#10b981' }}>{fmt(b.codIncasat)}</td>
                         <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(b.codNeincasat)}</td>
+                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: b.codFaraAwb ? '#64748b' : '#334155' }} title="Comenzi COD fără niciun AWB urmărit la noi — necunoscut, nu 'pe drum'.">{fmt(b.codFaraAwb)}</td>
                         <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#3b82f6' }}>{fmt(b.cardIncasat)}</td>
                         <td style={{ padding: '5px 8px', color: b.retururi ? '#f43f5e' : '#475569' }}>{fmtInt(b.retururi)}</td>
                         <td style={{ padding: '5px 8px', color: '#94a3b8' }}>{fmtInt(b.awbCreate)}</td>

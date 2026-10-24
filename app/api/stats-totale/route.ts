@@ -29,6 +29,7 @@ interface Bucket {
   valoare: number;
   codIncasat: number;
   codNeincasat: number;
+  codFaraAwb: number;
   cardIncasat: number;
   retururi: number;
   facturate: number;
@@ -37,7 +38,7 @@ interface Bucket {
 }
 
 function emptyBucket(): Bucket {
-  return { orders: 0, cancelled: 0, valoare: 0, codIncasat: 0, codNeincasat: 0, cardIncasat: 0, retururi: 0, facturate: 0, nefacturate: 0, awbCreate: 0 };
+  return { orders: 0, cancelled: 0, valoare: 0, codIncasat: 0, codNeincasat: 0, codFaraAwb: 0, cardIncasat: 0, retururi: 0, facturate: 0, nefacturate: 0, awbCreate: 0 };
 }
 
 interface LineItem { name?: string; sku?: string; qty?: number; price?: number; isShipping?: boolean; isDiscount?: boolean }
@@ -120,7 +121,19 @@ export async function GET(request: Request) {
         if (refunded) continue; // banii nu mai sunt la noi — nu intră în niciun "încasat"
         if (online) bucket.cardIncasat += total;
         else if (delivered) bucket.codIncasat += total;
-        else if (!returned) bucket.codNeincasat += total;
+        else if (!returned) {
+          // Diferență importantă: un AWB activ, încă nelivrat, chiar e "pe
+          // drum" — dar o comandă COD FĂRĂ NICIUN rând Shipment (niciodată
+          // urmărită la noi, ex. AWB creat prin aplicația xConnector veche)
+          // nu înseamnă "în curs de livrare" — înseamnă pur și simplu că nu
+          // știm ce s-a întâmplat cu ea. Amestecate într-un singur
+          // "neîncasat", o comandă COD de acum un an fără AWB la noi rămânea
+          // numărată la infinit ca bani "pe cale să vină", umflând artificial
+          // suma — mai ales pentru magazinele cu mai multe comenzi vechi
+          // fără Shipment (vezi și panoul live MyGLS pentru GLS specific).
+          if (hasAwb) bucket.codNeincasat += total;
+          else bucket.codFaraAwb += total;
+        }
       }
 
       if (!cancelled) {
