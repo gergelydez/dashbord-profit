@@ -487,15 +487,21 @@ export default function StatisticiTotalePage() {
       bump(toPeriodKey(monthKey), 'emag', b);
     }
 
-    // Volum real MyGLS (live, din fetchLiveGls) — SUPRASCRIE (nu adună)
-    // comenzi/AWB/COD/retururi pentru perioadele+magazinele unde avem date
-    // live, fiindcă GLS e mai complet decât ce avem în DB (vezi AWB-uri
-    // xConnector vechi). Păstrăm valoare/card/facturat din DB, pe care GLS
-    // nu le cunoaște. "neatribuit_posibil"/"neatribuit_manual" (colete fără magazin identificat)
-    // apare ca rând propriu, nu se pierde.
+    // Volum real MyGLS (live, din fetchLiveGls) — folosit DOAR pentru
+    // rândurile pseudo-magazin ("neatribuit_posibil"/"neatribuit_manual"),
+    // care n-au niciun echivalent în DB. Pentru magazinele REALE (ro/hu/
+    // glato/glatohu), NU mai suprascriem bucket-ul din DB cu subsetul
+    // GLS-matched — o comandă poate fi expediată și prin Sameday, iar
+    // suprascrierea cu "doar ce a găsit GLS" ascundea silențios acele
+    // comenzi (ex. "63 comenzi (din 48)" — numărul "complet" afișat ieșea
+    // mai mic decât numărul filtrat, vizibil absurd). Acum că sync-orders +
+    // arhiva GLS/Sameday țin DB-ul complet pentru ambii curieri, DB-ul e
+    // sursa corectă pentru magazinele reale.
+    const REAL_SHOP_KEYS = new Set(['ro', 'hu', 'glato', 'glatohu']);
     if (liveGls) {
       for (const [period, byShop] of Object.entries(liveGls)) {
         for (const [shopKey, liveBucket] of Object.entries(byShop)) {
+          if (REAL_SHOP_KEYS.has(shopKey)) continue;
           if (!periods[period]) periods[period] = {};
           if (!periods[period][shopKey]) periods[period][shopKey] = emptyBucket();
           const target = periods[period][shopKey];
@@ -1325,7 +1331,7 @@ export default function StatisticiTotalePage() {
                   {shopsInPeriod.map(shopKey => {
                     const b = periods[period][shopKey];
                     const meta = SHOP_META[shopKey];
-                    const isGlsLive = !!liveGls?.[period]?.[shopKey];
+                    const isGlsLive = (shopKey === 'neatribuit_posibil' || shopKey === 'neatribuit_manual') && !!liveGls?.[period]?.[shopKey];
                     const isEmagLive = shopKey === 'emag' && !!emagSameday?.[period];
                     const rowKey = `${period}|${shopKey}`;
                     const exp = orderCache[rowKey];
