@@ -886,6 +886,32 @@ export default function StatisticiTotalePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from, to, granularity]);
 
+  // Sincronizare de fundal, O DATĂ PE ZI (indiferent ce interval se vede pe
+  // ecran), pentru ultimele 3 luni — de ce: „SAMEDAY TOTAL" exclude un AWB de
+  // la „fără comandă" doar dacă există deja ca Shipment la noi (vezi
+  // known-awbs mai sus), iar sincronizarea automată de mai sus acoperă DOAR
+  // luna vizibilă acum. O comandă din septembrie, livrată abia în octombrie,
+  // nu ajungea niciodată în bază dacă nimeni nu se uita special pe
+  // septembrie — rămânea numărată greșit drept "fără comandă" la infinit.
+  // Asta rulează pe fundal, nu blochează nimic vizual.
+  useEffect(() => {
+    const dayKey = new Date().toISOString().slice(0, 10);
+    if (ls.get('stats_backfill_day') === dayKey) return;
+    ls.set('stats_backfill_day', dayKey);
+    const today = new Date();
+    const wideFrom = new Date(today.getFullYear(), today.getMonth() - 2, 1).toISOString().slice(0, 10);
+    const wideTo = today.toISOString().slice(0, 10);
+    const months = monthRanges(wideFrom, wideTo);
+    const jobs = [];
+    for (const shopKey of ['ro', 'hu', 'glato', 'glatohu']) for (const m of months) jobs.push({ shopKey, ...m });
+    mapWithConcurrency(jobs, 2, job =>
+      fetch('/api/stats-totale/sync-orders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop: job.shopKey, from: job.from, to: job.to }),
+      }).catch(() => {})
+    );
+  }, []);
+
   return (
     <div style={{ minHeight: '100vh', background: '#0a0e14', color: '#e2e8f0', padding: '16px 16px 100px', fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
