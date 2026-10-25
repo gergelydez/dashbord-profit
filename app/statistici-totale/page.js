@@ -33,10 +33,43 @@ const SHOP_META = {
   glato:          { label: 'Glato',     flag: '🛍️', color: '#a855f7' },
   glatohu:        { label: 'Glato HU',  flag: '🛍️', color: '#ec4899' },
   emag:           { label: 'eMAG',      flag: '🛒', color: '#eab308' },
-  gls_neatribuit: { label: 'GLS neatribuit (live)', flag: '📡', color: '#64748b' },
+  neatribuit_posibil: { label: 'Posibil dintr-un magazin', flag: '📡', color: '#f59e0b' },
+  neatribuit_manual:  { label: 'Manual / telefonic',       flag: '📞', color: '#64748b' },
   necunoscut:     { label: 'Necunoscut', flag: '❓', color: '#64748b' },
 };
-const SHOP_ORDER = ['ro', 'hu', 'glato', 'glatohu', 'emag', 'gls_neatribuit', 'necunoscut'];
+const SHOP_ORDER = ['ro', 'hu', 'glato', 'glatohu', 'emag', 'neatribuit_posibil', 'neatribuit_manual', 'necunoscut'];
+const MONTH_NAMES = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Noi', 'Dec'];
+const pad2 = n => String(n).padStart(2, '0');
+
+/** Bară de filtrare asemănătoare cu pagina Comenzi: presetări rapide +
+ * (separat, în pagină) un dropdown An + Lună pentru o lună calendaristică
+ * exactă. */
+function getRange(preset, pickYear, pickMonth) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  const toISO = dt => dt.toISOString().slice(0, 10);
+  switch (preset) {
+    case 'last_7':      return { from: toISO(new Date(y, m, d - 6)), to: toISO(now) };
+    case 'last_30':     return { from: toISO(new Date(y, m, d - 29)), to: toISO(now) };
+    case 'month':       return { from: `${y}-${pad2(m + 1)}-01`, to: toISO(now) };
+    case 'last_month':  { const lm = new Date(y, m, 0); return { from: `${lm.getFullYear()}-${pad2(lm.getMonth() + 1)}-01`, to: toISO(lm) }; }
+    case 'exact_month': { const mEnd = new Date(pickYear, pickMonth, 0); return { from: `${pickYear}-${pad2(pickMonth)}-01`, to: toISO(mEnd) }; }
+    default:            return { from: toISO(new Date(y, m, d - 29)), to: toISO(now) };
+  }
+}
+const PRESETS = [
+  { id: 'last_7', label: '7 zile' },
+  { id: 'last_30', label: '30 zile' },
+  { id: 'month', label: 'Luna asta' },
+  { id: 'last_month', label: 'Luna trecută' },
+];
+
+function periodToRange(periodKey, granularity) {
+  if (granularity === 'year') return { from: `${periodKey}-01-01`, to: `${periodKey}-12-31` };
+  const [y, m] = periodKey.split('-');
+  const mEnd = new Date(Number(y), Number(m), 0);
+  return { from: `${periodKey}-01`, to: mEnd.toISOString().slice(0, 10) };
+}
 
 function emptyBucket() {
   return { orders: 0, cancelled: 0, valoare: 0, codIncasat: 0, codNeincasat: 0, codFaraAwb: 0, cardIncasat: 0, retururi: 0, facturate: 0, nefacturate: 0, awbCreate: 0 };
@@ -122,6 +155,20 @@ function isGlsLiveDelivered(cod, services) {
   return (services || []).some(s => String(s).toUpperCase().includes('COD'));
 }
 
+/** Un AWB GLS neatribuit niciunui magazin conectat: dacă referința arată ca
+ * un nume de comandă Shopify ("#1234" sau pur numeric) dar nu s-a potrivit
+ * cu nimic din magazinele conectate în interval, comanda cel mai probabil
+ * chiar există — "posibil dintr-un magazin" (sincronizare/potrivire ratată).
+ * O referință fără acest format (text liber, sau complet goală) e aproape
+ * sigur un AWB creat manual din pagina GLS, pentru un client care a
+ * comandat telefonic (vezi app/gls/page.js, fluxul „Etichetă manuală" —
+ * acolo referința e un text liber introdus de operator, nu un nume Shopify). */
+function classifyUnmatchedGlsRef(ref) {
+  const r = (ref || '').trim();
+  if (!r) return 'neatribuit_manual';
+  return /^#?\d+$/.test(r) ? 'neatribuit_posibil' : 'neatribuit_manual';
+}
+
 function downloadCsv(filename, rows) {
   const csv = rows.map(r => r.map(c => {
     const s = String(c ?? '');
@@ -139,21 +186,34 @@ export default function StatisticiTotalePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [from, setFrom] = useState(() => new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10));
-  const [to, setTo]     = useState(() => new Date().toISOString().slice(0, 10));
+  const [preset, setPreset] = useState('last_30');
+  const [pickYear, setPickYear] = useState(() => new Date().getFullYear());
+  const [pickMonth, setPickMonth] = useState(() => new Date().getMonth() + 1);
+  const [from, setFrom] = useState(() => getRange('last_30').from);
+  const [to, setTo]     = useState(() => getRange('last_30').to);
   const [granularity, setGranularity] = useState('month'); // 'month' | 'year'
   const [activeShops, setActiveShops] = useState(() => new Set(SHOP_ORDER));
+  const [shopDropdownOpen, setShopDropdownOpen] = useState(false);
+  const [expanded, setExpanded] = useState({}); // `${period}|${shopKey}` -> { loading, kind, rows, error }
 
   const [emagOrders, setEmagOrders] = useState([]);
   const [sbChecking, setSbChecking] = useState(false);
   const [sbResults, setSbResults] = useState(null); // { found: n, notFound: n }
 
   // ── Volum real MyGLS (live) — vezi fetchLiveGls mai jos ──
-  const [liveGls, setLiveGls] = useState(null); // periods[monthKey][shopKey|'gls_neatribuit'] = bucket
+  const [liveGls, setLiveGls] = useState(null); // periods[monthKey][shopKey|'neatribuit_posibil'|'neatribuit_manual'] = bucket
   const [liveGlsLoading, setLiveGlsLoading] = useState(false);
   const [liveGlsProgress, setLiveGlsProgress] = useState(null); // { done, total }
   const [liveGlsError, setLiveGlsError] = useState('');
   const [liveGlsSummary, setLiveGlsSummary] = useState(null); // { totalParcels, matched, unmatched }
+  const [liveGlsDetails, setLiveGlsDetails] = useState({}); // [period][neatribuit_*] -> [{ref,parcelNumber,name,city,cod,...}]
+
+  // ── eMAG — numărul EXACT de comenzi pe lună, citit din Sameday (nu din
+  // importul local) — vezi fetchEmagSameday mai jos ──
+  const [emagSameday, setEmagSameday] = useState(null); // { [periodKey]: count }
+  const [emagSamedayLoading, setEmagSamedayLoading] = useState(false);
+  const [emagSamedayProgress, setEmagSamedayProgress] = useState(null);
+  const [emagSamedayError, setEmagSamedayError] = useState('');
 
   // ── Sincronizare completă în DB (Shopify live → Order + Shipment, GLS+Sameday) ──
   const [syncLoading, setSyncLoading] = useState(false);
@@ -175,7 +235,8 @@ export default function StatisticiTotalePage() {
   // Datele live MyGLS sunt legate de intervalul [from,to] cerut la acel
   // moment — dacă utilizatorul schimbă intervalul fără să le re-tragă,
   // le ștergem ca să nu rămână suprapuse peste o perioadă greșită.
-  useEffect(() => { setLiveGls(null); setLiveGlsSummary(null); }, [from, to]);
+  useEffect(() => { setLiveGls(null); setLiveGlsSummary(null); setLiveGlsDetails({}); setEmagSameday(null); setEmagSamedayError(''); }, [from, to]);
+  useEffect(() => { setExpanded({}); }, [from, to, granularity]);
 
   useEffect(() => {
     try { setEmagOrders(JSON.parse(ls.get('emag_orders') || '[]')); } catch { setEmagOrders([]); }
@@ -208,6 +269,56 @@ export default function StatisticiTotalePage() {
     if (n.has(key)) n.delete(key); else n.add(key);
     return n;
   });
+
+  const applyPreset = (id) => {
+    setPreset(id);
+    const r = getRange(id, pickYear, pickMonth);
+    setFrom(r.from); setTo(r.to);
+  };
+  const applyExactMonth = (year, month) => {
+    setPickYear(year); setPickMonth(month); setPreset('exact_month');
+    const r = getRange('exact_month', year, month);
+    setFrom(r.from); setTo(r.to);
+  };
+
+  const toggleExpand = async (period, shopKey) => {
+    const key = `${period}|${shopKey}`;
+    if (expanded[key]) {
+      setExpanded(prev => { const n = { ...prev }; delete n[key]; return n; });
+      return;
+    }
+    setExpanded(prev => ({ ...prev, [key]: { loading: true } }));
+
+    if (shopKey === 'emag') {
+      const rows = emagOrders.filter(o => {
+        const mk = emagMonthKey(o.date);
+        return granularity === 'year' ? mk?.startsWith(period) : mk === period;
+      });
+      setExpanded(prev => ({ ...prev, [key]: { loading: false, kind: 'emag', rows } }));
+      return;
+    }
+    if (shopKey === 'neatribuit_posibil' || shopKey === 'neatribuit_manual') {
+      const rows = liveGlsDetails?.[period]?.[shopKey] || [];
+      setExpanded(prev => ({ ...prev, [key]: { loading: false, kind: 'gls_detail', rows } }));
+      return;
+    }
+    if (shopKey === 'necunoscut') {
+      setExpanded(prev => ({ ...prev, [key]: { loading: false, kind: 'order', rows: [] } }));
+      return;
+    }
+    // magazin real (ro/hu/glato/glatohu) — comenzi din baza noastră, vezi /api/stats-totale/order-list
+    try {
+      const range = periodToRange(period, granularity);
+      const res = await fetch('/api/stats-totale/order-list', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop: shopKey, from: range.from, to: range.to }),
+      }).then(r => r.json());
+      if (res.ok) setExpanded(prev => ({ ...prev, [key]: { loading: false, kind: 'order', rows: res.orders } }));
+      else setExpanded(prev => ({ ...prev, [key]: { loading: false, error: res.error || 'Eroare necunoscută' } }));
+    } catch (e) {
+      setExpanded(prev => ({ ...prev, [key]: { loading: false, error: e.message } }));
+    }
+  };
 
   // ── Combină serverData (ro/hu/glato/glatohu) + emagOrders (local) într-o
   // singură structură: periods[periodKey][shopKey] = bucket. periodKey e
@@ -257,7 +368,7 @@ export default function StatisticiTotalePage() {
     // comenzi/AWB/COD/retururi pentru perioadele+magazinele unde avem date
     // live, fiindcă GLS e mai complet decât ce avem în DB (vezi AWB-uri
     // xConnector vechi). Păstrăm valoare/card/facturat din DB, pe care GLS
-    // nu le cunoaște. "gls_neatribuit" (colete fără magazin identificat)
+    // nu le cunoaște. "neatribuit_posibil"/"neatribuit_manual" (colete fără magazin identificat)
     // apare ca rând propriu, nu se pierde.
     if (liveGls) {
       for (const [period, byShop] of Object.entries(liveGls)) {
@@ -278,6 +389,18 @@ export default function StatisticiTotalePage() {
       }
     }
 
+    // Numărul exact de comenzi eMAG pe lună, citit din Sameday (vezi
+    // fetchEmagSameday) — SUPRASCRIE doar `orders` (Sameday nu ne dă nicio
+    // altă informație structurată), restul (valoare/card/facturat) rămâne
+    // din importul local.
+    if (emagSameday) {
+      for (const [period, count] of Object.entries(emagSameday)) {
+        if (!periods[period]) periods[period] = {};
+        if (!periods[period].emag) periods[period].emag = emptyBucket();
+        periods[period].emag.orders = count;
+      }
+    }
+
     const shopTotals = {};
     for (const byShop of Object.values(periods)) {
       for (const [shopKey, bucket] of Object.entries(byShop)) {
@@ -288,7 +411,7 @@ export default function StatisticiTotalePage() {
 
     const periodKeysSorted = Object.keys(periods).sort().reverse();
     return { periods, shopCurrency, shopTotals, periodKeysSorted };
-  }, [serverData, emagOrders, granularity, from, to, liveGls]);
+  }, [serverData, emagOrders, granularity, from, to, liveGls, emagSameday]);
 
   const visibleShops = SHOP_ORDER.filter(k => activeShops.has(k) && (shopTotals[k] || k === 'emag'));
 
@@ -507,17 +630,19 @@ export default function StatisticiTotalePage() {
       });
 
       const live = {};
+      const liveDetails = {}; // doar pentru neatribuit_* — detaliu per colet, pentru drill-down în listă
       let matched = 0, unmatched = 0, unmatchedBlankRef = 0;
       const unmatchedSample = [];
       const toPeriod = (mk) => granularity === 'year' ? mk.slice(0, 4) : mk;
       for (const p of allParcels) {
         const ref = (p.clientRef || '').trim();
-        const shopKey = shopMatches[ref] || 'gls_neatribuit';
-        if (shopMatches[ref]) matched++;
+        const matchedShop = shopMatches[ref];
+        const shopKey = matchedShop || classifyUnmatchedGlsRef(ref);
+        if (matchedShop) matched++;
         else {
           unmatched++;
           if (!ref) unmatchedBlankRef++;
-          else if (unmatchedSample.length < 20) unmatchedSample.push({ ref, name: p.deliveryName || '', city: p.deliveryCity || '', month: p.monthKey });
+          if (unmatchedSample.length < 20) unmatchedSample.push({ ref, name: p.deliveryName || '', city: p.deliveryCity || '', month: p.monthKey, category: shopKey });
         }
         const t = statusMap.get(String(p.parcelNumber || '').trim());
         let delivered = false, returned = false;
@@ -536,9 +661,16 @@ export default function StatisticiTotalePage() {
           if (delivered) b.codIncasat += cod;
           else if (!returned) b.codNeincasat += cod;
         }
+
+        if (!matchedShop) {
+          if (!liveDetails[period]) liveDetails[period] = {};
+          if (!liveDetails[period][shopKey]) liveDetails[period][shopKey] = [];
+          liveDetails[period][shopKey].push({ ref, parcelNumber: p.parcelNumber, name: p.deliveryName || '', city: p.deliveryCity || '', cod, delivered, returned });
+        }
       }
 
       setLiveGls(live);
+      setLiveGlsDetails(liveDetails);
       setLiveGlsSummary({ totalParcels: allParcels.length, matched, unmatched, unmatchedBlankRef, unmatchedSample });
     } catch (e) {
       setLiveGlsError(e.message);
@@ -548,6 +680,46 @@ export default function StatisticiTotalePage() {
   };
 
   const liveGlsPeriodsSorted = useMemo(() => Object.keys(liveGls || {}).sort().reverse(), [liveGls]);
+
+  // ── eMAG — numărul EXACT de comenzi pe lună, citit din Sameday ─────────
+  // eMAG nu e un magazin Shopify conectat — expediază totul prin Sameday,
+  // iar AWB-urile lor conțin mereu substringul "EMG" (regulă deja dovedită
+  // pe pagina Comenzi, vezi acolo emagLiveAwbs). Status-sync Sameday nu ne
+  // dă dată per AWB, dar tras lună cu lună (monthRanges) numărul rezultat
+  // e deja corect atribuit lunii respective.
+  const fetchEmagSameday = async () => {
+    setEmagSamedayLoading(true); setEmagSamedayError('');
+    try {
+      const months = monthRanges(from, to);
+      setEmagSamedayProgress({ done: 0, total: months.length });
+      const toPeriod = (mk) => granularity === 'year' ? mk.slice(0, 4) : mk;
+      const counts = {};
+      let anyTruncated = false;
+      await mapWithConcurrency(months, 2, async (m) => {
+        const res = await fetch('/api/sameday-parcellist', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from: m.from, to: m.to }),
+        }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+        if (res.ok) {
+          const emagCount = (res.awbs || []).filter(a => a.toUpperCase().includes('EMG')).length;
+          const period = toPeriod(m.key);
+          counts[period] = (counts[period] || 0) + emagCount;
+          if (res.debug?.truncated) anyTruncated = true;
+        } else {
+          setEmagSamedayError(res.error || 'Eroare Sameday');
+        }
+        setEmagSamedayProgress(p => ({ ...p, done: p.done + 1 }));
+      });
+      if (anyTruncated) {
+        setEmagSamedayError(prev => prev || '⚠️ Unele luni au prea multe mișcări pentru fereastra Sameday (limită ~45s/cerere) — numărul poate fi sub cel real pentru lunile foarte încărcate.');
+      }
+      setEmagSameday(counts);
+    } catch (e) {
+      setEmagSamedayError(e.message);
+    } finally {
+      setEmagSamedayLoading(false);
+    }
+  };
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0e14', color: '#e2e8f0', padding: '16px 16px 100px', fontFamily: 'system-ui, sans-serif' }}>
@@ -574,16 +746,45 @@ export default function StatisticiTotalePage() {
           </div>
         </div>
 
-        {/* ── Filtre ── */}
-        <div style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: '14px 16px', marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <label style={{ fontSize: 11, color: '#94a3b8' }}>De la</label>
-            <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={inpStyle} />
-            <label style={{ fontSize: 11, color: '#94a3b8' }}>Până la</label>
-            <input type="date" value={to} onChange={e => setTo(e.target.value)} style={inpStyle} />
-            <button onClick={load} disabled={loading} style={btnPrimary}>{loading ? '⟳' : '🔄'} Reîncarcă</button>
-
-            <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+        {/* ── Filtre (aceeași bară ca pe pagina Comenzi) ── */}
+        <div className="date-bar">
+          <div className="presets">
+            <span style={{ fontSize: 11, color: '#94a3b8', marginRight: 4, whiteSpace: 'nowrap' }}>📅</span>
+            {PRESETS.map(p => (
+              <button key={p.id} className={`preset-btn ${preset === p.id ? 'active' : ''}`} onClick={() => applyPreset(p.id)}>
+                {p.label}
+              </button>
+            ))}
+            <span style={{ width: 1, height: 20, background: 'rgba(255,255,255,.1)', margin: '0 2px', flexShrink: 0 }} />
+            <select value={pickYear} onChange={e => applyExactMonth(Number(e.target.value), pickMonth)} style={selStyle}>
+              {Array.from({ length: new Date().getFullYear() - 2022 + 1 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+            <select value={pickMonth} onChange={e => applyExactMonth(pickYear, Number(e.target.value))} style={selStyle}>
+              {MONTH_NAMES.map((mn, i) => <option key={i} value={i + 1}>{mn}</option>)}
+            </select>
+            <div style={{ position: 'relative', marginLeft: 'auto' }}>
+              <button onClick={() => setShopDropdownOpen(v => !v)} style={btnGhost}>
+                🏬 Magazine ({activeShops.size === SHOP_ORDER.length ? 'toate' : activeShops.size})
+              </button>
+              {shopDropdownOpen && <div onClick={() => setShopDropdownOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />}
+              {shopDropdownOpen && (
+                <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', background: '#161d24', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: 10, zIndex: 20, minWidth: 210, boxShadow: '0 8px 24px rgba(0,0,0,.4)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#e2e8f0', padding: '4px 2px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.08)', marginBottom: 4 }}>
+                    <input type="checkbox" checked={activeShops.size === SHOP_ORDER.length} onChange={() => setActiveShops(activeShops.size === SHOP_ORDER.length ? new Set() : new Set(SHOP_ORDER))} />
+                    Toate
+                  </label>
+                  {SHOP_ORDER.map(k => (
+                    <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: SHOP_META[k].color, padding: '4px 2px', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={activeShops.has(k)} onChange={() => toggleShop(k)} />
+                      {SHOP_META[k].flag} {SHOP_META[k].label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 4 }}>
               {['month', 'year'].map(g => (
                 <button key={g} onClick={() => setGranularity(g)} style={{ ...btnTab, ...(granularity === g ? btnTabActive : {}) }}>
                   {g === 'month' ? '📅 Lunar' : '🗓️ Anual'}
@@ -591,22 +792,13 @@ export default function StatisticiTotalePage() {
               ))}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {SHOP_ORDER.filter(k => k !== 'necunoscut' && k !== 'gls_neatribuit').map(k => {
-              const meta = SHOP_META[k];
-              const active = activeShops.has(k);
-              return (
-                <button key={k} onClick={() => toggleShop(k)}
-                  style={{
-                    fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 7, cursor: 'pointer',
-                    background: active ? `${meta.color}22` : 'transparent',
-                    border: `1px solid ${active ? meta.color : 'rgba(255,255,255,.1)'}`,
-                    color: active ? meta.color : '#64748b',
-                  }}>
-                  {meta.flag} {meta.label}
-                </button>
-              );
-            })}
+          <div className="custom-row">
+            <label>De la:</label>
+            <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPreset('custom'); }} />
+            <label>Până la:</label>
+            <input type="date" value={to} onChange={e => { setTo(e.target.value); setPreset('custom'); }} />
+            <button className="apply-btn" onClick={load} disabled={loading}>{loading ? '⟳' : '🔄'} Reîncarcă</button>
+            <span className="range-label">{from} → {to}</span>
           </div>
         </div>
 
@@ -704,10 +896,10 @@ export default function StatisticiTotalePage() {
               <tbody>
                 {liveGlsPeriodsSorted.map(period => {
                   const byShop = liveGls[period];
-                  const keys = Object.keys(byShop).sort((a, b) => (a === 'gls_neatribuit' ? 1 : 0) - (b === 'gls_neatribuit' ? 1 : 0));
+                  const keys = Object.keys(byShop).sort((a, b) => (a.startsWith('neatribuit') ? 1 : 0) - (b.startsWith('neatribuit') ? 1 : 0));
                   return keys.map((shopKey, i) => {
                     const b = byShop[shopKey];
-                    const meta = shopKey === 'gls_neatribuit' ? { label: 'Neatribuit', flag: '❓', color: '#64748b' } : SHOP_META[shopKey];
+                    const meta = SHOP_META[shopKey];
                     return (
                       <tr key={`${period}-${shopKey}`} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
                         <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: i === 0 ? 700 : 400 }}>{i === 0 ? period : ''}</td>
@@ -722,6 +914,34 @@ export default function StatisticiTotalePage() {
                 })}
               </tbody>
             </table>
+          )}
+        </div>
+
+        {/* ── eMAG — numărul exact de comenzi/lună, citit din Sameday ── */}
+        <div style={{ background: '#0f1419', border: '1px solid rgba(234,179,8,.25)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#eab308' }}>🛒 eMAG — numărul exact de comenzi/lună (din Sameday, nu din import local)</div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 600 }}>
+                eMAG expediază totul prin Sameday — fiecare AWB al lor conține mereu „EMG" în numărul de tracking. Tragem lista de AWB-uri direct din contul Sameday (lună cu lună) și numărăm cele cu „EMG" — rândul eMAG din lista de mai jos se actualizează cu acest număr exact (marcat 📡).
+              </div>
+            </div>
+            <button onClick={fetchEmagSameday} disabled={emagSamedayLoading} style={{ ...btnPrimary, background: '#eab308', color: '#1a1200' }}>
+              {emagSamedayLoading ? `⟳ ${emagSamedayProgress ? `${emagSamedayProgress.done}/${emagSamedayProgress.total}` : '...'}` : '📡 Trage comenzi eMAG din Sameday'}
+            </button>
+          </div>
+          {emagSamedayLoading && emagSamedayProgress && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ height: 6, background: '#1a2535', borderRadius: 99, overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: '#eab308', width: `${emagSamedayProgress.total ? Math.round((emagSamedayProgress.done / emagSamedayProgress.total) * 100) : 0}%`, transition: 'width .3s' }} />
+              </div>
+            </div>
+          )}
+          {emagSamedayError && <div style={errBox}>⚠️ {emagSamedayError}</div>}
+          {emagSameday && (
+            <div style={{ fontSize: 11, color: '#94a3b8' }}>
+              <b style={{ color: '#eab308' }}>{fmtInt(Object.values(emagSameday).reduce((s, n) => s + n, 0))}</b> comenzi eMAG găsite în Sameday, pe intervalul selectat.
+            </div>
           )}
         </div>
 
@@ -755,10 +975,10 @@ export default function StatisticiTotalePage() {
           ))}
         </div>
 
-        {/* ── Tabel ── */}
-        <div style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: '14px 16px', marginBottom: 20, overflowX: 'auto' }}>
+        {/* ── Listă: comenzi pe perioadă + magazin, click pentru detalii ── */}
+        <div style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{granularity === 'month' ? 'Pe luni' : 'Pe ani'}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{granularity === 'month' ? 'Comenzi pe lună și magazin' : 'Comenzi pe an și magazin'}</div>
             <button onClick={exportCsv} style={btnGhost}>⬇ Export CSV</button>
           </div>
           {loading ? (
@@ -766,42 +986,55 @@ export default function StatisticiTotalePage() {
           ) : periodKeysSorted.length === 0 ? (
             <div style={{ textAlign: 'center', color: '#475569', padding: 24 }}>Nicio comandă în intervalul selectat.</div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 820 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
-                  {['Perioadă', 'Magazin', 'Comenzi', 'Anulate', 'Valoare', 'COD încasat', 'COD neîncasat', 'COD fără AWB', 'Card încasat', 'Retururi', 'AWB create', 'Facturate', 'Nefacturate'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: '#64748b', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {periodKeysSorted.map(period => (
-                  visibleShops.filter(k => periods[period]?.[k]).map((shopKey, i) => {
+            periodKeysSorted.map(period => {
+              const shopsInPeriod = visibleShops.filter(k => periods[period]?.[k]);
+              const periodTotal = shopsInPeriod.reduce((s, k) => s + (periods[period][k].orders || 0), 0);
+              return (
+                <div key={period} style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#f97316', padding: '6px 4px', borderBottom: '1px solid rgba(249,115,22,.25)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                    <span>📅 {periodLabel(period)}</span>
+                    <span style={{ color: '#94a3b8', fontWeight: 400 }}>{fmtInt(periodTotal)} comenzi</span>
+                  </div>
+                  {shopsInPeriod.map(shopKey => {
                     const b = periods[period][shopKey];
                     const meta = SHOP_META[shopKey];
-                    const cur = shopCurrency[shopKey] || '';
-                    const isLive = !!liveGls?.[period]?.[shopKey];
+                    const isGlsLive = !!liveGls?.[period]?.[shopKey];
+                    const isEmagLive = shopKey === 'emag' && !!emagSameday?.[period];
+                    const rowKey = `${period}|${shopKey}`;
+                    const exp = expanded[rowKey];
                     return (
-                      <tr key={`${period}-${shopKey}`} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
-                        <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: i === 0 ? 700 : 400 }}>{i === 0 ? periodLabel(period) : ''}</td>
-                        <td style={{ padding: '5px 8px', color: meta.color, fontWeight: 700, whiteSpace: 'nowrap' }}>{meta.flag} {meta.label}</td>
-                        <td style={{ padding: '5px 8px' }} title={isLive ? 'Din MyGLS live, nu din baza de date' : ''}>{fmtInt(b.orders)}{isLive && <span style={{ marginLeft: 4, fontSize: 9, color: '#f97316' }}>📡</span>}</td>
-                        <td style={{ padding: '5px 8px', color: '#64748b' }}>{fmtInt(b.cancelled)}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace' }}>{fmt(b.valoare)} {cur}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#10b981' }}>{fmt(b.codIncasat)}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(b.codNeincasat)}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: b.codFaraAwb ? '#64748b' : '#334155' }} title="Comenzi COD fără niciun AWB urmărit la noi — necunoscut, nu 'pe drum'.">{fmt(b.codFaraAwb)}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#3b82f6' }}>{fmt(b.cardIncasat)}</td>
-                        <td style={{ padding: '5px 8px', color: b.retururi ? '#f43f5e' : '#475569' }}>{fmtInt(b.retururi)}</td>
-                        <td style={{ padding: '5px 8px', color: '#94a3b8' }}>{fmtInt(b.awbCreate)}</td>
-                        <td style={{ padding: '5px 8px', color: '#10b981' }}>{fmtInt(b.facturate)}</td>
-                        <td style={{ padding: '5px 8px', color: b.nefacturate ? '#f59e0b' : '#475569' }}>{fmtInt(b.nefacturate)}</td>
-                      </tr>
+                      <div key={rowKey} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
+                        <div onClick={() => toggleExpand(period, shopKey)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 6px', cursor: 'pointer' }}>
+                          <span style={{ fontSize: 10, color: '#475569', width: 12 }}>{exp ? '▾' : '▸'}</span>
+                          <span style={{ color: meta.color, fontWeight: 700, fontSize: 12, flex: 1 }}>{meta.flag} {meta.label}</span>
+                          <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{fmtInt(b.orders)}</span>
+                          <span style={{ fontSize: 10, color: '#64748b' }}>comenzi</span>
+                          {(isGlsLive || isEmagLive) && <span title="Date live, nu din baza de date" style={{ fontSize: 10, color: '#f97316' }}>📡</span>}
+                          {!!b.retururi && <span style={{ fontSize: 10, color: '#f43f5e' }}>↩ {fmtInt(b.retururi)}</span>}
+                        </div>
+                        {exp && (
+                          <div style={{ padding: '2px 6px 10px 22px' }}>
+                            {exp.loading ? (
+                              <div style={{ fontSize: 11, color: '#64748b' }}>Se încarcă...</div>
+                            ) : exp.error ? (
+                              <div style={{ fontSize: 11, color: '#f43f5e' }}>⚠️ {exp.error}</div>
+                            ) : !exp.rows?.length ? (
+                              <div style={{ fontSize: 11, color: '#475569' }}>Nicio comandă găsită aici — pentru magazinele Shopify, dacă nu ai sincronizat încă intervalul, apasă „💾 Sincronizează tot în bază" mai sus.</div>
+                            ) : exp.kind === 'order' ? (
+                              <OrderRows rows={exp.rows} />
+                            ) : exp.kind === 'gls_detail' ? (
+                              <GlsDetailRows rows={exp.rows} />
+                            ) : exp.kind === 'emag' ? (
+                              <EmagRows rows={exp.rows} />
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
                     );
-                  })
-                ))}
-              </tbody>
-            </table>
+                  })}
+                </div>
+              );
+            })
           )}
         </div>
 
@@ -869,7 +1102,83 @@ function Kpi({ label, value, color }) {
   );
 }
 
+function CourierBadge({ courier }) {
+  if (!courier) return <span style={{ fontSize: 9, color: '#334155', border: '1px solid #334155', borderRadius: 5, padding: '1px 5px', whiteSpace: 'nowrap' }}>— fără AWB</span>;
+  const isGls = courier === 'gls';
+  const isSameday = courier === 'sameday';
+  return (
+    <span style={{ fontSize: 9, fontWeight: 700, color: isGls ? '#3b82f6' : isSameday ? '#a855f7' : '#94a3b8', border: `1px solid ${isGls ? '#3b82f6' : isSameday ? '#a855f7' : '#334155'}`, borderRadius: 5, padding: '1px 5px', whiteSpace: 'nowrap' }}>
+      {isGls ? '📦 GLS' : isSameday ? '🚀 Sameday' : courier}
+    </span>
+  );
+}
+
+function StatusBadge({ o }) {
+  if (o.cancelled) return <span style={{ fontSize: 9, color: '#64748b' }}>Anulată</span>;
+  if (o.returned) return <span style={{ fontSize: 9, color: '#f43f5e' }}>Retur</span>;
+  if (o.delivered) return <span style={{ fontSize: 9, color: '#10b981' }}>Livrată</span>;
+  if (o.courier) return <span style={{ fontSize: 9, color: '#f59e0b' }}>Tranzit</span>;
+  return <span style={{ fontSize: 9, color: '#475569' }}>—</span>;
+}
+
+/** Listă de comenzi reale (dintr-un magazin Shopify), cu curierul GLS/Sameday
+ * și statusul de livrare per comandă — rezultatul /api/stats-totale/order-list. */
+function OrderRows({ rows }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto' }}>
+      {rows.map((o, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+          <span style={{ color: '#cbd5e1', fontWeight: 700, width: 70, flexShrink: 0 }}>{o.name}</span>
+          <span style={{ color: '#64748b', width: 80, flexShrink: 0 }}>{new Date(o.date).toLocaleDateString('ro-RO')}</span>
+          <span style={{ color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{o.customer}</span>
+          <span style={{ fontFamily: 'monospace', color: '#e2e8f0', flexShrink: 0 }}>{fmt(o.total)} {o.currency}</span>
+          <CourierBadge courier={o.courier} />
+          <StatusBadge o={o} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Colete GLS neatribuite niciunui magazin — doar un eșantion de detaliu
+ * (ref/nume/oraș), fiindcă nu există un Order la noi pentru ele. */
+function GlsDetailRows({ rows }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto', fontFamily: 'monospace' }}>
+      {rows.map((p, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, padding: '3px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+          <span style={{ color: '#f97316', width: 95, flexShrink: 0 }}>{p.parcelNumber}</span>
+          <span style={{ color: '#64748b', width: 70, flexShrink: 0 }} title="ClientReference de pe AWB">ref: {p.ref || '—'}</span>
+          <span style={{ color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{p.name || '(fără nume)'}, {p.city || '—'}</span>
+          {!!p.cod && <span style={{ color: '#10b981', flexShrink: 0 }}>{fmt(p.cod)}</span>}
+          {p.returned && <span style={{ color: '#f43f5e', flexShrink: 0 }}>Retur</span>}
+          {p.delivered && <span style={{ color: '#10b981', flexShrink: 0 }}>Livrat</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Comenzi eMAG din importul local (localStorage) — disponibile doar dacă
+ * au fost importate pe pagina /emag; numărul exact pe lună e cel de pe rândul
+ * eMAG (din Sameday), nu neapărat egal cu nr. de rânduri de aici. */
+function EmagRows({ rows }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto' }}>
+      {rows.map((o, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+          <span style={{ color: '#cbd5e1', width: 90, flexShrink: 0 }}>{o.orderId || o.id}</span>
+          <span style={{ color: '#94a3b8', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+          <span style={{ color: '#64748b', flexShrink: 0 }}>{o.date}</span>
+          <span style={{ color: '#eab308', flexShrink: 0 }}>{o.awb ? `AWB ${o.awb}` : '—'}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const inpStyle = { background: '#161d24', border: '1px solid #243040', color: '#e8edf2', padding: '6px 10px', borderRadius: 7, fontSize: 12, outline: 'none' };
+const selStyle = { ...inpStyle, cursor: 'pointer' };
 const btnPrimary = { background: '#f97316', color: 'white', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer' };
 const btnGhost = { background: 'transparent', border: '1px solid rgba(255,255,255,.1)', color: '#94a3b8', borderRadius: 8, padding: '6px 12px', fontSize: 11, cursor: 'pointer' };
 const btnTab = { background: 'transparent', border: '1px solid rgba(255,255,255,.1)', color: '#64748b', borderRadius: 7, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer' };
