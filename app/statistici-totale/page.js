@@ -158,6 +158,7 @@ function getRange(preset, pickYear, pickMonth) {
     case 'last_30':     return { from: toISO(new Date(y, m, d - 29)), to: toISO(now) };
     case 'month':       return { from: `${y}-${pad2(m + 1)}-01`, to: toISO(now) };
     case 'last_month':  { const lm = new Date(y, m, 0); return { from: `${lm.getFullYear()}-${pad2(lm.getMonth() + 1)}-01`, to: toISO(lm) }; }
+    case 'year_to_date': return { from: `${y}-01-01`, to: toISO(now) };
     case 'exact_month': { const mEnd = new Date(pickYear, pickMonth, 0); return { from: `${pickYear}-${pad2(pickMonth)}-01`, to: toISO(mEnd) }; }
     default:            return { from: toISO(new Date(y, m, d - 29)), to: toISO(now) };
   }
@@ -167,6 +168,7 @@ const PRESETS = [
   { id: 'last_30', label: '30 zile' },
   { id: 'month', label: 'Luna asta' },
   { id: 'last_month', label: 'Luna trecută' },
+  { id: 'year_to_date', label: 'Anul acesta' },
 ];
 
 function periodToRange(periodKey, granularity) {
@@ -325,6 +327,14 @@ export default function StatisticiTotalePage() {
   const [syncProgress, setSyncProgress] = useState(null); // { done, total }
   const [syncError, setSyncError] = useState('');
   const [syncSummary, setSyncSummary] = useState(null);
+
+  // ── Import export AWB Sameday (persistat în DB — vezi SamedayAwbImport) ──
+  const [samedayImportRows, setSamedayImportRows] = useState([]);
+  const [samedayImportMonthsCovered, setSamedayImportMonthsCovered] = useState([]);
+  const [samedayImportLoading, setSamedayImportLoading] = useState(false);
+  const [samedayImportUploading, setSamedayImportUploading] = useState(false);
+  const [samedayImportError, setSamedayImportError] = useState('');
+  const [samedayImportResult, setSamedayImportResult] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -644,6 +654,100 @@ export default function StatisticiTotalePage() {
     }
   };
 
+  // ── Import export AWB Sameday — sursă exactă, persistată permanent ──────
+  // Exportul AWB din panoul Sameday (descărcat manual de utilizator) conține
+  // ce API-ul live Sameday nu poate da: dată REALĂ de creare, status REAL în
+  // text, referința comenzii (în "Observatii"). O dată încărcat, se salvează
+  // definitiv (SamedayAwbImport, cheie unică pe AWB) — reîncărcarea aceluiași
+  // fișier sau a unuia mai nou doar actualizează, nu duplichează.
+  const loadSamedayImport = useCallback(() => {
+    if (!from || !to) return;
+    setSamedayImportLoading(true);
+    fetch(`/api/stats-totale/sameday-import?from=${from}&to=${to}`)
+      .then(r => r.json())
+      .then(d => { if (d.ok) { setSamedayImportRows(d.rows || []); setSamedayImportMonthsCovered(d.monthsCovered || []); } })
+      .catch(() => {})
+      .finally(() => setSamedayImportLoading(false));
+  }, [from, to]);
+  useEffect(() => { loadSamedayImport(); }, [loadSamedayImport]);
+
+  const parseSamedayXls = async (file) => {
+    await loadXLSXLib();
+    const buf = await file.arrayBuffer();
+    const wb = window.XLSX.read(new Uint8Array(buf), { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    if (!raw.length) throw new Error('Fișier gol.');
+    const hdr = raw[0].map(h => (h || '').toString().trim().toLowerCase());
+    const idx = name => hdr.findIndex(h => h === name);
+    const ci = {
+      awb: idx('awb'), marketplace: idx('marketplace'), created: idx('data crearii'),
+      delivered: idx('data livrare'), status: idx('status'), cod: idx('ramburs'),
+      observations: idx('observatii'), cost: idx('cost'),
+    };
+    if (ci.awb < 0) throw new Error('Nu am găsit coloana AWB — asigură-te că e exportul AWB din Sameday.');
+    const rows = [];
+    for (let i = 1; i < raw.length; i++) {
+      const r = raw[i];
+      const awb = (r[ci.awb] || '').toString().trim();
+      if (!awb) continue;
+      rows.push({
+        awb,
+        marketplace: ci.marketplace >= 0 ? ((r[ci.marketplace] || '').toString().trim() || null) : null,
+        createdDate: ci.created >= 0 ? ((r[ci.created] || '').toString().trim() || null) : null,
+        deliveredAt: ci.delivered >= 0 ? ((r[ci.delivered] || '').toString().trim() || null) : null,
+        statusText: ci.status >= 0 ? (r[ci.status] || '').toString().trim() : '',
+        codAmount: ci.cod >= 0 ? (parseFloat((r[ci.cod] || '').toString().replace(',', '.')) || null) : null,
+        observations: ci.observations >= 0 ? ((r[ci.observations] || '').toString().trim() || null) : null,
+        cost: ci.cost >= 0 ? (parseFloat((r[ci.cost] || '').toString().replace(',', '.')) || null) : null,
+      });
+    }
+    return rows;
+  };
+
+  const handleSamedayImport = async (file) => {
+    setSamedayImportUploading(true); setSamedayImportError(''); setSamedayImportResult(null);
+    try {
+      const rows = await parseSamedayXls(file);
+      if (!rows.length) throw new Error('Niciun rând valid găsit în fișier.');
+      const totals = { imported: 0, updated: 0, skipped: 0 };
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        const res = await fetch('/api/stats-totale/sameday-import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: chunk }),
+        }).then(r => r.json());
+        if (res.error) throw new Error(res.error);
+        totals.imported += res.imported || 0; totals.updated += res.updated || 0; totals.skipped += res.skipped || 0;
+      }
+      setSamedayImportResult({ ...totals, total: rows.length });
+      loadSamedayImport();
+    } catch (e) {
+      setSamedayImportError(e.message);
+    } finally {
+      setSamedayImportUploading(false);
+    }
+  };
+
+  const samedayImportByMonth = useMemo(() => {
+    const out = {};
+    for (const r of samedayImportRows) {
+      const mk = r.createdDate ? r.createdDate.slice(0, 7) : null;
+      if (!mk) continue;
+      if (!out[mk]) out[mk] = { total: 0, emag: 0, delivered: 0, returned: 0, cancelled: 0, transit: 0 };
+      const b = out[mk];
+      b.total++;
+      const isEmag = (r.marketplace || '').toLowerCase().includes('emag') || (r.awb || '').toUpperCase().includes('EMG');
+      if (isEmag) b.emag++;
+      const s = stripDiacritics(r.statusText);
+      if (s.includes('anulat')) b.cancelled++;
+      else if (s.includes('livrat cu succes') || s.includes('rambursul a fost transferat')) b.delivered++;
+      else if (s.includes('ti-am returnat') || s.includes('retur')) b.returned++;
+      else b.transit++;
+    }
+    return out;
+  }, [samedayImportRows]);
+
   // ── Sincronizare completă în DB ──────────────────────────────────────────
   // Soluția definitivă la golul din DB: pentru fiecare magazin + lună din
   // interval, aduce comenzile live din Shopify (sursa de adevăr, nu DB-ul
@@ -704,70 +808,106 @@ export default function StatisticiTotalePage() {
   const fetchLiveGls = async () => {
     setLiveGlsLoading(true); setLiveGlsError(''); setLiveGlsSummary(null);
     const months = monthRanges(from, to);
+    const currentMonthKey = new Date().toISOString().slice(0, 7);
     try {
-      // Faza 1: colete pe lună — 3 cereri MyGLS simultane. Pur secvențial,
-      // pe un interval de un an (12-13 luni), dura inutil de mult pentru doar
-      // atâtea cereri rapide.
-      setLiveGlsProgress({ phase: 'Colete MyGLS', done: 0, total: months.length });
-      const allParcels = [];
-      await mapWithConcurrency(months, 3, async (m) => {
-        const res = await fetch('/api/gls-parcellist', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from: m.from, to: m.to }),
-        }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
-        if (res.ok) {
-          for (const p of (res.parcels || [])) allParcels.push({ ...p, monthKey: m.key });
-        }
-        setLiveGlsProgress(p => ({ ...p, done: p.done + 1 }));
-      });
+      // O lună ÎNCHEIATĂ (nu luna curentă) nu se mai schimbă niciodată — dacă
+      // am mai tras-o și salvat-o cândva (vezi GlsParcelSnapshot, persistat
+      // mai jos), n-are niciun rost să tragem din nou din MyGLS de fiecare
+      // dată când cineva se uită pe ea. Doar luna curentă + lunile încheiate
+      // NEACOPERITE încă trec prin pull-ul live.
+      const closedMonths = months.filter(m => m.key < currentMonthKey);
+      const openMonths = months.filter(m => m.key >= currentMonthKey);
+      let covered = new Set();
+      if (closedMonths.length) {
+        const cov = await fetch(`/api/stats-totale/gls-snapshot?from=${closedMonths[0].from}&to=${closedMonths[closedMonths.length - 1].to}&coverage=1`)
+          .then(r => r.json()).catch(() => ({ months: [] }));
+        covered = new Set(cov.months || []);
+      }
+      const snapshotMonths = closedMonths.filter(m => covered.has(m.key));
+      const liveMonths = [...openMonths, ...closedMonths.filter(m => !covered.has(m.key))];
 
-      if (!allParcels.length) {
+      // Colete deja salvate (lunile încheiate acoperite) — vin deja complet
+      // clasificate (magazin/livrat/retur), fără niciun apel MyGLS.
+      const snapshotParcels = [];
+      if (snapshotMonths.length) {
+        setLiveGlsProgress({ phase: 'Citire din arhivă (luni încheiate)', done: 0, total: snapshotMonths.length });
+        await mapWithConcurrency(snapshotMonths, 3, async (m) => {
+          const res = await fetch(`/api/stats-totale/gls-snapshot?from=${m.from}&to=${m.to}`).then(r => r.json()).catch(() => ({ ok: false }));
+          if (res.ok) for (const p of (res.parcels || [])) snapshotParcels.push({ ...p, monthKey: m.key, fromSnapshot: true });
+          setLiveGlsProgress(p => ({ ...p, done: p.done + 1 }));
+        });
+      }
+
+      // Faza 1: colete pe lună (doar lunile care chiar trebuie trase live) —
+      // 3 cereri MyGLS simultane. Pur secvențial, pe un interval de un an
+      // (12-13 luni), dura inutil de mult pentru doar atâtea cereri rapide.
+      let allParcels = [];
+      if (liveMonths.length) {
+        setLiveGlsProgress({ phase: 'Colete MyGLS (live)', done: 0, total: liveMonths.length });
+        await mapWithConcurrency(liveMonths, 3, async (m) => {
+          const res = await fetch('/api/gls-parcellist', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: m.from, to: m.to }),
+          }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+          if (res.ok) {
+            for (const p of (res.parcels || [])) allParcels.push({ ...p, monthKey: m.key });
+          }
+          setLiveGlsProgress(p => ({ ...p, done: p.done + 1 }));
+        });
+      }
+
+      if (!allParcels.length && !snapshotParcels.length) {
         setLiveGls({});
         setLiveGlsSummary({ totalParcels: 0, matched: 0, unmatched: 0 });
         return;
       }
 
-      // Faza 2: atribuire magazin după ClientReference (numele comenzii
-      // Shopify, ex "#1042") — direct din Shopify LIVE (toate magazinele
-      // conectate), nu din DB-ul nostru. DB-ul e exact ce lipsește (de-aia
-      // facem tot pull-ul ăsta live) — a căuta un colet neatribuit tot în DB
-      // dădea mereu "neatribuit", chiar dacă comanda chiar există în Shopify.
-      setLiveGlsProgress({ phase: 'Atribuire magazine (Shopify live)', done: 0, total: 1 });
       let shopMatches = {};
-      {
+      let statusMap = new Map();
+      if (allParcels.length) {
+        // Faza 2: atribuire magazin după ClientReference (numele comenzii
+        // Shopify, ex "#1042") — direct din Shopify LIVE (toate magazinele
+        // conectate), nu din DB-ul nostru. DB-ul e exact ce lipsește (de-aia
+        // facem tot pull-ul ăsta live) — a căuta un colet neatribuit tot în
+        // DB dădea mereu "neatribuit", chiar dacă comanda chiar există în
+        // Shopify.
+        setLiveGlsProgress({ phase: 'Atribuire magazine (Shopify live)', done: 0, total: 1 });
         const mr = await fetch('/api/stats-totale/shopify-order-names', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ from, to }),
         }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
         if (mr.ok) shopMatches = mr.nameToShop || {};
         else setLiveGlsError(`Atribuire magazine eșuată: ${mr.error || 'eroare necunoscută'} — coletele rămân neatribuite.`);
-      }
-      setLiveGlsProgress({ phase: 'Atribuire magazine (Shopify live)', done: 1, total: 1 });
+        setLiveGlsProgress({ phase: 'Atribuire magazine (Shopify live)', done: 1, total: 1 });
 
-      // Faza 3: status livrare per AWB — loturi de 15 (mărime dovedită pe
-      // pagina Comenzi, ca fiecare cerere serverless să rămână scurtă), dar
-      // 4 loturi simultan — cu sute/mii de AWB-uri pe un an întreg, secvențial
-      // pur lua multe minute, fără niciun semn vizibil de progres (exact
-      // motivul pentru care părea "nu s-a actualizat" deși chiar lucra).
-      const awbs = allParcels.map(p => String(p.parcelNumber || '').trim()).filter(Boolean);
-      const chunks = [];
-      for (let i = 0; i < awbs.length; i += 15) chunks.push(awbs.slice(i, i + 15));
-      setLiveGlsProgress({ phase: 'Status livrare', done: 0, total: chunks.length });
-      const statusMap = new Map();
-      await mapWithConcurrency(chunks, 4, async (chunk) => {
-        const r = await fetch('/api/tracking', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ orders: chunk.map(awb => ({ id: awb, awb, courier: 'gls' })) }),
-        }).then(r => r.json()).catch(() => ({ results: [] }));
-        for (const res of (r.results || [])) statusMap.set(res.id, res);
-        setLiveGlsProgress(p => ({ ...p, done: p.done + 1 }));
-      });
+        // Faza 3: status livrare per AWB — loturi de 15 (mărime dovedită pe
+        // pagina Comenzi, ca fiecare cerere serverless să rămână scurtă), dar
+        // 4 loturi simultan — cu sute/mii de AWB-uri pe un an întreg,
+        // secvențial pur lua multe minute, fără niciun semn vizibil de
+        // progres (exact motivul pentru care părea "nu s-a actualizat" deși
+        // chiar lucra).
+        const awbs = allParcels.map(p => String(p.parcelNumber || '').trim()).filter(Boolean);
+        const chunks = [];
+        for (let i = 0; i < awbs.length; i += 15) chunks.push(awbs.slice(i, i + 15));
+        setLiveGlsProgress({ phase: 'Status livrare', done: 0, total: chunks.length });
+        await mapWithConcurrency(chunks, 4, async (chunk) => {
+          const r = await fetch('/api/tracking', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orders: chunk.map(awb => ({ id: awb, awb, courier: 'gls' })) }),
+          }).then(r => r.json()).catch(() => ({ results: [] }));
+          for (const res of (r.results || [])) statusMap.set(res.id, res);
+          setLiveGlsProgress(p => ({ ...p, done: p.done + 1 }));
+        });
+      }
 
       const live = {};
       const liveDetails = {}; // doar pentru neatribuit_* — detaliu per colet, pentru drill-down în listă
+      const toSnapshot = []; // coletele proaspăt trase live — de salvat în GlsParcelSnapshot mai jos
       let matched = 0, unmatched = 0, unmatchedBlankRef = 0;
       const unmatchedSample = [];
       const toPeriod = (mk) => granularity === 'year' ? mk.slice(0, 4) : mk;
+
+      const classified = [];
       for (const p of allParcels) {
         const ref = (p.clientRef || '').trim();
         const matchedShop = shopMatches[ref];
@@ -784,36 +924,53 @@ export default function StatisticiTotalePage() {
         // (scanează tot istoricul DOAR pentru codul 5, ambiguu la GLS — vezi
         // app/api/tracking/route.js) — un "delivered" care a trecut de acel
         // filtru e o livrare confirmată, indiferent dacă are sau nu ramburs.
-        // (Fosta regulă suplimentară de-aici, bazată pe cod>0/serviciul COD,
-        // marca greșit "Retur" orice colet livrat FĂRĂ ramburs — ex. comenzi
-        // Glato HU plătite online sau fără COD, care GLS le arată clar
-        // "Delivered", nu "ReturnDelivered".)
         if (t?.hasReturnCode) returned = true;
         else if (t?.status === 'delivered') delivered = true;
         else if (['failure', 'failed_attempt', 'returned', 'failed_delivery', 'return_in_progress'].includes(t?.status)) returned = true;
+        const hasStatus = !!t?.status;
+        const parcel = { parcelNumber: p.parcelNumber, clientRef: ref, pickupDate: p.pickupDate || null, deliveryName: p.deliveryName || '', deliveryCity: p.deliveryCity || '', cod: Number(p.cod) || 0, codCurrency: p.codCurrency || '', shopKey, delivered, returned, hasStatus, monthKey: p.monthKey };
+        classified.push(parcel);
+        toSnapshot.push(parcel);
+      }
+      // Coletele din arhivă (deja clasificate) intră direct, fără recalcul.
+      for (const p of snapshotParcels) {
+        classified.push(p);
+        if (p.shopKey.startsWith('neatribuit')) unmatched++; else matched++;
+      }
 
+      for (const p of classified) {
         const period = toPeriod(p.monthKey);
         if (!live[period]) live[period] = {};
-        if (!live[period][shopKey]) live[period][shopKey] = emptyBucket();
-        const b = live[period][shopKey];
+        if (!live[period][p.shopKey]) live[period][p.shopKey] = emptyBucket();
+        const b = live[period][p.shopKey];
         b.orders++; b.awbCreate++;
-        if (returned) b.retururi++;
-        const cod = Number(p.cod) || 0;
-        if (cod > 0) {
-          if (delivered) b.codIncasat += cod;
-          else if (!returned) b.codNeincasat += cod;
+        if (p.returned) b.retururi++;
+        if (p.cod > 0) {
+          if (p.delivered) b.codIncasat += p.cod;
+          else if (!p.returned) b.codNeincasat += p.cod;
         }
-
-        if (!matchedShop) {
+        if (p.shopKey === 'neatribuit_posibil' || p.shopKey === 'neatribuit_manual') {
           if (!liveDetails[period]) liveDetails[period] = {};
-          if (!liveDetails[period][shopKey]) liveDetails[period][shopKey] = [];
-          liveDetails[period][shopKey].push({ ref, parcelNumber: p.parcelNumber, name: p.deliveryName || '', city: p.deliveryCity || '', cod, codCurrency: p.codCurrency || '', delivered, returned, hasStatus: !!t?.status });
+          if (!liveDetails[period][p.shopKey]) liveDetails[period][p.shopKey] = [];
+          liveDetails[period][p.shopKey].push({ ref: p.clientRef, parcelNumber: p.parcelNumber, name: p.deliveryName, city: p.deliveryCity, cod: p.cod, codCurrency: p.codCurrency, delivered: p.delivered, returned: p.returned, hasStatus: p.hasStatus });
         }
       }
 
       setLiveGls(live);
       setLiveGlsDetails(liveDetails);
-      setLiveGlsSummary({ totalParcels: allParcels.length, matched, unmatched, unmatchedBlankRef, unmatchedSample });
+      setLiveGlsSummary({ totalParcels: classified.length, matched, unmatched, unmatchedBlankRef, unmatchedSample });
+
+      // Salvează definitiv coletele proaspăt trase — lunile încheiate nu vor
+      // mai fi retrase din MyGLS data viitoare (vezi coverage mai sus).
+      if (toSnapshot.length) {
+        for (let i = 0; i < toSnapshot.length; i += 500) {
+          const chunk = toSnapshot.slice(i, i + 500);
+          await fetch('/api/stats-totale/gls-snapshot', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ parcels: chunk }),
+          }).catch(() => {});
+        }
+      }
     } catch (e) {
       setLiveGlsError(e.message);
     } finally {
@@ -1002,6 +1159,61 @@ export default function StatisticiTotalePage() {
           liveGlsLoading={liveGlsLoading} liveGlsProgress={liveGlsProgress} liveGlsError={liveGlsError} liveGlsSummary={liveGlsSummary}
           emagSamedayLoading={emagSamedayLoading} emagSamedayProgress={emagSamedayProgress} emagSamedayError={emagSamedayError} emagSameday={emagSameday}
         />
+
+        {/* ── Sameday — import export AWB (sursă exactă, salvată permanent) ── */}
+        <div style={{ background: '#0f1419', border: '1px solid rgba(168,85,247,.3)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#a855f7' }}>🚀 Sameday — import export AWB (sursă exactă, salvată permanent)</div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 600 }}>
+                Descarcă din contul Sameday exportul AWB (XLS) și încarcă-l aici — se salvează definitiv în bază, nu mai trebuie reîncărcat data viitoare. Conține dată reală de creare + status real + referința comenzii, mai precis decât volumul live de mai sus.
+                {!!samedayImportMonthsCovered.length && <> Acoperă deja: <b style={{ color: '#e2e8f0' }}>{samedayImportMonthsCovered.join(', ')}</b>.</>}
+              </div>
+            </div>
+            <label style={{ ...btnPrimary, background: '#a855f7', display: 'inline-flex', cursor: 'pointer' }}>
+              {samedayImportUploading ? '⟳ Se încarcă...' : '📥 Încarcă export AWB'}
+              <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} disabled={samedayImportUploading}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleSamedayImport(f); e.target.value = ''; }} />
+            </label>
+          </div>
+          {samedayImportError && <div style={errBox}>⚠️ {samedayImportError}</div>}
+          {samedayImportResult && (
+            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
+              ✅ <b style={{ color: '#10b981' }}>{fmtInt(samedayImportResult.imported)}</b> noi, <b style={{ color: '#e2e8f0' }}>{fmtInt(samedayImportResult.updated)}</b> actualizate din {fmtInt(samedayImportResult.total)} rânduri.
+            </div>
+          )}
+          {samedayImportLoading ? (
+            <div style={{ fontSize: 11, color: '#64748b' }}>Se încarcă...</div>
+          ) : Object.keys(samedayImportByMonth).length > 0 ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 520 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
+                  {['Lună', 'Total AWB', 'eMAG', 'Livrate', 'Refuzate/retur', 'Anulate', 'Altele'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: '#64748b', fontWeight: 700, whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.keys(samedayImportByMonth).sort().reverse().map(mk => {
+                  const b = samedayImportByMonth[mk];
+                  return (
+                    <tr key={mk} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
+                      <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: 700 }}>{mk}</td>
+                      <td style={{ padding: '5px 8px', fontFamily: 'monospace' }}>{fmtInt(b.total)}</td>
+                      <td style={{ padding: '5px 8px', color: '#eab308' }}>{fmtInt(b.emag)}</td>
+                      <td style={{ padding: '5px 8px', color: '#10b981' }}>{fmtInt(b.delivered)}</td>
+                      <td style={{ padding: '5px 8px', color: '#f43f5e' }}>{fmtInt(b.returned)}</td>
+                      <td style={{ padding: '5px 8px', color: '#64748b' }}>{fmtInt(b.cancelled)}</td>
+                      <td style={{ padding: '5px 8px', color: '#f59e0b' }}>{fmtInt(b.transit)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ fontSize: 11, color: '#475569' }}>Niciun export încărcat încă pentru intervalul selectat.</div>
+          )}
+        </div>
 
         {/* ── KPI cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10, marginBottom: 16 }}>

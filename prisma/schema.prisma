@@ -434,3 +434,55 @@ model MonthlyStat {
   extra       Json     @default("{}")
   updatedAt   DateTime @updatedAt
 }
+
+// Rânduri din exportul AWB al contului Sameday ("export_AWB...xlsx", descărcat
+// manual din panoul Sameday) — persistate o singură dată, nu re-încărcate la
+// fiecare vizită. Conține ce lipsește din API-ul live Sameday (status-sync):
+// dată REALĂ de creare, status REAL în text, și referința comenzii (în
+// "Observatii") — sursa de adevăr pentru Statistici Totale/"SAMEDAY TOTAL",
+// nu doar un best-effort din mișcările recente ale AWB-ului.
+model SamedayAwbImport {
+  id           String    @id @default(uuid())
+  awb          String    @unique
+  marketplace  String?                        // "eMAG Marketplace RO" sau null (magazin propriu)
+  createdDate  DateTime?                      // coloana "Data crearii"
+  deliveredAt  DateTime?                      // coloana "Data livrare" (poate lipsi — "N/A")
+  statusText   String    @default("")         // statusul brut, în text (ex. "Coletul a fost livrat cu succes.")
+  codAmount    Decimal?  @db.Decimal(10, 2)
+  codCurrency  String    @default("RON")
+  observations String?                        // conține referința comenzii, ex. "#4030- GLA 3739- ..."
+  orderRef     String?                        // extras din observations, ex. "#4030"
+  cost         Decimal?  @db.Decimal(10, 2)
+  importedAt   DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([createdDate])
+  @@index([orderRef])
+}
+
+// Instantaneu persistat al unui colet GLS tras live (MyGLS GetParcelList +
+// status de livrare + atribuire magazin) din Statistici Totale — odată ce o
+// lună s-a ÎNCHEIAT (nu mai e luna curentă), datele ei nu se mai schimbă,
+// deci n-are rost să mai tragem din nou din MyGLS de fiecare dată când
+// cineva se uită pe luna respectivă. Cheie unică pe AWB, ca o nouă tragere
+// (ex. pentru luna curentă, care tot se actualizează) să suprascrie, nu să
+// dubleze.
+model GlsParcelSnapshot {
+  id            String    @id @default(uuid())
+  parcelNumber  String    @unique
+  clientRef     String?
+  pickupDate    DateTime?
+  deliveryName  String?
+  deliveryCity  String?
+  cod           Decimal?  @db.Decimal(10, 2)
+  codCurrency   String?
+  shopKey       String    // 'ro'|'hu'|'glato'|'glatohu'|'neatribuit_posibil'|'neatribuit_manual'
+  delivered     Boolean   @default(false)
+  returned      Boolean   @default(false)
+  hasStatus     Boolean   @default(true)
+  importedAt    DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([pickupDate])
+  @@index([shopKey])
+}
