@@ -46,8 +46,9 @@ const STATUS_META = {
   transit:   { label: 'Tranzit',          color: '#f59e0b' },
   cancelled: { label: 'Anulată',          color: '#64748b' },
   no_awb:    { label: 'Fără AWB',         color: '#475569' },
+  no_status: { label: 'Fără status (neridicat?)', color: '#475569' },
 };
-const STATUS_ORDER = ['delivered', 'returned', 'transit', 'cancelled', 'no_awb'];
+const STATUS_ORDER = ['delivered', 'returned', 'transit', 'cancelled', 'no_awb', 'no_status'];
 
 const COURIER_META = {
   gls:     { label: 'GLS',      color: '#3b82f6' },
@@ -65,9 +66,17 @@ function orderStatusKey(o) {
   if (o.courier) return 'transit';
   return 'no_awb';
 }
+/** Un colet GLS fără NICIUN status la tracking (nu doar "încă în tranzit",
+ * zero istoric) e aproape sigur o etichetă tipărită dar anulată/înlocuită cu
+ * alta înainte de ridicare — ex. comanda #1046 descoperită anterior, cu 2
+ * AWB-uri diferite (primul eșuat/neridicat, al doilea reluat cu succes).
+ * GetParcelList (de unde vine lista) întoarce TOATE etichetele tipărite,
+ * inclusiv cele niciodată ridicate — contate implicit la "Tranzit" ar umfla
+ * artificial totalul. Categorie separată, exclusă din filtrul implicit. */
 function glsDetailStatusKey(p) {
   if (p.returned) return 'returned';
   if (p.delivered) return 'delivered';
+  if (p.hasStatus === false) return 'no_status';
   return 'transit';
 }
 
@@ -501,7 +510,11 @@ export default function StatisticiTotalePage() {
       for (const [period, count] of Object.entries(emagSameday)) {
         if (!periods[period]) periods[period] = {};
         if (!periods[period].emag) periods[period].emag = emptyBucket();
-        periods[period].emag.orders = count;
+        // Un 0 găsit în Sameday pentru o lună unde importul local chiar are
+        // comenzi e semn de scanare eșuată/trunchiată (lună mai veche, cu
+        // multe mișcări de status-sync), NU dovadă că n-au existat comenzi —
+        // păstrăm numărul local în loc să-l ascundem cu un 0 nereal.
+        if (count > 0 || periods[period].emag.orders === 0) periods[period].emag.orders = count;
       }
     }
 
@@ -794,7 +807,7 @@ export default function StatisticiTotalePage() {
         if (!matchedShop) {
           if (!liveDetails[period]) liveDetails[period] = {};
           if (!liveDetails[period][shopKey]) liveDetails[period][shopKey] = [];
-          liveDetails[period][shopKey].push({ ref, parcelNumber: p.parcelNumber, name: p.deliveryName || '', city: p.deliveryCity || '', cod, codCurrency: p.codCurrency || '', delivered, returned });
+          liveDetails[period][shopKey].push({ ref, parcelNumber: p.parcelNumber, name: p.deliveryName || '', city: p.deliveryCity || '', cod, codCurrency: p.codCurrency || '', delivered, returned, hasStatus: !!t?.status });
         }
       }
 
