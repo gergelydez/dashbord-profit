@@ -41,7 +41,7 @@ export async function POST(request: Request) {
         ],
       },
       select: {
-        shopifyName: true, createdAt: true, shopifyCreatedAt: true, totalPrice: true, currency: true,
+        id: true, shopifyName: true, createdAt: true, shopifyCreatedAt: true, totalPrice: true, currency: true,
         paymentGateway: true, status: true, financialStatus: true, customerName: true,
         invoices: { select: { id: true, series: true, number: true }, take: 1 },
         shipments: { select: { courier: true, trackingNumber: true, status: true, deliveredAt: true } },
@@ -59,6 +59,7 @@ export async function POST(request: Request) {
       const ship = o.shipments[0];
       const invoice = o.invoices[0];
       return {
+        id: o.id,
         name: o.shopifyName,
         date: (o.shopifyCreatedAt || o.createdAt).toISOString(),
         customer: o.customerName,
