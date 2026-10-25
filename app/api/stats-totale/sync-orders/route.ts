@@ -116,10 +116,25 @@ export async function POST(request: Request) {
           toRefresh.push({ shipmentId, trackingNumber, courier, online });
         } else {
           shipmentId = existingShip.id;
-          // Doar statusurile încă "nelămurite" merită reverificate — un AWB
-          // deja confirmat DELIVERED/RETURNED nu are rost să-l tragem din nou
-          // la fiecare sincronizare.
-          if (['CREATED', 'PENDING', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'].includes(existingShip.status)) {
+          if (existingShip.trackingNumber !== trackingNumber) {
+            // AWB nou/de înlocuire pentru aceeași comandă+curier (ex. prima
+            // livrare a eșuat și s-a mai creat un AWB) — Shopify poate ține
+            // mai multe fulfillment-uri pentru aceeași comandă, dar noi
+            // păstrăm un singur rând Shipment per comandă+curier
+            // (@@unique([orderId, courier])), așa că fără actualizarea asta
+            // rămâneam agățați pentru totdeauna de AWB-ul vechi/eșuat și
+            // livrarea reală (pe noul AWB) nu mai ajungea niciodată la noi —
+            // exact cauza unei subnumărări confirmate (comanda #1046, două
+            // AWB-uri GLS diferite, 5.10 eșuat apoi reluat cu succes pe 21.10).
+            await db.shipment.update({
+              where: { id: shipmentId },
+              data: { trackingNumber, trackingUrl: f.tracking_url || existingShip.trackingUrl, status: 'CREATED' },
+            });
+            toRefresh.push({ shipmentId, trackingNumber, courier, online });
+          } else if (['CREATED', 'PENDING', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'].includes(existingShip.status)) {
+            // Doar statusurile încă "nelămurite" merită reverificate — un AWB
+            // deja confirmat DELIVERED/RETURNED nu are rost să-l tragem din
+            // nou la fiecare sincronizare.
             toRefresh.push({ shipmentId, trackingNumber: existingShip.trackingNumber, courier, online });
           }
         }

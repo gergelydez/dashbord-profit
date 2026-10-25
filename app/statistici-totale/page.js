@@ -1176,10 +1176,15 @@ export default function StatisticiTotalePage() {
                     <span>📅 {periodLabel(period)}</span>
                     <span style={{ color: '#94a3b8', fontWeight: 400 }}>{fmtInt(periodTotal)} comenzi</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, margin: '6px 0 8px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: 8, margin: '6px 0 2px', flexWrap: 'wrap' }}>
                     <CourierTotalTile label="GLS TOTAL" icon="📦" color="#3b82f6" rows={glsTotalRows} pending={totalsPending} />
                     <CourierTotalTile label="SAMEDAY TOTAL" icon="🚀" color="#a855f7" rows={samedayTotalRows} pending={totalsPending} />
                   </div>
+                  {!liveGls && (
+                    <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8 }}>
+                      ⚠️ GLS TOTAL nu include încă coletele GLS neatribuite unui magazin (manuale/necunoscute, ex. accesorii trimise separat) — apasă „📡 Trage volum live MyGLS" mai jos ca să fie incluse și ele.
+                    </div>
+                  )}
                   {shopsInPeriod.map(shopKey => {
                     const b = periods[period][shopKey];
                     const meta = SHOP_META[shopKey];
