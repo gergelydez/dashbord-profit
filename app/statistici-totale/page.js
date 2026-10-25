@@ -225,15 +225,6 @@ function monthRanges(from, to) {
   return ranges;
 }
 
-/** Aceeași regulă deja dovedită pe pagina Comenzi (panoul "Colete în tranzit"
- * / Live MyGLS): GLS reutilizează codul de "delivered" și pentru predarea
- * coletului RETUR înapoi la depozit — fără ramburs sau serviciu COD pe AWB,
- * "delivered" înseamnă de fapt retur, nu livrare la client. */
-function isGlsLiveDelivered(cod, services) {
-  if (Number(cod) > 0) return true;
-  return (services || []).some(s => String(s).toUpperCase().includes('COD'));
-}
-
 /** Un AWB GLS neatribuit niciunui magazin conectat: dacă referința arată ca
  * un nume de comandă Shopify ("#1234" sau pur numeric) dar nu s-a potrivit
  * cu nimic din magazinele conectate în interval, comanda cel mai probabil
@@ -698,8 +689,7 @@ export default function StatisticiTotalePage() {
   // deja credențialele server din env), atribuim fiecare colet unui magazin
   // după ClientReference (căutat LIVE în Shopify, nu în DB — vezi
   // /api/stats-totale/shopify-order-names), și luăm statusul de livrare din
-  // /api/tracking — exact aceeași regulă deja dovedită pe pagina Comenzi
-  // (vezi isGlsLiveDelivered mai sus).
+  // /api/tracking — care deja disambiguează corect codul GLS ambiguu (5).
   const fetchLiveGls = async () => {
     setLiveGlsLoading(true); setLiveGlsError(''); setLiveGlsSummary(null);
     const months = monthRanges(from, to);
@@ -779,8 +769,16 @@ export default function StatisticiTotalePage() {
         }
         const t = statusMap.get(String(p.parcelNumber || '').trim());
         let delivered = false, returned = false;
+        // hasReturnCode vine deja din /api/tracking cu disambiguarea corectă
+        // (scanează tot istoricul DOAR pentru codul 5, ambiguu la GLS — vezi
+        // app/api/tracking/route.js) — un "delivered" care a trecut de acel
+        // filtru e o livrare confirmată, indiferent dacă are sau nu ramburs.
+        // (Fosta regulă suplimentară de-aici, bazată pe cod>0/serviciul COD,
+        // marca greșit "Retur" orice colet livrat FĂRĂ ramburs — ex. comenzi
+        // Glato HU plătite online sau fără COD, care GLS le arată clar
+        // "Delivered", nu "ReturnDelivered".)
         if (t?.hasReturnCode) returned = true;
-        else if (t?.status === 'delivered') { if (isGlsLiveDelivered(p.cod, p.services)) delivered = true; else returned = true; }
+        else if (t?.status === 'delivered') delivered = true;
         else if (['failure', 'failed_attempt', 'returned', 'failed_delivery', 'return_in_progress'].includes(t?.status)) returned = true;
 
         const period = toPeriod(p.monthKey);
@@ -798,7 +796,7 @@ export default function StatisticiTotalePage() {
         if (!matchedShop) {
           if (!liveDetails[period]) liveDetails[period] = {};
           if (!liveDetails[period][shopKey]) liveDetails[period][shopKey] = [];
-          liveDetails[period][shopKey].push({ ref, parcelNumber: p.parcelNumber, name: p.deliveryName || '', city: p.deliveryCity || '', cod, delivered, returned });
+          liveDetails[period][shopKey].push({ ref, parcelNumber: p.parcelNumber, name: p.deliveryName || '', city: p.deliveryCity || '', cod, codCurrency: p.codCurrency || '', delivered, returned });
         }
       }
 
@@ -1427,7 +1425,7 @@ function GlsDetailRows({ rows, statusFilter, courierFilter }) {
           <span style={{ color: '#f97316', width: 95, flexShrink: 0 }}>{p.parcelNumber}</span>
           <span style={{ color: '#64748b', width: 70, flexShrink: 0 }} title="ClientReference de pe AWB">ref: {p.ref || '—'}</span>
           <span style={{ color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{p.name || '(fără nume)'}, {p.city || '—'}</span>
-          {!!p.cod && <span style={{ color: '#10b981', flexShrink: 0 }}>{fmt(p.cod)}</span>}
+          {!!p.cod && <span style={{ color: '#10b981', flexShrink: 0 }}>{fmt(p.cod)} {p.codCurrency || ''}</span>}
           {p.returned && <span style={{ color: '#f43f5e', flexShrink: 0 }}>Retur</span>}
           {p.delivered && <span style={{ color: '#10b981', flexShrink: 0 }}>Livrat</span>}
         </div>
