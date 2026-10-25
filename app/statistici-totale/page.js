@@ -355,28 +355,6 @@ export default function StatisticiTotalePage() {
     try { setEmagOrders(JSON.parse(ls.get('emag_orders') || '[]')); } catch { setEmagOrders([]); }
   }, []);
 
-  // Verificare rapidă, automată, la încărcarea paginii: câte colete ARE
-  // MyGLS în luna curentă, direct din contul GLS — comparabil imediat cu ce
-  // arată tabelul de mai jos (care, dacă e doar din baza noastră de date,
-  // poate fi mult sub realitate — vezi panoul "Volum real MyGLS" pentru
-  // detaliu pe magazine/istoric).
-  const [glsMonthCount, setGlsMonthCount] = useState(null);
-  const [glsMonthLoading, setGlsMonthLoading] = useState(true);
-  const [glsMonthError, setGlsMonthError] = useState('');
-  useEffect(() => {
-    const now = new Date();
-    const monthFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    const monthTo = now.toISOString().slice(0, 10);
-    fetch('/api/gls-parcellist', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: monthFrom, to: monthTo }),
-    }).then(r => r.json()).then(d => {
-      if (!d.ok) { setGlsMonthError(d.error || 'Eroare MyGLS'); return; }
-      setGlsMonthCount(d.count ?? (d.parcels || []).length);
-    }).catch(e => setGlsMonthError(e.message))
-      .finally(() => setGlsMonthLoading(false));
-  }, []);
-
   const toggleShop = (key) => setActiveShops(prev => {
     const n = new Set(prev);
     if (n.has(key)) n.delete(key); else n.add(key);
@@ -830,8 +808,6 @@ export default function StatisticiTotalePage() {
     }
   };
 
-  const liveGlsPeriodsSorted = useMemo(() => Object.keys(liveGls || {}).sort().reverse(), [liveGls]);
-
   // ── eMAG — numărul EXACT de comenzi pe lună, citit din Sameday ─────────
   // eMAG nu e un magazin Shopify conectat — expediază totul prin Sameday,
   // iar AWB-urile lor conțin mereu substringul "EMG" (regulă deja dovedită
@@ -888,16 +864,25 @@ export default function StatisticiTotalePage() {
     }
   };
 
-  // Tragem automat coletele Sameday pentru intervale scurte (1-2 luni), ca
-  // SAMEDAY TOTAL și rândul eMAG să fie complete fără click; intervalele mai
-  // lungi rămân pe butonul manual (status-sync e lent: ferestre de 2h).
-  const autoSdKeyRef = useRef('');
+  // Sincronizare AUTOMATĂ pentru intervale scurte (≤2 luni, ex. "Luna asta"
+  // sau o lună exactă aleasă din dropdown) — Shopify→DB, volum live MyGLS și
+  // Sameday, toate fără niciun click, ca numerele să fie corecte direct la
+  // deschiderea paginii. Intervale mai lungi rămân pe butonul manual din
+  // „🔄 Sincronizare" (altfel ar dura prea mult/ar lovi rate-limit-uri la
+  // fiecare simplă schimbare de filtru).
+  const autoSyncKeyRef = useRef('');
+  const runFullSync = useCallback(() => {
+    syncToDb();
+    fetchLiveGls();
+    fetchEmagSameday();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to, granularity]);
   useEffect(() => {
     if (!from || !to) return;
     const key = `${from}|${to}|${granularity}`;
-    if (autoSdKeyRef.current === key || monthRanges(from, to).length > 2) return;
-    autoSdKeyRef.current = key;
-    fetchEmagSameday();
+    if (autoSyncKeyRef.current === key || monthRanges(from, to).length > 2) return;
+    autoSyncKeyRef.current = key;
+    runFullSync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from, to, granularity]);
 
@@ -910,20 +895,6 @@ export default function StatisticiTotalePage() {
             <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Toate magazinele + eMAG, într-un singur loc</div>
           </div>
           <a href="/" style={{ fontSize: 12, color: '#94a3b8', textDecoration: 'none', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, padding: '6px 12px' }}>← Comenzi</a>
-        </div>
-
-        {/* ── Verificare rapidă MyGLS, luna curentă (automat la încărcare) ── */}
-        <div style={{ background: 'rgba(249,115,22,.08)', border: '1px solid rgba(249,115,22,.3)', borderRadius: 12, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 22 }}>📡</div>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: 12, color: '#94a3b8' }}>Colete reale în contul MyGLS, luna curentă (toate magazinele, direct din curier — nu din baza noastră de date)</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: '#f97316', fontFamily: 'monospace' }}>
-              {glsMonthLoading ? '⟳ se verifică...' : glsMonthError ? `⚠️ ${glsMonthError}` : `${fmtInt(glsMonthCount)} colete`}
-            </div>
-          </div>
-          <div style={{ fontSize: 11, color: '#64748b', maxWidth: 260 }}>
-            Dacă diferă mult de ce arată tabelul de mai jos, folosește panoul „📡 Volum real MyGLS" (puțin mai jos) ca să vezi împărțirea reală pe magazine și pe lună.
-          </div>
         </div>
 
         {/* ── Filtre (aceeași bară ca pe pagina Comenzi) ── */}
@@ -984,146 +955,14 @@ export default function StatisticiTotalePage() {
 
         {error && <div style={errBox}>⚠️ {error}</div>}
 
-        {/* ── Sincronizare completă în DB ── */}
-        <div style={{ background: '#0f1419', border: '1px solid rgba(16,185,129,.3)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>💾 Sincronizare completă (Shopify → bază de date, GLS + Sameday)</div>
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 600 }}>
-                Aduce comenzile direct din Shopify (toate cele 4 magazine) pentru intervalul selectat și le salvează definitiv — inclusiv AWB-urile și statusul de livrare, pentru ambii curieri (nu doar GLS). O dată sincronizat, tabelul de mai jos devine corect direct din bază, fără să mai fie nevoie de „Trage live" de fiecare dată.
-              </div>
-            </div>
-            <button onClick={syncToDb} disabled={syncLoading} style={{ ...btnPrimary, background: '#10b981' }}>
-              {syncLoading ? `⟳ Sincronizare (${syncProgress ? `${syncProgress.done}/${syncProgress.total}` : '...'})` : '💾 Sincronizează tot în bază'}
-            </button>
-          </div>
-          {syncLoading && syncProgress && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
-                Magazin×lună {syncProgress.done}/{syncProgress.total} — poate dura câteva minute pentru un interval lung, nu închide pagina
-              </div>
-              <div style={{ height: 6, background: '#1a2535', borderRadius: 99, overflow: 'hidden' }}>
-                <div style={{ height: '100%', background: '#10b981', width: `${syncProgress.total ? Math.round((syncProgress.done / syncProgress.total) * 100) : 0}%`, transition: 'width .3s' }} />
-              </div>
-            </div>
-          )}
-          {syncError && <div style={errBox}>⚠️ {syncError}</div>}
-          {syncSummary && (
-            <div style={{ fontSize: 11, color: '#94a3b8' }}>
-              <b style={{ color: '#10b981' }}>{fmtInt(syncSummary.ordersCreated)}</b> comenzi noi salvate · <b style={{ color: '#e2e8f0' }}>{fmtInt(syncSummary.ordersUpdated)}</b> actualizate · <b style={{ color: '#10b981' }}>{fmtInt(syncSummary.shipmentsCreated)}</b> AWB-uri noi legate · <b style={{ color: '#e2e8f0' }}>{fmtInt(syncSummary.statusUpdated)}</b> statusuri de livrare actualizate
-              {!!syncSummary.errors?.length && (
-                <div style={{ color: '#f59e0b', marginTop: 4 }}>⚠ {syncSummary.errors.length} erori parțiale (vezi consolă) — restul s-a salvat normal.</div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* ── Volum real MyGLS (live) ── */}
-        <div style={{ background: '#0f1419', border: '1px solid rgba(249,115,22,.25)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316' }}>📡 Volum real MyGLS (live, direct din curier)</div>
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 560 }}>
-                Tabelul de mai jos arată implicit doar ce avem noi în bază de date — AWB-uri mai vechi (ex. create prin aplicația xConnector originală) lipsesc complet din el.
-                Apasă butonul ca să tragi lista reală de colete direct din contul MyGLS (lună cu lună) — coloanele Comenzi/COD/Retururi din tabelul de mai jos se actualizează automat cu numerele reale (marcate 📡), pentru fiecare lună+magazin unde găsim date.
-              </div>
-            </div>
-            <button onClick={fetchLiveGls} disabled={liveGlsLoading} style={btnPrimary}>
-              {liveGlsLoading ? `⟳ ${liveGlsProgress ? `${liveGlsProgress.phase} (${liveGlsProgress.done}/${liveGlsProgress.total})` : '...'}` : '🔴 Trage volum live MyGLS'}
-            </button>
-          </div>
-          {liveGlsLoading && liveGlsProgress && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
-                {liveGlsProgress.phase}: {liveGlsProgress.done}/{liveGlsProgress.total}
-                {liveGlsProgress.phase === 'Status livrare' && ' — poate dura câteva minute pentru un interval lung, nu închide pagina'}
-              </div>
-              <div style={{ height: 6, background: '#1a2535', borderRadius: 99, overflow: 'hidden' }}>
-                <div style={{ height: '100%', background: '#f97316', width: `${liveGlsProgress.total ? Math.round((liveGlsProgress.done / liveGlsProgress.total) * 100) : 0}%`, transition: 'width .3s' }} />
-              </div>
-            </div>
-          )}
-          {liveGlsError && <div style={errBox}>⚠️ {liveGlsError}</div>}
-          {liveGlsSummary && (
-            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
-              <div>
-                <b style={{ color: '#e2e8f0' }}>{fmtInt(liveGlsSummary.totalParcels)}</b> colete găsite în MyGLS pentru interval · <b style={{ color: '#10b981' }}>{fmtInt(liveGlsSummary.matched)}</b> atribuite unui magazin (potrivire după numărul comenzii) · <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatched)}</b> neatribuite
-                {!!liveGlsSummary.unmatchedBlankRef && <> (din care <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatchedBlankRef)}</b> fără nicio referință setată pe AWB — vezi mai jos)</>}
-              </div>
-              {!!liveGlsSummary.unmatchedSample?.length && (
-                <details style={{ marginTop: 6 }}>
-                  <summary style={{ cursor: 'pointer', color: '#64748b' }}>🔍 Vezi un eșantion de referințe neatribuite (ca să vedem exact ce format au)</summary>
-                  <div style={{ marginTop: 6, maxHeight: 180, overflowY: 'auto', fontFamily: 'monospace', fontSize: 10, background: '#080d12', borderRadius: 8, padding: 8 }}>
-                    {liveGlsSummary.unmatchedSample.map((s, i) => (
-                      <div key={i} style={{ padding: '2px 0', borderBottom: i < liveGlsSummary.unmatchedSample.length - 1 ? '1px solid #1a2535' : 'none' }}>
-                        <span style={{ color: '#f97316' }}>{s.ref}</span> — {s.name || '(fără nume)'}, {s.city || '—'} <span style={{ color: '#475569' }}>({s.month})</span>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
-            </div>
-          )}
-          {liveGlsPeriodsSorted.length > 0 && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 680 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
-                  {['Perioadă', 'Magazin', 'Colete (AWB)', 'COD încasat', 'COD neîncasat', 'Retururi'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: '#64748b', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {liveGlsPeriodsSorted.map(period => {
-                  const byShop = liveGls[period];
-                  const keys = Object.keys(byShop).sort((a, b) => (a.startsWith('neatribuit') ? 1 : 0) - (b.startsWith('neatribuit') ? 1 : 0));
-                  return keys.map((shopKey, i) => {
-                    const b = byShop[shopKey];
-                    const meta = SHOP_META[shopKey];
-                    return (
-                      <tr key={`${period}-${shopKey}`} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
-                        <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: i === 0 ? 700 : 400 }}>{i === 0 ? period : ''}</td>
-                        <td style={{ padding: '5px 8px', color: meta?.color || '#94a3b8', fontWeight: 700, whiteSpace: 'nowrap' }}>{meta?.flag} {meta?.label || shopKey}</td>
-                        <td style={{ padding: '5px 8px' }}>{fmtInt(b.orders)}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#10b981' }}>{fmt(b.codIncasat)}</td>
-                        <td style={{ padding: '5px 8px', fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(b.codNeincasat)}</td>
-                        <td style={{ padding: '5px 8px', color: b.retururi ? '#f43f5e' : '#475569' }}>{fmtInt(b.retururi)}</td>
-                      </tr>
-                    );
-                  });
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        {/* ── eMAG — numărul exact de comenzi/lună, citit din Sameday ── */}
-        <div style={{ background: '#0f1419', border: '1px solid rgba(234,179,8,.25)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#eab308' }}>🛒 eMAG — numărul exact de comenzi/lună (din Sameday, nu din import local)</div>
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, maxWidth: 600 }}>
-                eMAG expediază totul prin Sameday — fiecare AWB al lor conține mereu „EMG" în numărul de tracking. Tragem lista de AWB-uri direct din contul Sameday (lună cu lună) și numărăm cele cu „EMG" — rândul eMAG din lista de mai jos se actualizează cu acest număr exact (marcat 📡).
-              </div>
-            </div>
-            <button onClick={fetchEmagSameday} disabled={emagSamedayLoading} style={{ ...btnPrimary, background: '#eab308', color: '#1a1200' }}>
-              {emagSamedayLoading ? `⟳ ${emagSamedayProgress ? `${emagSamedayProgress.done}/${emagSamedayProgress.total}` : '...'}` : '📡 Trage comenzi eMAG din Sameday'}
-            </button>
-          </div>
-          {emagSamedayLoading && emagSamedayProgress && (
-            <div style={{ marginBottom: 6 }}>
-              <div style={{ height: 6, background: '#1a2535', borderRadius: 99, overflow: 'hidden' }}>
-                <div style={{ height: '100%', background: '#eab308', width: `${emagSamedayProgress.total ? Math.round((emagSamedayProgress.done / emagSamedayProgress.total) * 100) : 0}%`, transition: 'width .3s' }} />
-              </div>
-            </div>
-          )}
-          {emagSamedayError && <div style={errBox}>⚠️ {emagSamedayError}</div>}
-          {emagSameday && (
-            <div style={{ fontSize: 11, color: '#94a3b8' }}>
-              <b style={{ color: '#eab308' }}>{fmtInt(Object.values(emagSameday).reduce((s, n) => s + n, 0))}</b> comenzi eMAG găsite în Sameday, pe intervalul selectat.
-            </div>
-          )}
-        </div>
+        {/* ── Sincronizare, compact — detalii la cerere ── */}
+        <SyncStatusBar
+          isLongRange={monthRanges(from, to).length > 2}
+          onRefresh={runFullSync}
+          syncLoading={syncLoading} syncProgress={syncProgress} syncError={syncError} syncSummary={syncSummary}
+          liveGlsLoading={liveGlsLoading} liveGlsProgress={liveGlsProgress} liveGlsError={liveGlsError} liveGlsSummary={liveGlsSummary}
+          emagSamedayLoading={emagSamedayLoading} emagSamedayProgress={emagSamedayProgress} emagSamedayError={emagSamedayError} emagSameday={emagSameday}
+        />
 
         {/* ── KPI cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10, marginBottom: 16 }}>
@@ -1336,6 +1175,85 @@ export default function StatisticiTotalePage() {
   );
 }
 
+/** O singură bară, compactă — nu 3 panouri mari cu paragrafe — pentru
+ * sincronizarea Shopify/MyGLS/Sameday. Rulează automat pentru intervale
+ * scurte (vezi runFullSync), deci de cele mai multe ori arată doar un
+ * „✓ Date la zi" liniștit; detaliile (câte comenzi/AWB-uri, eșantionul de
+ * referințe neatribuite) rămân disponibile sub „Detalii", nu ocupă ecranul
+ * implicit. */
+function SyncStatusBar({
+  isLongRange, onRefresh,
+  syncLoading, syncProgress, syncError, syncSummary,
+  liveGlsLoading, liveGlsProgress, liveGlsError, liveGlsSummary,
+  emagSamedayLoading, emagSamedayProgress, emagSamedayError, emagSameday,
+}) {
+  const [open, setOpen] = useState(false);
+  const anyLoading = syncLoading || liveGlsLoading || emagSamedayLoading;
+  const anyError = syncError || liveGlsError || emagSamedayError;
+  const hasRun = syncSummary || liveGlsSummary || emagSameday;
+
+  let statusText = 'Date la zi';
+  if (anyLoading) {
+    if (liveGlsLoading && liveGlsProgress) statusText = `Se sincronizează — MyGLS: ${liveGlsProgress.phase} (${liveGlsProgress.done}/${liveGlsProgress.total})`;
+    else if (syncLoading && syncProgress) statusText = `Se sincronizează — Shopify (${syncProgress.done}/${syncProgress.total})`;
+    else if (emagSamedayLoading && emagSamedayProgress) statusText = `Se sincronizează — Sameday (${emagSamedayProgress.done}/${emagSamedayProgress.total})`;
+    else statusText = 'Se sincronizează...';
+  } else if (anyError) {
+    statusText = 'Eroare la sincronizare';
+  } else if (!hasRun) {
+    statusText = isLongRange ? 'Interval lung — sincronizare manuală' : 'Se pregătește...';
+  }
+
+  return (
+    <div style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.08)', borderRadius: 10, padding: '8px 12px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 14 }}>{anyLoading ? '⟳' : anyError ? '⚠️' : '✓'}</span>
+        <span style={{ fontSize: 12, color: anyError ? '#f59e0b' : '#94a3b8', flex: 1, minWidth: 160 }}>{statusText}</span>
+        <button onClick={() => setOpen(v => !v)} style={btnGhostSmall}>{open ? 'Ascunde' : 'Detalii'}</button>
+        <button onClick={onRefresh} disabled={anyLoading} style={btnGhostSmall} title="Resincronizează Shopify + MyGLS + Sameday">⟳ Resincronizează</button>
+      </div>
+      {open && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,.06)', fontSize: 11, color: '#64748b', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {isLongRange && <div>Interval mai lung de 2 luni — sincronizarea automată e dezactivată (ar dura prea mult); folosește „⟳ Resincronizează" manual.</div>}
+          {syncSummary && (
+            <div>💾 Shopify: <b style={{ color: '#10b981' }}>{fmtInt(syncSummary.ordersCreated)}</b> comenzi noi, <b style={{ color: '#e2e8f0' }}>{fmtInt(syncSummary.ordersUpdated)}</b> actualizate, <b style={{ color: '#10b981' }}>{fmtInt(syncSummary.shipmentsCreated)}</b> AWB-uri noi legate, <b style={{ color: '#e2e8f0' }}>{fmtInt(syncSummary.statusUpdated)}</b> statusuri actualizate
+              {!!syncSummary.errors?.length && <span style={{ color: '#f59e0b' }}> · ⚠ {syncSummary.errors.length} erori parțiale</span>}
+            </div>
+          )}
+          {liveGlsSummary && (
+            <div>
+              📦 MyGLS: <b style={{ color: '#e2e8f0' }}>{fmtInt(liveGlsSummary.totalParcels)}</b> colete găsite · <b style={{ color: '#10b981' }}>{fmtInt(liveGlsSummary.matched)}</b> atribuite unui magazin · <b style={{ color: '#f59e0b' }}>{fmtInt(liveGlsSummary.unmatched)}</b> neatribuite
+              {!!liveGlsSummary.unmatchedSample?.length && (
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ cursor: 'pointer' }}>🔍 Eșantion referințe neatribuite</summary>
+                  <div style={{ marginTop: 4, maxHeight: 160, overflowY: 'auto', fontFamily: 'monospace', fontSize: 10, background: '#080d12', borderRadius: 8, padding: 8 }}>
+                    {liveGlsSummary.unmatchedSample.map((s, i) => (
+                      <div key={i} style={{ padding: '2px 0', borderBottom: i < liveGlsSummary.unmatchedSample.length - 1 ? '1px solid #1a2535' : 'none' }}>
+                        <span style={{ color: '#f97316' }}>{s.ref}</span> — {s.name || '(fără nume)'}, {s.city || '—'} <span style={{ color: '#475569' }}>({s.month})</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+          {emagSameday && (
+            <div>🚀 Sameday: <b style={{ color: '#eab308' }}>{fmtInt(Object.values(emagSameday).reduce((s, n) => s + n, 0))}</b> comenzi eMAG găsite pe interval</div>
+          )}
+          {anyError && (
+            <div style={{ color: '#f43f5e' }}>
+              {syncError && <div>⚠️ Shopify: {syncError}</div>}
+              {liveGlsError && <div>⚠️ MyGLS: {liveGlsError}</div>}
+              {emagSamedayError && <div>⚠️ Sameday: {emagSamedayError}</div>}
+            </div>
+          )}
+          {!hasRun && !anyLoading && <div>Numerele de mai jos (GLS TOTAL/SAMEDAY TOTAL, pe magazin) se calculează din baza de date și, pentru intervale scurte, din MyGLS/Sameday live — click „⟳ Resincronizează" dacă nu s-au actualizat încă.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Kpi({ label, value, color }) {
   return (
     <div style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: '12px 14px' }}>
@@ -1538,6 +1456,7 @@ const inpStyle = { background: '#161d24', border: '1px solid #243040', color: '#
 const selStyle = { ...inpStyle, cursor: 'pointer' };
 const btnPrimary = { background: '#f97316', color: 'white', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer' };
 const btnGhost = { background: 'transparent', border: '1px solid rgba(255,255,255,.1)', color: '#94a3b8', borderRadius: 8, padding: '6px 12px', fontSize: 11, cursor: 'pointer' };
+const btnGhostSmall = { ...btnGhost, padding: '4px 10px', fontSize: 10 };
 const btnTab = { background: 'transparent', border: '1px solid rgba(255,255,255,.1)', color: '#64748b', borderRadius: 7, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer' };
 const btnTabActive = { background: 'rgba(249,115,22,.15)', borderColor: '#f97316', color: '#f97316' };
 const errBox = { background: 'rgba(244,63,94,.08)', border: '1px solid rgba(244,63,94,.25)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#f43f5e', marginBottom: 14 };
