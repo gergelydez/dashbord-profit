@@ -38,6 +38,29 @@ const SHOP_META = {
   necunoscut:     { label: 'Necunoscut', flag: '❓', color: '#64748b' },
 };
 const SHOP_ORDER = ['ro', 'hu', 'glato', 'glatohu', 'emag', 'neatribuit_posibil', 'neatribuit_manual', 'necunoscut'];
+
+const STATUS_META = {
+  delivered: { label: 'Livrată',         color: '#10b981' },
+  returned:  { label: 'Refuzată (retur)', color: '#f43f5e' },
+  transit:   { label: 'Tranzit',          color: '#f59e0b' },
+  cancelled: { label: 'Anulată',          color: '#64748b' },
+  no_awb:    { label: 'Fără AWB',         color: '#475569' },
+};
+const STATUS_ORDER = ['delivered', 'returned', 'transit', 'cancelled', 'no_awb'];
+/** Aceeași regulă deja folosită de <StatusBadge> — ținută separat ca să poată
+ * fi filtrată, nu doar afișată. */
+function orderStatusKey(o) {
+  if (o.cancelled) return 'cancelled';
+  if (o.returned) return 'returned';
+  if (o.delivered) return 'delivered';
+  if (o.courier) return 'transit';
+  return 'no_awb';
+}
+function glsDetailStatusKey(p) {
+  if (p.returned) return 'returned';
+  if (p.delivered) return 'delivered';
+  return 'transit';
+}
 const MONTH_NAMES = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Noi', 'Dec'];
 const pad2 = n => String(n).padStart(2, '0');
 
@@ -194,6 +217,8 @@ export default function StatisticiTotalePage() {
   const [granularity, setGranularity] = useState('month'); // 'month' | 'year'
   const [activeShops, setActiveShops] = useState(() => new Set(SHOP_ORDER));
   const [shopDropdownOpen, setShopDropdownOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState(() => new Set(['delivered', 'returned', 'transit']));
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [expanded, setExpanded] = useState({}); // `${period}|${shopKey}` -> { loading, kind, rows, error }
 
   const [emagOrders, setEmagOrders] = useState([]);
@@ -977,9 +1002,30 @@ export default function StatisticiTotalePage() {
 
         {/* ── Listă: comenzi pe perioadă + magazin, click pentru detalii ── */}
         <div style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{granularity === 'month' ? 'Comenzi pe lună și magazin' : 'Comenzi pe an și magazin'}</div>
-            <button onClick={exportCsv} style={btnGhost}>⬇ Export CSV</button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ position: 'relative' }}>
+                <button onClick={() => setStatusDropdownOpen(v => !v)} style={btnGhost}>
+                  📦 Status ({statusFilter.size === STATUS_ORDER.length ? 'toate' : statusFilter.size})
+                </button>
+                {statusDropdownOpen && <div onClick={() => setStatusDropdownOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />}
+                {statusDropdownOpen && (
+                  <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', background: '#161d24', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: 10, zIndex: 20, minWidth: 190, boxShadow: '0 8px 24px rgba(0,0,0,.4)' }}>
+                    {STATUS_ORDER.map(k => (
+                      <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: STATUS_META[k].color, padding: '4px 2px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={statusFilter.has(k)} onChange={() => setStatusFilter(prev => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; })} />
+                        {STATUS_META[k].label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button onClick={exportCsv} style={btnGhost}>⬇ Export CSV</button>
+            </div>
+          </div>
+          <div style={{ fontSize: 10, color: '#64748b', marginBottom: 10, marginTop: -4 }}>
+            Lista de comenzi (după click pe un magazin) arată implicit doar <b style={{ color: '#e2e8f0' }}>livrate / refuzate / în tranzit</b> — schimbă din „📦 Status" dacă vrei să vezi și comenzile anulate sau fără AWB.
           </div>
           {loading ? (
             <div style={{ textAlign: 'center', color: '#475569', padding: 24 }}>Se încarcă...</div>
@@ -1021,9 +1067,9 @@ export default function StatisticiTotalePage() {
                             ) : !exp.rows?.length ? (
                               <div style={{ fontSize: 11, color: '#475569' }}>Nicio comandă găsită aici — pentru magazinele Shopify, dacă nu ai sincronizat încă intervalul, apasă „💾 Sincronizează tot în bază" mai sus.</div>
                             ) : exp.kind === 'order' ? (
-                              <OrderRows rows={exp.rows} />
+                              <OrderRows rows={exp.rows} statusFilter={statusFilter} />
                             ) : exp.kind === 'gls_detail' ? (
-                              <GlsDetailRows rows={exp.rows} />
+                              <GlsDetailRows rows={exp.rows} statusFilter={statusFilter} />
                             ) : exp.kind === 'emag' ? (
                               <EmagRows rows={exp.rows} />
                             ) : null}
@@ -1122,12 +1168,17 @@ function StatusBadge({ o }) {
 }
 
 /** Listă de comenzi reale (dintr-un magazin Shopify), cu curierul GLS/Sameday
- * și statusul de livrare per comandă — rezultatul /api/stats-totale/order-list. */
-function OrderRows({ rows }) {
+ * și statusul de livrare per comandă — rezultatul /api/stats-totale/order-list.
+ * Filtrată după statusFilter (implicit: doar livrate/refuzate/tranzit — vezi
+ * STATUS_META mai sus). */
+function OrderRows({ rows, statusFilter }) {
+  const filtered = rows.filter(o => statusFilter.has(orderStatusKey(o)));
+  if (!filtered.length) return <div style={{ fontSize: 11, color: '#475569' }}>Nicio comandă cu statusul selectat ({rows.length} ascunse de filtru).</div>;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto' }}>
-      {rows.map((o, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+      {filtered.length < rows.length && <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>{filtered.length} din {rows.length} afișate (filtru status)</div>}
+      {filtered.map((o, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < filtered.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
           <span style={{ color: '#cbd5e1', fontWeight: 700, width: 70, flexShrink: 0 }}>{o.name}</span>
           <span style={{ color: '#64748b', width: 80, flexShrink: 0 }}>{new Date(o.date).toLocaleDateString('ro-RO')}</span>
           <span style={{ color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{o.customer}</span>
@@ -1141,12 +1192,17 @@ function OrderRows({ rows }) {
 }
 
 /** Colete GLS neatribuite niciunui magazin — doar un eșantion de detaliu
- * (ref/nume/oraș), fiindcă nu există un Order la noi pentru ele. */
-function GlsDetailRows({ rows }) {
+ * (ref/nume/oraș), fiindcă nu există un Order la noi pentru ele. Nu au
+ * statusurile "Anulată"/"Fără AWB" (orice colet din MyGLS are, prin
+ * definiție, un AWB) — filtrul se aplică doar pe livrat/refuzat/tranzit. */
+function GlsDetailRows({ rows, statusFilter }) {
+  const filtered = rows.filter(p => statusFilter.has(glsDetailStatusKey(p)));
+  if (!filtered.length) return <div style={{ fontSize: 11, color: '#475569' }}>Niciun colet cu statusul selectat ({rows.length} ascunse de filtru).</div>;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto', fontFamily: 'monospace' }}>
-      {rows.map((p, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, padding: '3px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+      {filtered.length < rows.length && <div style={{ fontSize: 10, color: '#475569', marginBottom: 2, fontFamily: 'system-ui, sans-serif' }}>{filtered.length} din {rows.length} afișate (filtru status)</div>}
+      {filtered.map((p, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, padding: '3px 0', borderBottom: i < filtered.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
           <span style={{ color: '#f97316', width: 95, flexShrink: 0 }}>{p.parcelNumber}</span>
           <span style={{ color: '#64748b', width: 70, flexShrink: 0 }} title="ClientReference de pe AWB">ref: {p.ref || '—'}</span>
           <span style={{ color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{p.name || '(fără nume)'}, {p.city || '—'}</span>
