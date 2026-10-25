@@ -25,6 +25,23 @@ const ls = {
   set: (k, v) => { try { if (typeof window !== 'undefined') localStorage.setItem(k, v); } catch {} },
 };
 
+/** Lunile ÎNCHEIATE (nu luna curentă) deja sincronizate o dată rămân așa —
+ * n-are rost să mai batem Shopify/Sameday live din nou de fiecare dată când
+ * schimbi filtrul pe un interval deja acoperit. `kind` separă Shopify
+ * (sync-orders) de Sameday (status-sync live), fiindcă fiecare se termină
+ * independent. Butonul manual „⟳ Resincronizează" ignoră complet lista asta
+ * (forțează o tragere reală) — doar auto-sync-ul o respectă.
+ */
+function getClosedSyncedMonths(kind) {
+  try { return new Set(JSON.parse(ls.get(`stats_synced_${kind}`) || '[]')); } catch { return new Set(); }
+}
+function markMonthsSynced(kind, monthKeys) {
+  if (!monthKeys.length) return;
+  const cur = getClosedSyncedMonths(kind);
+  for (const mk of monthKeys) cur.add(mk);
+  ls.set(`stats_synced_${kind}`, JSON.stringify(Array.from(cur)));
+}
+
 const fmt = n => Number(n || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtInt = n => Number(n || 0).toLocaleString('ro-RO');
 
@@ -768,10 +785,17 @@ export default function StatisticiTotalePage() {
   // statusul live din /api/tracking. După asta tabelul principal de mai jos
   // devine corect direct din DB, fără să mai fie nevoie să tragi date live
   // de fiecare dată — și acoperă Sameday la fel ca GLS, nu doar GLS.
-  const syncToDb = async () => {
+  const syncToDb = async (force = false) => {
     setSyncLoading(true); setSyncError(''); setSyncSummary(null);
     try {
-      const months = monthRanges(from, to);
+      const allMonths = monthRanges(from, to);
+      const currentMonthKey = new Date().toISOString().slice(0, 7);
+      const synced = force ? new Set() : getClosedSyncedMonths('shopify');
+      const months = allMonths.filter(m => m.key >= currentMonthKey || !synced.has(m.key));
+      if (!months.length) {
+        setSyncSummary({ ordersCreated: 0, ordersUpdated: 0, shipmentsCreated: 0, statusUpdated: 0, errors: [], skipped: true });
+        return;
+      }
       const jobs = [];
       for (const shopKey of ['ro', 'hu', 'glato', 'glatohu']) {
         for (const m of months) jobs.push({ shopKey, ...m });
@@ -797,6 +821,7 @@ export default function StatisticiTotalePage() {
       });
 
       if (errors.length) console.error('[Statistici Totale] Erori sincronizare:', errors);
+      else markMonthsSynced('shopify', months.filter(m => m.key < currentMonthKey).map(m => m.key));
       setSyncSummary({ ...totals, errors });
       load(); // reîncarcă tabelul principal din DB, acum actualizat
     } catch (e) {
@@ -815,7 +840,7 @@ export default function StatisticiTotalePage() {
   // după ClientReference (căutat LIVE în Shopify, nu în DB — vezi
   // /api/stats-totale/shopify-order-names), și luăm statusul de livrare din
   // /api/tracking — care deja disambiguează corect codul GLS ambiguu (5).
-  const fetchLiveGls = async () => {
+  const fetchLiveGls = async (force = false) => {
     setLiveGlsLoading(true); setLiveGlsError(''); setLiveGlsSummary(null);
     const months = monthRanges(from, to);
     const currentMonthKey = new Date().toISOString().slice(0, 7);
@@ -824,11 +849,12 @@ export default function StatisticiTotalePage() {
       // am mai tras-o și salvat-o cândva (vezi GlsParcelSnapshot, persistat
       // mai jos), n-are niciun rost să tragem din nou din MyGLS de fiecare
       // dată când cineva se uită pe ea. Doar luna curentă + lunile încheiate
-      // NEACOPERITE încă trec prin pull-ul live.
+      // NEACOPERITE încă trec prin pull-ul live — exceptând "force" (butonul
+      // manual „⟳ Resincronizează"), care retrage totul, ignorând arhiva.
       const closedMonths = months.filter(m => m.key < currentMonthKey);
       const openMonths = months.filter(m => m.key >= currentMonthKey);
       let covered = new Set();
-      if (closedMonths.length) {
+      if (!force && closedMonths.length) {
         const cov = await fetch(`/api/stats-totale/gls-snapshot?from=${closedMonths[0].from}&to=${closedMonths[closedMonths.length - 1].to}&coverage=1`)
           .then(r => r.json()).catch(() => ({ months: [] }));
         covered = new Set(cov.months || []);
@@ -994,36 +1020,89 @@ export default function StatisticiTotalePage() {
   // pe pagina Comenzi, vezi acolo emagLiveAwbs). Status-sync Sameday nu ne
   // dă dată per AWB, dar tras lună cu lună (monthRanges) numărul rezultat
   // e deja corect atribuit lunii respective.
-  const fetchEmagSameday = async () => {
+  const fetchEmagSameday = async (force = false) => {
     setEmagSamedayLoading(true); setEmagSamedayError('');
     try {
-      const months = monthRanges(from, to);
-      setEmagSamedayProgress({ done: 0, total: months.length });
+      const allMonths = monthRanges(from, to);
+      const currentMonthKey = new Date().toISOString().slice(0, 7);
       const toPeriod = (mk) => granularity === 'year' ? mk.slice(0, 4) : mk;
-      const counts = {};
-      const live = {};
-      let anyTruncated = false;
-      await mapWithConcurrency(months, 2, async (m) => {
-        const res = await fetch('/api/sameday-parcellist', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from: m.from, to: m.to }),
-        }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
-        if (res.ok) {
-          const period = toPeriod(m.key);
-          const bucket = live[period] || (live[period] = { emag: [], client_return: [], shop: [] });
-          for (const awb of res.awbs || []) bucket[samedayAwbKind(awb)].push(awb);
-          counts[period] = bucket.emag.length;
-          if (res.debug?.truncated) anyTruncated = true;
-        } else {
-          setEmagSamedayError(res.error || 'Eroare Sameday');
-        }
-        setEmagSamedayProgress(p => ({ ...p, done: p.done + 1 }));
-      });
-      if (anyTruncated) {
-        setEmagSamedayError(prev => prev || '⚠️ Unele luni au prea multe mișcări pentru fereastra Sameday (limită ~45s/cerere) — numărul poate fi sub cel real pentru lunile foarte încărcate.');
+      const newCounts = {};
+      const newLive = {};
+
+      // Lunile ÎNCHEIATE deja salvate (vezi SamedayMonthSnapshot, persistat
+      // mai jos) se citesc direct din bază — status-sync e lent (ferestre de
+      // 2h), n-are rost retras din nou pentru o lună care nu se mai schimbă.
+      let closedMonths = allMonths.filter(m => m.key < currentMonthKey);
+      const openMonths = allMonths.filter(m => m.key >= currentMonthKey);
+      let snapshotMonths = [];
+      if (!force && closedMonths.length) {
+        const cov = await fetch(`/api/stats-totale/sameday-snapshot?from=${closedMonths[0].from}&to=${closedMonths[closedMonths.length - 1].to}&coverage=1`)
+          .then(r => r.json()).catch(() => ({ months: [] }));
+        const covered = new Set(cov.months || []);
+        snapshotMonths = closedMonths.filter(m => covered.has(m.key));
       }
-      setEmagSameday(counts);
-      setSamedayLive(live);
+      const liveMonths = force ? allMonths : [...openMonths, ...closedMonths.filter(m => !snapshotMonths.some(s => s.key === m.key))];
+
+      if (snapshotMonths.length) {
+        const sr = await fetch(`/api/stats-totale/sameday-snapshot?from=${snapshotMonths[0].from}&to=${snapshotMonths[snapshotMonths.length - 1].to}`)
+          .then(r => r.json()).catch(() => ({ ok: false }));
+        if (sr.ok) {
+          for (const row of (sr.months || [])) {
+            const period = toPeriod(row.monthKey);
+            const bucket = newLive[period] || (newLive[period] = { emag: [], client_return: [] });
+            bucket.emag.push(...row.emagAwbs);
+            bucket.client_return.push(...row.clientReturnAwbs);
+            newCounts[period] = (newCounts[period] || 0) + row.emagAwbs.length;
+          }
+        }
+      }
+
+      if (liveMonths.length) {
+        setEmagSamedayProgress({ done: 0, total: liveMonths.length });
+        let anyTruncated = false;
+        const pulledMonths = [];
+        await mapWithConcurrency(liveMonths, 2, async (m) => {
+          const res = await fetch('/api/sameday-parcellist', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: m.from, to: m.to }),
+          }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+          if (res.ok) {
+            const emagAwbs = [], clientReturnAwbs = [];
+            for (const awb of res.awbs || []) {
+              const kind = samedayAwbKind(awb);
+              if (kind === 'emag') emagAwbs.push(awb);
+              else if (kind === 'client_return') clientReturnAwbs.push(awb);
+            }
+            const period = toPeriod(m.key);
+            const bucket = newLive[period] || (newLive[period] = { emag: [], client_return: [] });
+            bucket.emag.push(...emagAwbs);
+            bucket.client_return.push(...clientReturnAwbs);
+            newCounts[period] = (newCounts[period] || 0) + emagAwbs.length;
+            const truncated = !!res.debug?.truncated;
+            if (truncated) anyTruncated = true;
+            // Lunile ÎNCHEIATE, netrunchiate, se salvează definitiv — luna
+            // curentă nu se salvează ca "finală" fiindcă tot se schimbă.
+            if (m.key < currentMonthKey && !truncated) pulledMonths.push({ ...m, emagAwbs, clientReturnAwbs });
+          } else {
+            setEmagSamedayError(res.error || 'Eroare Sameday');
+          }
+          setEmagSamedayProgress(p => ({ ...p, done: p.done + 1 }));
+        });
+        if (anyTruncated) {
+          setEmagSamedayError(prev => prev || '⚠️ Unele luni au prea multe mișcări pentru fereastra Sameday (limită ~45s/cerere) — numărul poate fi sub cel real pentru lunile foarte încărcate.');
+        }
+        for (const m of pulledMonths) {
+          fetch('/api/stats-totale/sameday-snapshot', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ monthKey: m.key, emagAwbs: m.emagAwbs, clientReturnAwbs: m.clientReturnAwbs, truncated: false }),
+          }).catch(() => {});
+        }
+      }
+
+      // Combinăm cu ce era deja — nu înlocuim, ca lunile sărite (deja
+      // acoperite) să nu dispară din ecran.
+      setEmagSameday(prev => ({ ...(prev || {}), ...newCounts }));
+      setSamedayLive(prev => ({ ...(prev || {}), ...newLive }));
     } catch (e) {
       setEmagSamedayError(e.message);
     } finally {
@@ -1038,10 +1117,14 @@ export default function StatisticiTotalePage() {
   // „🔄 Sincronizare" (altfel ar dura prea mult/ar lovi rate-limit-uri la
   // fiecare simplă schimbare de filtru).
   const autoSyncKeyRef = useRef('');
-  const runFullSync = useCallback(() => {
-    syncToDb();
-    fetchLiveGls();
-    fetchEmagSameday();
+  // force=true (butonul manual „⟳ Resincronizează") ignoră complet arhiva —
+  // retrage totul din Shopify/MyGLS/Sameday, chiar și pentru luni deja
+  // salvate. Auto-sync-ul (la schimbarea filtrului) NU forțează — respectă
+  // arhiva, ca să fie instant pentru orice a fost deja tras o dată.
+  const runFullSync = useCallback((force = false) => {
+    syncToDb(force);
+    fetchLiveGls(force);
+    fetchEmagSameday(force);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from, to, granularity]);
   useEffect(() => {
@@ -1054,13 +1137,10 @@ export default function StatisticiTotalePage() {
   }, [from, to, granularity]);
 
   // Sincronizare de fundal, O DATĂ PE ZI (indiferent ce interval se vede pe
-  // ecran), pentru ultimele 3 luni — de ce: „SAMEDAY TOTAL" exclude un AWB de
-  // la „fără comandă" doar dacă există deja ca Shipment la noi (vezi
-  // known-awbs mai sus), iar sincronizarea automată de mai sus acoperă DOAR
-  // luna vizibilă acum. O comandă din septembrie, livrată abia în octombrie,
-  // nu ajungea niciodată în bază dacă nimeni nu se uita special pe
-  // septembrie — rămânea numărată greșit drept "fără comandă" la infinit.
-  // Asta rulează pe fundal, nu blochează nimic vizual.
+  // ecran), pentru ultimele 3 luni — ca sincronizarea Shopify (sync-orders)
+  // să acopere și lunile pe care nimeni nu s-a uitat explicit încă (ex. o
+  // comandă din septembrie, livrată abia în octombrie). Rulează pe fundal,
+  // nu blochează nimic vizual.
   useEffect(() => {
     const dayKey = new Date().toISOString().slice(0, 10);
     if (ls.get('stats_backfill_day') === dayKey) return;
@@ -1151,7 +1231,7 @@ export default function StatisticiTotalePage() {
         {/* ── Sincronizare, compact — detalii la cerere ── */}
         <SyncStatusBar
           isLongRange={monthRanges(from, to).length > 2}
-          onRefresh={runFullSync}
+          onRefresh={() => runFullSync(true)}
           syncLoading={syncLoading} syncProgress={syncProgress} syncError={syncError} syncSummary={syncSummary}
           liveGlsLoading={liveGlsLoading} liveGlsProgress={liveGlsProgress} liveGlsError={liveGlsError} liveGlsSummary={liveGlsSummary}
           emagSamedayLoading={emagSamedayLoading} emagSamedayProgress={emagSamedayProgress} emagSamedayError={emagSamedayError} emagSameday={emagSameday}

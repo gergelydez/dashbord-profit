@@ -486,3 +486,17 @@ model GlsParcelSnapshot {
   @@index([pickupDate])
   @@index([shopKey])
 }
+
+// Rezultatul (clasificat) al unei trageri live Sameday status-sync pentru O
+// LUNĂ — persistat ca lunile ÎNCHEIATE să nu mai fie nevoie retrase din
+// Sameday de fiecare dată (status-sync e lent: ferestre de 2h). Un rând
+// întreg per lună, nu per AWB (clasificarea EMG/retur client e o funcție
+// pură a numărului AWB, nu are nevoie de altă dată externă).
+model SamedayMonthSnapshot {
+  id               String   @id @default(uuid())
+  monthKey         String   @unique // "2026-09"
+  emagAwbs         Json     @default("[]")
+  clientReturnAwbs Json     @default("[]")
+  truncated        Boolean  @default(false)
+  updatedAt        DateTime @updatedAt
+}
