@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { classifyByCode } from '@/lib/courier-tracking';
+import { samedayAwbKind } from '@/lib/couriers/sameday-awb-kind';
 
 // Helper safe pentru localStorage — returnează null pe server (SSR/prerender)
 const ls = {
@@ -1553,8 +1554,10 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
   // 100 comenzi Shopify + GLS livrate, dar 110 transporturi în MyGLS → 10
   // sunt telefonice). eMAG = AWB Sameday al cărui număr conține "EMG".
   const shopifyTrackingSet = new Set(orders.map(o => (o.trackingNo || '').trim()).filter(Boolean));
-  const emagLiveAwbs      = sdLiveAwbs.filter(awb => awb.toUpperCase().includes('EMG'));
-  const sdNonEmagLiveAwbs = sdLiveAwbs.filter(awb => !awb.toUpperCase().includes('EMG'));
+  // 1ONBLR… = retur trimis de client către noi — nu e comandă, deci nu intră la manual/total.
+  const emagLiveAwbs      = sdLiveAwbs.filter(awb => samedayAwbKind(awb) === 'emag');
+  const sdClientReturnAwbs = sdLiveAwbs.filter(awb => samedayAwbKind(awb) === 'client_return');
+  const sdNonEmagLiveAwbs = sdLiveAwbs.filter(awb => samedayAwbKind(awb) === 'shop');
   const glsManualCount    = glsLiveAwbs.filter(awb => !shopifyTrackingSet.has(awb)).length;
   const sdManualCount     = sdNonEmagLiveAwbs.filter(awb => !shopifyTrackingSet.has(awb)).length;
   const glsShopifyLiveCount = glsLiveAwbs.length - glsManualCount;
@@ -2674,6 +2677,7 @@ Exemplu: ${faraAWB[0]?.name} - courier: ${faraAWB[0]?.courier}`
                     ...(sdLiveAwbs.length>0 ? [
                       ['🛒 Shopify', sdShopifyLiveCount, '#94a3b8'],
                       ['📞 Manual/telefon', sdManualCount, sdManualCount>0?'#eab308':'#94a3b8'],
+                      ['↩ Retur de la client', sdClientReturnAwbs.length, sdClientReturnAwbs.length>0?'#38bdf8':'#94a3b8'],
                     ] : []),
                     ['✅ Livrate', sdLivrate, '#10b981'],
                     ['🚚 Tranzit', sdIncurs, '#3b82f6'],

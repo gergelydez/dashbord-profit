@@ -18,6 +18,7 @@
  * își ține propria monedă (RON sau HUF), iar un total "general" e per monedă.
  */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { samedayAwbKind } from '@/lib/couriers/sameday-awb-kind';
 
 const ls = {
   get: k => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
@@ -85,7 +86,8 @@ function filteredCountFor(exp, statusFilter, courierFilter) {
     if (!courierFilter.has('gls')) return 0;
     return exp.rows.filter(p => statusFilter.has(glsDetailStatusKey(p))).length;
   }
-  if (exp.kind === 'emag') return exp.rows.length;
+  // eMAG: numărul de pe rând rămâne cel din Sameday (b.orders) — importul local poate avea mai puține comenzi
+  if (exp.kind === 'emag') return null;
   return null;
 }
 
@@ -94,7 +96,7 @@ function filteredCountFor(exp, statusFilter, courierFilter) {
  * TOTAL" (vizibile înainte să desfaci vreun magazin, din cache-ul deja
  * pre-încărcat — vezi efectul de prefetch mai sus). Colete GLS neatribuite
  * (posibil/manual) intră și ele la GLS, fiindcă chiar sunt colete GLS. */
-function rowsForCourier(period, shopsInPeriod, courier, orderCache, liveGlsDetails, statusFilter) {
+function rowsForCourier(period, shopsInPeriod, courier, orderCache, liveGlsDetails, statusFilter, samedayLive) {
   const out = [];
   for (const shopKey of shopsInPeriod) {
     if (shopKey === 'neatribuit_posibil' || shopKey === 'neatribuit_manual') {
@@ -115,8 +117,23 @@ function rowsForCourier(period, shopsInPeriod, courier, orderCache, liveGlsDetai
       out.push({ _kind: 'order', _shopKey: shopKey, ...o });
     }
   }
+  // Colete Sameday văzute live în cont (vezi fetchEmagSameday): eMAG, retururi
+  // de la clienți (1ONBLR) și colete de magazin fără comandă în baza noastră.
+  // Fără status per colet (status-sync dă doar AWB-ul), deci nu trec prin filtrul de status.
+  const live = courier === 'sameday' ? samedayLive?.[period] : null;
+  if (live) {
+    // AWB-uri cunoscute din TOATE lunile încărcate: status-sync raportează orice colet cu mișcare în lună,
+    // inclusiv comenzi create luna trecută și livrate acum — acelea nu sunt „fără comandă”.
+    const known = new Set();
+    for (const exp of Object.values(orderCache)) for (const o of exp?.rows || []) if (o.trackingNumber) known.add(o.trackingNumber);
+    for (const awb of live.emag) out.push({ _kind: 'sd_parcel', _shopKey: 'emag', parcelNumber: awb, sdKind: 'emag' });
+    for (const awb of live.shop) if (!known.has(awb)) out.push({ _kind: 'sd_parcel', _shopKey: 'necunoscut', parcelNumber: awb, sdKind: 'shop' });
+    for (const awb of live.client_return) out.push({ _kind: 'sd_parcel', _shopKey: 'retur', parcelNumber: awb, sdKind: 'client_return' });
+  }
   return out;
 }
+
+const SD_KIND_LABEL = { emag: '🛒 eMAG', shop: '📞 Fără comandă', client_return: '↩ Retur client' };
 const MONTH_NAMES = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Noi', 'Dec'];
 const pad2 = n => String(n).padStart(2, '0');
 
@@ -268,6 +285,7 @@ export default function StatisticiTotalePage() {
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [courierFilter, setCourierFilter] = useState(() => new Set(COURIER_ORDER));
   const [courierDropdownOpen, setCourierDropdownOpen] = useState(false);
+  const [detailTarget, setDetailTarget] = useState(null); // fereastra de detaliu comandă (vezi OrderDetailModal)
   const [orderCache, setOrderCache] = useState({}); // `${period}|${shopKey}` -> { loading, kind, rows, error } — cache INDEPENDENT de UI (vezi loadRow), ca totalurile GLS/Sameday pe lună să poată fi calculate chiar înainte să dai click pe un magazin
   const [openRows, setOpenRows] = useState(() => new Set()); // care rânduri magazin sunt desfăcute vizual
   const loadingKeysRef = useRef(new Set()); // deduplichează fetch-urile pentru aceeași cheie (prefetch + click simultan)
@@ -287,6 +305,7 @@ export default function StatisticiTotalePage() {
   // ── eMAG — numărul EXACT de comenzi pe lună, citit din Sameday (nu din
   // importul local) — vezi fetchEmagSameday mai jos ──
   const [emagSameday, setEmagSameday] = useState(null); // { [periodKey]: count }
+  const [samedayLive, setSamedayLive] = useState(null); // { [periodKey]: { emag: [], client_return: [], shop: [] } } — AWB-uri din contul Sameday
   const [emagSamedayLoading, setEmagSamedayLoading] = useState(false);
   const [emagSamedayProgress, setEmagSamedayProgress] = useState(null);
   const [emagSamedayError, setEmagSamedayError] = useState('');
@@ -311,7 +330,7 @@ export default function StatisticiTotalePage() {
   // Datele live MyGLS sunt legate de intervalul [from,to] cerut la acel
   // moment — dacă utilizatorul schimbă intervalul fără să le re-tragă,
   // le ștergem ca să nu rămână suprapuse peste o perioadă greșită.
-  useEffect(() => { setLiveGls(null); setLiveGlsSummary(null); setLiveGlsDetails({}); setEmagSameday(null); setEmagSamedayError(''); }, [from, to]);
+  useEffect(() => { setLiveGls(null); setLiveGlsSummary(null); setLiveGlsDetails({}); setEmagSameday(null); setSamedayLive(null); setEmagSamedayError(''); }, [from, to]);
   useEffect(() => { setOrderCache({}); setOpenRows(new Set()); loadingKeysRef.current = new Set(); }, [from, to, granularity]);
   // Coletele "neatribuit_*" cache-uite vin din liveGlsDetails (în memorie, nu
   // din rețea) — când se termină o nouă tragere live MyGLS, cache-ul vechi
@@ -825,6 +844,7 @@ export default function StatisticiTotalePage() {
       setEmagSamedayProgress({ done: 0, total: months.length });
       const toPeriod = (mk) => granularity === 'year' ? mk.slice(0, 4) : mk;
       const counts = {};
+      const live = {};
       let anyTruncated = false;
       await mapWithConcurrency(months, 2, async (m) => {
         const res = await fetch('/api/sameday-parcellist', {
@@ -832,9 +852,10 @@ export default function StatisticiTotalePage() {
           body: JSON.stringify({ from: m.from, to: m.to }),
         }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
         if (res.ok) {
-          const emagCount = (res.awbs || []).filter(a => a.toUpperCase().includes('EMG')).length;
           const period = toPeriod(m.key);
-          counts[period] = (counts[period] || 0) + emagCount;
+          const bucket = live[period] || (live[period] = { emag: [], client_return: [], shop: [] });
+          for (const awb of res.awbs || []) bucket[samedayAwbKind(awb)].push(awb);
+          counts[period] = bucket.emag.length;
           if (res.debug?.truncated) anyTruncated = true;
         } else {
           setEmagSamedayError(res.error || 'Eroare Sameday');
@@ -845,12 +866,26 @@ export default function StatisticiTotalePage() {
         setEmagSamedayError(prev => prev || '⚠️ Unele luni au prea multe mișcări pentru fereastra Sameday (limită ~45s/cerere) — numărul poate fi sub cel real pentru lunile foarte încărcate.');
       }
       setEmagSameday(counts);
+      setSamedayLive(live);
     } catch (e) {
       setEmagSamedayError(e.message);
     } finally {
       setEmagSamedayLoading(false);
     }
   };
+
+  // Tragem automat coletele Sameday pentru intervale scurte (1-2 luni), ca
+  // SAMEDAY TOTAL și rândul eMAG să fie complete fără click; intervalele mai
+  // lungi rămân pe butonul manual (status-sync e lent: ferestre de 2h).
+  const autoSdKeyRef = useRef('');
+  useEffect(() => {
+    if (!from || !to) return;
+    const key = `${from}|${to}|${granularity}`;
+    if (autoSdKeyRef.current === key || monthRanges(from, to).length > 2) return;
+    autoSdKeyRef.current = key;
+    fetchEmagSameday();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to, granularity]);
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0e14', color: '#e2e8f0', padding: '16px 16px 100px', fontFamily: 'system-ui, sans-serif' }}>
@@ -1161,7 +1196,7 @@ export default function StatisticiTotalePage() {
                 return s + (fc != null ? fc : (periods[period][k].orders || 0));
               }, 0);
               const glsTotalRows = rowsForCourier(period, shopsInPeriod, 'gls', orderCache, liveGlsDetails, statusFilter);
-              const samedayTotalRows = rowsForCourier(period, shopsInPeriod, 'sameday', orderCache, liveGlsDetails, statusFilter);
+              const samedayTotalRows = rowsForCourier(period, shopsInPeriod, 'sameday', orderCache, liveGlsDetails, statusFilter, samedayLive);
               const totalsPending = shopsInPeriod.some(k => {
                 if (k === 'emag' || k === 'necunoscut') return false;
                 if (k === 'neatribuit_posibil' || k === 'neatribuit_manual') return false;
@@ -1175,8 +1210,8 @@ export default function StatisticiTotalePage() {
                     <span style={{ color: '#94a3b8', fontWeight: 400 }}>{fmtInt(periodTotal)} comenzi</span>
                   </div>
                   <div style={{ display: 'flex', gap: 8, margin: '6px 0 2px', flexWrap: 'wrap' }}>
-                    <CourierTotalTile label="GLS TOTAL" icon="📦" color="#3b82f6" rows={glsTotalRows} pending={totalsPending} />
-                    <CourierTotalTile label="SAMEDAY TOTAL" icon="🚀" color="#a855f7" rows={samedayTotalRows} pending={totalsPending} />
+                    <CourierTotalTile label="GLS TOTAL" icon="📦" color="#3b82f6" rows={glsTotalRows} pending={totalsPending} onOpen={setDetailTarget} />
+                    <CourierTotalTile label="SAMEDAY TOTAL" icon="🚀" color="#a855f7" rows={samedayTotalRows} pending={totalsPending} onOpen={setDetailTarget} />
                   </div>
                   {!liveGls && (
                     <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8 }}>
@@ -1211,14 +1246,14 @@ export default function StatisticiTotalePage() {
                               <div style={{ fontSize: 11, color: '#64748b' }}>Se încarcă...</div>
                             ) : exp.error ? (
                               <div style={{ fontSize: 11, color: '#f43f5e' }}>⚠️ {exp.error}</div>
-                            ) : !exp.rows?.length ? (
+                            ) : !exp.rows?.length && !(exp.kind === 'emag' && samedayLive?.[period]?.emag?.length) ? (
                               <div style={{ fontSize: 11, color: '#475569' }}>Nicio comandă găsită aici — pentru magazinele Shopify, dacă nu ai sincronizat încă intervalul, apasă „💾 Sincronizează tot în bază" mai sus.</div>
                             ) : exp.kind === 'order' ? (
-                              <OrderRows rows={exp.rows} statusFilter={statusFilter} courierFilter={courierFilter} />
+                              <OrderRows rows={exp.rows} statusFilter={statusFilter} courierFilter={courierFilter} onOpen={setDetailTarget} />
                             ) : exp.kind === 'gls_detail' ? (
-                              <GlsDetailRows rows={exp.rows} statusFilter={statusFilter} courierFilter={courierFilter} />
+                              <GlsDetailRows rows={exp.rows} statusFilter={statusFilter} courierFilter={courierFilter} onOpen={setDetailTarget} />
                             ) : exp.kind === 'emag' ? (
-                              <EmagRows rows={exp.rows} />
+                              <EmagRows rows={exp.rows} onOpen={setDetailTarget} liveAwbs={samedayLive?.[period]?.emag || []} />
                             ) : null}
                           </div>
                         )}
@@ -1282,6 +1317,7 @@ export default function StatisticiTotalePage() {
           )}
         </div>
       </div>
+      {detailTarget && <OrderDetailModal target={detailTarget} onClose={() => setDetailTarget(null)} />}
     </div>
   );
 }
@@ -1321,7 +1357,7 @@ function StatusBadge({ o }) {
 /** Rândul "📦 GLS TOTAL" / "🚀 SAMEDAY TOTAL" de la începutul fiecărei luni —
  * vizibil ÎNAINTE de a desface vreun magazin (numărul vine din cache-ul
  * pre-încărcat), cu propriul lui expand/collapse, ca un mic KPI clicabil. */
-function CourierTotalTile({ label, icon, color, rows, pending }) {
+function CourierTotalTile({ label, icon, color, rows, pending, onOpen }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ flex: '1 1 150px', minWidth: 150 }}>
@@ -1329,6 +1365,18 @@ function CourierTotalTile({ label, icon, color, rows, pending }) {
         <span style={{ fontSize: 11, fontWeight: 700, color }}>{icon} {label}</span>
         <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 15, color: '#e2e8f0' }}>{pending ? '…' : fmtInt(rows.length)}</span>
       </div>
+      {!pending && rows.some(r => r._kind === 'sd_parcel') && (() => {
+        const c = { order: 0, emag: 0, shop: 0, client_return: 0 };
+        for (const r of rows) c[r._kind === 'sd_parcel' ? r.sdKind : 'order']++;
+        return (
+          <div style={{ fontSize: 10, color: '#64748b', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <span>{c.order} magazin</span>
+            {!!c.emag && <span style={{ color: '#eab308' }}>{c.emag} eMAG</span>}
+            {!!c.shop && <span>{c.shop} fără comandă</span>}
+            {!!c.client_return && <span style={{ color: '#38bdf8' }}>{c.client_return} retur client</span>}
+          </div>
+        );
+      })()}
       {open && (
         <div style={{ marginTop: 4, padding: '6px 8px', background: '#0b0f14', border: `1px solid ${color}22`, borderRadius: 8 }}>
           {pending ? (
@@ -1338,11 +1386,19 @@ function CourierTotalTile({ label, icon, color, rows, pending }) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto' }}>
               {rows.map((o, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
-                  <span style={{ color: SHOP_META[o._shopKey]?.color || '#94a3b8', fontWeight: 700, width: 72, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div key={i} onClick={() => onOpen(o._kind === 'order' ? { kind: 'order', id: o.id }
+                  : o._kind === 'sd_parcel' ? { kind: 'parcel', awb: o.parcelNumber, courier: 'sameday', sdKind: o.sdKind }
+                  : { kind: 'parcel', awb: o.parcelNumber, courier: 'gls', name: o.name, city: o.city, cod: o.cod, codCurrency: o.codCurrency, ref: o.ref })}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', cursor: 'pointer', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+                  {o._kind !== 'sd_parcel' && <span style={{ color: SHOP_META[o._shopKey]?.color || '#94a3b8', fontWeight: 700, width: 72, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {SHOP_META[o._shopKey]?.flag} {SHOP_META[o._shopKey]?.label}
-                  </span>
-                  {o._kind === 'order' ? (
+                  </span>}
+                  {o._kind === 'sd_parcel' ? (
+                    <>
+                      <span style={{ color: o.sdKind === 'client_return' ? '#38bdf8' : o.sdKind === 'emag' ? '#eab308' : '#94a3b8', fontWeight: 700, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{SD_KIND_LABEL[o.sdKind]}</span>
+                      <span style={{ color: '#a855f7', fontFamily: 'monospace', flexShrink: 0 }}>{o.parcelNumber}</span>
+                    </>
+                  ) : o._kind === 'order' ? (
                     <>
                       <span style={{ color: '#cbd5e1', fontWeight: 700, width: 60, flexShrink: 0 }}>{o.name}</span>
                       <span style={{ color: '#64748b', width: 78, flexShrink: 0 }}>{new Date(o.date).toLocaleDateString('ro-RO')}</span>
@@ -1379,7 +1435,7 @@ function CourierBreakdown({ counts }) {
   );
 }
 
-function OrderRows({ rows, statusFilter, courierFilter }) {
+function OrderRows({ rows, statusFilter, courierFilter, onOpen }) {
   const statusFiltered = rows.filter(o => statusFilter.has(orderStatusKey(o)));
   const filtered = statusFiltered.filter(o => courierFilter.has(courierKey(o)));
   const courierCounts = statusFiltered.reduce((acc, o) => { const k = courierKey(o); acc[k] = (acc[k] || 0) + 1; return acc; }, {});
@@ -1396,7 +1452,8 @@ function OrderRows({ rows, statusFilter, courierFilter }) {
       <CourierBreakdown counts={courierCounts} />
       {filtered.length < rows.length && <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>{filtered.length} din {rows.length} afișate (filtru status/curier)</div>}
       {filtered.map((o, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < filtered.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+        <div key={i} onClick={() => o.id && onOpen({ kind: 'order', id: o.id })} title="Detalii comandă"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', cursor: o.id ? 'pointer' : 'default', borderBottom: i < filtered.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
           <span style={{ color: '#cbd5e1', fontWeight: 700, width: 70, flexShrink: 0 }}>{o.name}</span>
           <span style={{ color: '#64748b', width: 80, flexShrink: 0 }}>{new Date(o.date).toLocaleDateString('ro-RO')}</span>
           <span style={{ color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{o.customer}</span>
@@ -1413,7 +1470,7 @@ function OrderRows({ rows, statusFilter, courierFilter }) {
  * (ref/nume/oraș), fiindcă nu există un Order la noi pentru ele. Nu au
  * statusurile "Anulată"/"Fără AWB" (orice colet din MyGLS are, prin
  * definiție, un AWB) — filtrul se aplică doar pe livrat/refuzat/tranzit. */
-function GlsDetailRows({ rows, statusFilter, courierFilter }) {
+function GlsDetailRows({ rows, statusFilter, courierFilter, onOpen }) {
   if (!courierFilter.has('gls')) return <div style={{ fontSize: 11, color: '#475569' }}>Filtrul de curier exclude GLS — toate coletele neatribuite sunt GLS.</div>;
   const filtered = rows.filter(p => statusFilter.has(glsDetailStatusKey(p)));
   if (!filtered.length) return <div style={{ fontSize: 11, color: '#475569' }}>Niciun colet cu statusul selectat ({rows.length} ascunse de filtru).</div>;
@@ -1421,7 +1478,8 @@ function GlsDetailRows({ rows, statusFilter, courierFilter }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto', fontFamily: 'monospace' }}>
       {filtered.length < rows.length && <div style={{ fontSize: 10, color: '#475569', marginBottom: 2, fontFamily: 'system-ui, sans-serif' }}>{filtered.length} din {rows.length} afișate (filtru status)</div>}
       {filtered.map((p, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, padding: '3px 0', borderBottom: i < filtered.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+        <div key={i} onClick={() => onOpen({ kind: 'parcel', awb: p.parcelNumber, courier: 'gls', name: p.name, city: p.city, cod: p.cod, codCurrency: p.codCurrency, ref: p.ref })}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, padding: '3px 0', cursor: 'pointer', borderBottom: i < filtered.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
           <span style={{ color: '#f97316', width: 95, flexShrink: 0 }}>{p.parcelNumber}</span>
           <span style={{ color: '#64748b', width: 70, flexShrink: 0 }} title="ClientReference de pe AWB">ref: {p.ref || '—'}</span>
           <span style={{ color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{p.name || '(fără nume)'}, {p.city || '—'}</span>
@@ -1437,11 +1495,21 @@ function GlsDetailRows({ rows, statusFilter, courierFilter }) {
 /** Comenzi eMAG din importul local (localStorage) — disponibile doar dacă
  * au fost importate pe pagina /emag; numărul exact pe lună e cel de pe rândul
  * eMAG (din Sameday), nu neapărat egal cu nr. de rânduri de aici. */
-function EmagRows({ rows }) {
+function EmagRows({ rows, onOpen, liveAwbs = [] }) {
+  const localAwbs = new Set(rows.map(o => (o.awb || '').trim()).filter(Boolean));
+  const onlyLive = liveAwbs.filter(a => !localAwbs.has(a));
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto' }}>
+      {onlyLive.map(awb => (
+        <div key={awb} onClick={() => onOpen({ kind: 'parcel', awb, courier: 'sameday', sdKind: 'emag' })}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.03)' }}>
+          <span style={{ color: '#eab308', fontFamily: 'monospace', flex: 1 }}>AWB {awb}</span>
+          <span style={{ color: '#64748b', fontSize: 10 }}>📡 din Sameday, neimportat local</span>
+        </div>
+      ))}
       {rows.map((o, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+        <div key={i} onClick={() => onOpen({ kind: 'emag', order: o })}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', cursor: 'pointer', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
           <span style={{ color: '#cbd5e1', width: 90, flexShrink: 0 }}>{o.orderId || o.id}</span>
           <span style={{ color: '#94a3b8', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
           <span style={{ color: '#64748b', flexShrink: 0 }}>{o.date}</span>
@@ -1459,3 +1527,297 @@ const btnGhost = { background: 'transparent', border: '1px solid rgba(255,255,25
 const btnTab = { background: 'transparent', border: '1px solid rgba(255,255,255,.1)', color: '#64748b', borderRadius: 7, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer' };
 const btnTabActive = { background: 'rgba(249,115,22,.15)', borderColor: '#f97316', color: '#f97316' };
 const errBox = { background: 'rgba(244,63,94,.08)', border: '1px solid rgba(244,63,94,.25)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#f43f5e', marginBottom: 14 };
+
+// ─── Fereastra de detaliu comandă ─────────────────────────────────────────────
+// Se deschide la click pe orice rând din drill-down. `target` e unul din:
+//   { kind: 'order', id }            — comandă Shopify din baza noastră
+//   { kind: 'emag', order }          — comandă eMAG din importul local
+//   { kind: 'parcel', awb, courier, name, city, cod, codCurrency, ref } — colet GLS fără comandă la noi
+// Istoricul AWB vine live din /api/tracking (GET, cache 30 min per AWB).
+
+const SHIPMENT_STATUS_RO = {
+  PENDING: 'În așteptare', CREATED: 'AWB creat', IN_TRANSIT: 'În tranzit', OUT_FOR_DELIVERY: 'În livrare',
+  DELIVERED: 'Livrat', FAILED_ATTEMPT: 'Livrare eșuată', RETURNED: 'Retur', FAILED: 'Eroare', CANCELLED: 'Anulat',
+};
+const LIVE_STATUS_RO = {
+  delivered: 'Livrat', out_for_delivery: 'În livrare azi', returned: 'Retur', failed_attempt: 'Tentativă eșuată',
+  in_transit: 'În tranzit', easybox: 'În easybox',
+};
+
+function fmtDateTime(d) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  return isNaN(dt) ? String(d) : dt.toLocaleString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function waNumber(phone) {
+  const d = String(phone || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('0') && d.length === 10) return '40' + d.slice(1);
+  if (d.startsWith('06') && d.length === 11) return '36' + d.slice(2);
+  return d;
+}
+
+function copyText(t) { try { navigator.clipboard.writeText(t); } catch {} }
+
+function DetailSection({ title, children, right }) {
+  return (
+    <div style={{ background: '#0b0f14', border: '1px solid rgba(255,255,255,.06)', borderRadius: 10, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+        <div style={{ fontSize: 10, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: .5 }}>{title}</div>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function DetailLine({ label, value, mono, copy, href }) {
+  if (!value) return null;
+  return (
+    <div style={{ display: 'flex', gap: 8, fontSize: 13, padding: '3px 0', alignItems: 'baseline' }}>
+      <span style={{ color: '#64748b', width: 72, flexShrink: 0, fontSize: 11 }}>{label}</span>
+      {href
+        ? <a href={href} target="_blank" rel="noreferrer" style={{ color: '#93c5fd', flex: 1, minWidth: 0, wordBreak: 'break-word', fontFamily: mono ? 'monospace' : undefined, textDecoration: 'none' }}>{value}</a>
+        : <span style={{ color: '#e2e8f0', flex: 1, minWidth: 0, wordBreak: 'break-word', fontFamily: mono ? 'monospace' : undefined }}>{value}</span>}
+      {copy && <button onClick={() => copyText(String(value))} title="Copiază" style={{ ...btnGhost, padding: '2px 7px', fontSize: 10 }}>📋</button>}
+    </div>
+  );
+}
+
+function AwbHistory({ awb, courier }) {
+  const [state, setState] = useState({ loading: true });
+  useEffect(() => {
+    let alive = true;
+    setState({ loading: true });
+    fetch(`/api/tracking?awb=${encodeURIComponent(awb)}&courier=${encodeURIComponent(courier || 'gls')}`)
+      .then(r => r.json())
+      .then(d => { if (alive) setState({ loading: false, data: d }); })
+      .catch(e => { if (alive) setState({ loading: false, error: e.message }); });
+    return () => { alive = false; };
+  }, [awb, courier]);
+
+  if (state.loading) return <div style={{ fontSize: 11, color: '#64748b' }}>Se încarcă istoricul AWB...</div>;
+  if (state.error || state.data?.error) return <div style={{ fontSize: 11, color: '#f43f5e' }}>⚠️ {state.error || state.data.error}</div>;
+  const d = state.data || {};
+  const history = d.history || [];
+  if (!d.status && !history.length) return <div style={{ fontSize: 11, color: '#475569' }}>Curierul nu a returnat încă niciun status pentru acest AWB.</div>;
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: '#e2e8f0', marginBottom: 8 }}>
+        Acum: <b style={{ color: d.status === 'delivered' ? '#10b981' : d.status === 'returned' ? '#f43f5e' : '#f59e0b' }}>{LIVE_STATUS_RO[d.status] || d.status || '—'}</b>
+        {d.statusDescription && <span style={{ color: '#94a3b8' }}> · {d.statusDescription}</span>}
+        {d.hasReturnCode && d.status !== 'returned' && <span style={{ color: '#f43f5e' }}> · are cod de refuz/retur în istoric</span>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {history.map((h, i) => (
+          <div key={i} style={{ display: 'flex', gap: 10, position: 'relative', paddingBottom: i < history.length - 1 ? 10 : 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 10, flexShrink: 0 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 9, background: i === 0 ? '#f97316' : '#334155', marginTop: 4 }} />
+              {i < history.length - 1 && <span style={{ flex: 1, width: 1, background: '#1e293b', marginTop: 2 }} />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: i === 0 ? '#e2e8f0' : '#cbd5e1' }}>{h.description || `Cod ${h.code}`}</div>
+              <div style={{ fontSize: 10, color: '#64748b' }}>{fmtDateTime(h.date)}{h.location ? ` · ${h.location}` : ''}{h.code != null ? ` · cod ${h.code}` : ''}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ContactButtons({ phone, email, name }) {
+  const wa = waNumber(phone);
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+      {phone && <a href={`tel:${String(phone).replace(/\s/g, '')}`} style={{ ...btnGhost, textDecoration: 'none', color: '#e2e8f0' }}>📞 Sună</a>}
+      {wa && <a href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" style={{ ...btnGhost, textDecoration: 'none', color: '#25D366' }}>💬 WhatsApp</a>}
+      {email && <a href={`mailto:${email}`} style={{ ...btnGhost, textDecoration: 'none', color: '#93c5fd' }}>✉️ Email</a>}
+      {name && <button onClick={() => copyText([name, phone, email].filter(Boolean).join('\n'))} style={btnGhost}>📋 Copiază contact</button>}
+    </div>
+  );
+}
+
+function OrderDetailModal({ target, onClose }) {
+  const [state, setState] = useState({ loading: target.kind === 'order' });
+
+  useEffect(() => {
+    if (target.kind !== 'order') return;
+    let alive = true;
+    fetch(`/api/stats-totale/order-detail?id=${encodeURIComponent(target.id)}`)
+      .then(r => r.json())
+      .then(d => { if (alive) setState(d.ok ? { loading: false, order: d.order } : { loading: false, error: d.error || 'Eroare' }); })
+      .catch(e => { if (alive) setState({ loading: false, error: e.message }); });
+    return () => { alive = false; };
+  }, [target]);
+
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const o = state.order;
+  let body = null;
+
+  if (target.kind === 'order') {
+    if (state.loading) body = <div style={{ color: '#64748b', fontSize: 13, padding: 20, textAlign: 'center' }}>Se încarcă comanda...</div>;
+    else if (state.error) body = <div style={errBox}>⚠️ {state.error}</div>;
+    else if (o) {
+      const items = Array.isArray(o.lineItems) ? o.lineItems : [];
+      const products = items.filter(i => !i.isShipping && !i.isDiscount);
+      const shippingItems = items.filter(i => i.isShipping);
+      const discountItems = items.filter(i => i.isDiscount);
+      const addr = [o.shipping.address1, o.shipping.address2].filter(Boolean).join(', ');
+      const cityLine = [o.shipping.zip, o.shipping.city, o.shipping.province, o.shipping.country].filter(Boolean).join(', ');
+      const fullAddr = [addr, cityLine].filter(Boolean).join(', ');
+      const cod = !o.payment.online;
+      body = (
+        <>
+          <DetailSection title="Comandă">
+            <DetailLine label="Nr." value={o.name} copy />
+            <DetailLine label="Data" value={fmtDateTime(o.date)} />
+            <DetailLine label="Total" value={`${fmt(o.total)} ${o.currency}`} />
+            <DetailLine label="Status" value={[o.status === 'CANCELLED' ? 'Anulată' : null, o.cancelReason, o.financialStatus && `plată: ${o.financialStatus}`, o.fulfillmentStatus && `expediere: ${o.fulfillmentStatus}`].filter(Boolean).join(' · ')} />
+            {o.invoices.map(inv => <DetailLine key={inv.number} label="Factură" value={`${inv.number}${inv.collected ? ' · încasată' : ''}`} href={inv.url || undefined} />)}
+            <DetailLine label="Shopify" value={o.shopifyAdminUrl ? 'Deschide în Shopify Admin' : ''} href={o.shopifyAdminUrl || undefined} />
+          </DetailSection>
+
+          <DetailSection title="Plată">
+            <div style={{ fontSize: 15, fontWeight: 800, color: cod ? '#f59e0b' : '#10b981' }}>
+              {cod ? '💵 Ramburs (cash la livrare)' : '💳 Card online'}
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+              {o.payment.gateway || 'fără gateway'} · {o.payment.isPaid ? 'plătită' : 'neplătită încă'}
+              {o.shipments.some(s => s.cod) && ` · ramburs pe AWB: ${o.shipments.filter(s => s.cod).map(s => `${fmt(s.cod)} ${o.currency}`).join(', ')}`}
+            </div>
+          </DetailSection>
+
+          <DetailSection title="Client">
+            <DetailLine label="Nume" value={o.customer.name} copy />
+            <DetailLine label="Telefon" value={o.customer.phone} mono copy />
+            <DetailLine label="Email" value={o.customer.email} copy />
+            <DetailLine label="Comenzi" value={o.customer.ordersCount != null ? `${o.customer.ordersCount} în total la acest client` : ''} />
+            <ContactButtons phone={o.customer.phone} email={o.customer.email} name={o.customer.name} />
+          </DetailSection>
+
+          <DetailSection title="Adresă de livrare">
+            <DetailLine label="Adresă" value={addr} copy />
+            <DetailLine label="Localitate" value={cityLine} />
+            <DetailLine label="Metodă" value={o.shipping.method} />
+            {fullAddr && (
+              <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddr)}`} target="_blank" rel="noreferrer" style={{ ...btnGhost, textDecoration: 'none', color: '#e2e8f0' }}>🗺️ Hartă</a>
+                <button onClick={() => copyText(`${o.customer.name}\n${fullAddr}\n${o.customer.phone}`)} style={btnGhost}>📋 Copiază adresa</button>
+              </div>
+            )}
+            {o.billing && (o.billing.company || o.billing.address1 !== o.shipping.address1) && (
+              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 8 }}>
+                Facturare: {[o.billing.company, o.billing.name, o.billing.address1, o.billing.address2, o.billing.zip, o.billing.city, o.billing.province].filter(Boolean).join(', ')}
+              </div>
+            )}
+          </DetailSection>
+
+          <DetailSection title={`Produse (${products.reduce((s, i) => s + (Number(i.qty) || 1), 0)})`}>
+            {products.map((i, k) => (
+              <div key={k} style={{ display: 'flex', gap: 8, fontSize: 13, padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,.03)' }}>
+                <span style={{ color: '#f97316', fontWeight: 800, width: 28, flexShrink: 0 }}>{i.qty}×</span>
+                <span style={{ color: '#e2e8f0', flex: 1, minWidth: 0 }}>{i.name}{i.sku && <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}> · {i.sku}</span>}</span>
+                <span style={{ color: '#cbd5e1', fontFamily: 'monospace', flexShrink: 0 }}>{fmt(i.price * (Number(i.qty) || 1))}</span>
+              </div>
+            ))}
+            {shippingItems.map((i, k) => <div key={`s${k}`} style={{ display: 'flex', fontSize: 12, padding: '3px 0', color: '#94a3b8' }}><span style={{ flex: 1 }}>🚚 {i.name}</span><span style={{ fontFamily: 'monospace' }}>{fmt(i.price)}</span></div>)}
+            {discountItems.map((i, k) => <div key={`d${k}`} style={{ display: 'flex', fontSize: 12, padding: '3px 0', color: '#10b981' }}><span style={{ flex: 1 }}>🏷️ {i.name}</span><span style={{ fontFamily: 'monospace' }}>−{fmt(i.price)}</span></div>)}
+            <div style={{ display: 'flex', fontSize: 14, fontWeight: 800, paddingTop: 6, color: '#e2e8f0' }}><span style={{ flex: 1 }}>Total</span><span style={{ fontFamily: 'monospace' }}>{fmt(o.total)} {o.currency}</span></div>
+            {o.note && <div style={{ fontSize: 12, color: '#fbbf24', marginTop: 8 }}>📝 Notă client: {o.note}</div>}
+            {o.tags && <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>Tag-uri: {o.tags}</div>}
+          </DetailSection>
+
+          {o.shipments.length === 0 && <DetailSection title="AWB"><div style={{ fontSize: 12, color: '#475569' }}>Nu există AWB pentru această comandă.</div></DetailSection>}
+          {o.shipments.map(s => (
+            <DetailSection key={s.awb} title={`AWB ${s.courier === 'sameday' ? 'Sameday' : s.courier === 'gls' ? 'GLS' : s.courier}`}
+              right={<CourierBadge courier={s.courier} />}>
+              <DetailLine label="AWB" value={s.awb} mono copy href={s.trackingUrl || undefined} />
+              <DetailLine label="Status" value={`${SHIPMENT_STATUS_RO[s.status] || s.status}${s.deliveredAt ? ` · ${fmtDateTime(s.deliveredAt)}` : ''}`} />
+              <DetailLine label="Creat" value={fmtDateTime(s.createdAt)} />
+              <DetailLine label="Colet" value={[s.parcels ? `${s.parcels} colet(e)` : '', s.weight ? `${s.weight} kg` : '', s.cod ? `ramburs ${fmt(s.cod)} ${o.currency}` : ''].filter(Boolean).join(' · ')} />
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.05)', marginTop: 8, paddingTop: 8 }}>
+                <AwbHistory awb={s.awb} courier={s.courier} />
+              </div>
+            </DetailSection>
+          ))}
+        </>
+      );
+    }
+  } else if (target.kind === 'emag') {
+    const e = target.order;
+    const online = emagIsOnline(e.payMode);
+    const total = (e.products || []).reduce((s, p) => s + (p.price || 0) * (p.qty || 1), 0);
+    body = (
+      <>
+        <DetailSection title="Comandă eMAG">
+          <DetailLine label="Nr." value={e.orderId || e.id} copy />
+          <DetailLine label="Data" value={e.date} />
+          <DetailLine label="Status" value={e.status} />
+          <DetailLine label="Livrare" value={[e.delivMode, e.delivPoint].filter(Boolean).join(' · ')} />
+        </DetailSection>
+        <DetailSection title="Plată">
+          <div style={{ fontSize: 15, fontWeight: 800, color: online ? '#10b981' : '#f59e0b' }}>{online ? '💳 Card online' : '💵 Ramburs (cash la livrare)'}</div>
+          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{e.payMode || '—'}</div>
+        </DetailSection>
+        <DetailSection title="Client">
+          <DetailLine label="Nume" value={e.name} copy />
+          <DetailLine label="Telefon" value={e.phone} mono copy />
+          <DetailLine label="Adresă" value={[e.address, e.zip].filter(Boolean).join(', ')} copy />
+          <ContactButtons phone={e.phone} name={e.name} />
+        </DetailSection>
+        <DetailSection title={`Produse (${(e.products || []).length})`}>
+          {(e.products || []).map((p, k) => (
+            <div key={k} style={{ display: 'flex', gap: 8, fontSize: 13, padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,.03)' }}>
+              <span style={{ color: '#f97316', fontWeight: 800, width: 28, flexShrink: 0 }}>{p.qty}×</span>
+              <span style={{ color: '#e2e8f0', flex: 1, minWidth: 0 }} title={p.fullName}>{p.name || p.fullName}</span>
+              <span style={{ color: '#cbd5e1', fontFamily: 'monospace', flexShrink: 0 }}>{fmt((p.price || 0) * (p.qty || 1))}</span>
+            </div>
+          ))}
+          {total > 0 && <div style={{ display: 'flex', fontSize: 14, fontWeight: 800, paddingTop: 6, color: '#e2e8f0' }}><span style={{ flex: 1 }}>Total</span><span style={{ fontFamily: 'monospace' }}>{fmt(total)} RON</span></div>}
+        </DetailSection>
+        <DetailSection title="AWB">
+          {e.awb ? <><DetailLine label="AWB" value={e.awb} mono copy /><div style={{ borderTop: '1px solid rgba(255,255,255,.05)', marginTop: 8, paddingTop: 8 }}><AwbHistory awb={e.awb} courier="sameday" /></div></>
+            : <div style={{ fontSize: 12, color: '#475569' }}>Fără AWB în import.</div>}
+        </DetailSection>
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <DetailSection title={target.courier === 'sameday'
+          ? (target.sdKind === 'client_return' ? 'Retur de la client (Sameday)' : target.sdKind === 'emag' ? 'Colet eMAG (Sameday)' : 'Colet Sameday fără comandă în baza noastră')
+          : 'Colet GLS (fără comandă în baza noastră)'}>
+          <DetailLine label="AWB" value={target.awb} mono copy />
+          <DetailLine label="Ref." value={target.ref} copy />
+          <DetailLine label="Destinatar" value={target.name} copy />
+          <DetailLine label="Oraș" value={target.city} />
+          <DetailLine label="Ramburs" value={target.cod ? `${fmt(target.cod)} ${target.codCurrency || ''}` : ''} />
+          {target.sdKind === 'client_return' && <div style={{ fontSize: 12, color: '#38bdf8', marginTop: 4 }}>↩ Clientul trimite produsul înapoi către noi. Nu e un refuz și nu e o comandă nouă: „Livrat” înseamnă că a ajuns la noi.</div>}
+          <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>{target.sdKind === 'emag' ? 'Detaliile complete (client, produse) apar dacă imporți comenzile eMAG pe pagina /emag.' : 'Telefonul, emailul și produsele nu sunt disponibile: coletul nu e legat de nicio comandă Shopify sincronizată.'}</div>
+        </DetailSection>
+        <DetailSection title="Istoric AWB"><AwbHistory awb={target.awb} courier={target.courier || 'gls'} /></DetailSection>
+      </>
+    );
+  }
+
+  const title = target.kind === 'order' ? (o?.name || 'Comandă') : target.kind === 'emag' ? `eMAG ${target.order.orderId || ''}` : `AWB ${target.awb}`;
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.75)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '16px 10px', overflowY: 'auto' }}>
+      <div style={{ width: '100%', maxWidth: 620, background: '#0f1419', border: '1px solid rgba(255,255,255,.1)', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'sticky', top: 0, background: '#0f1419', paddingBottom: 4, zIndex: 1 }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#e2e8f0', flex: 1 }}>{title}</div>
+          <button onClick={onClose} style={{ ...btnGhost, fontSize: 14, padding: '4px 10px' }}>✕</button>
+        </div>
+        {body}
+      </div>
+    </div>
+  );
+}
