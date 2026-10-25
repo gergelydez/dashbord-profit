@@ -47,6 +47,14 @@ const STATUS_META = {
   no_awb:    { label: 'Fără AWB',         color: '#475569' },
 };
 const STATUS_ORDER = ['delivered', 'returned', 'transit', 'cancelled', 'no_awb'];
+
+const COURIER_META = {
+  gls:     { label: 'GLS',      color: '#3b82f6' },
+  sameday: { label: 'Sameday',  color: '#a855f7' },
+  none:    { label: 'Fără AWB', color: '#475569' },
+};
+const COURIER_ORDER = ['gls', 'sameday', 'none'];
+function courierKey(o) { return o.courier || 'none'; }
 /** Aceeași regulă deja folosită de <StatusBadge> — ținută separat ca să poată
  * fi filtrată, nu doar afișată. */
 function orderStatusKey(o) {
@@ -219,6 +227,8 @@ export default function StatisticiTotalePage() {
   const [shopDropdownOpen, setShopDropdownOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState(() => new Set(['delivered', 'returned', 'transit']));
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const [courierFilter, setCourierFilter] = useState(() => new Set(COURIER_ORDER));
+  const [courierDropdownOpen, setCourierDropdownOpen] = useState(false);
   const [expanded, setExpanded] = useState({}); // `${period}|${shopKey}` -> { loading, kind, rows, error }
 
   const [emagOrders, setEmagOrders] = useState([]);
@@ -795,7 +805,7 @@ export default function StatisticiTotalePage() {
               </button>
               {shopDropdownOpen && <div onClick={() => setShopDropdownOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />}
               {shopDropdownOpen && (
-                <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', background: '#161d24', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: 10, zIndex: 20, minWidth: 210, boxShadow: '0 8px 24px rgba(0,0,0,.4)' }}>
+                <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', background: '#161d24', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: 10, zIndex: 20, minWidth: 210, maxWidth: '80vw', boxShadow: '0 8px 24px rgba(0,0,0,.4)' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#e2e8f0', padding: '4px 2px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,.08)', marginBottom: 4 }}>
                     <input type="checkbox" checked={activeShops.size === SHOP_ORDER.length} onChange={() => setActiveShops(activeShops.size === SHOP_ORDER.length ? new Set() : new Set(SHOP_ORDER))} />
                     Toate
@@ -1004,14 +1014,14 @@ export default function StatisticiTotalePage() {
         <div style={{ background: '#0f1419', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{granularity === 'month' ? 'Comenzi pe lună și magazin' : 'Comenzi pe an și magazin'}</div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ position: 'relative' }}>
-                <button onClick={() => setStatusDropdownOpen(v => !v)} style={btnGhost}>
+                <button onClick={() => { setStatusDropdownOpen(v => !v); setCourierDropdownOpen(false); }} style={btnGhost}>
                   📦 Status ({statusFilter.size === STATUS_ORDER.length ? 'toate' : statusFilter.size})
                 </button>
                 {statusDropdownOpen && <div onClick={() => setStatusDropdownOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />}
                 {statusDropdownOpen && (
-                  <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', background: '#161d24', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: 10, zIndex: 20, minWidth: 190, boxShadow: '0 8px 24px rgba(0,0,0,.4)' }}>
+                  <div style={{ position: 'absolute', left: 0, top: 'calc(100% + 4px)', background: '#161d24', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: 10, zIndex: 20, minWidth: 180, maxWidth: '75vw', boxShadow: '0 8px 24px rgba(0,0,0,.4)' }}>
                     {STATUS_ORDER.map(k => (
                       <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: STATUS_META[k].color, padding: '4px 2px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                         <input type="checkbox" checked={statusFilter.has(k)} onChange={() => setStatusFilter(prev => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; })} />
@@ -1021,11 +1031,27 @@ export default function StatisticiTotalePage() {
                   </div>
                 )}
               </div>
+              <div style={{ position: 'relative' }}>
+                <button onClick={() => { setCourierDropdownOpen(v => !v); setStatusDropdownOpen(false); }} style={btnGhost}>
+                  🚚 Curier ({courierFilter.size === COURIER_ORDER.length ? 'toate' : courierFilter.size})
+                </button>
+                {courierDropdownOpen && <div onClick={() => setCourierDropdownOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />}
+                {courierDropdownOpen && (
+                  <div style={{ position: 'absolute', left: 0, top: 'calc(100% + 4px)', background: '#161d24', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: 10, zIndex: 20, minWidth: 150, maxWidth: '75vw', boxShadow: '0 8px 24px rgba(0,0,0,.4)' }}>
+                    {COURIER_ORDER.map(k => (
+                      <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: COURIER_META[k].color, padding: '4px 2px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={courierFilter.has(k)} onChange={() => setCourierFilter(prev => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; })} />
+                        {COURIER_META[k].label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button onClick={exportCsv} style={btnGhost}>⬇ Export CSV</button>
             </div>
           </div>
           <div style={{ fontSize: 10, color: '#64748b', marginBottom: 10, marginTop: -4 }}>
-            Lista de comenzi (după click pe un magazin) arată implicit doar <b style={{ color: '#e2e8f0' }}>livrate / refuzate / în tranzit</b> — schimbă din „📦 Status" dacă vrei să vezi și comenzile anulate sau fără AWB.
+            Lista de comenzi (după click pe un magazin) arată implicit doar <b style={{ color: '#e2e8f0' }}>livrate / refuzate / în tranzit</b>, toți curierii — schimbă din „📦 Status" / „🚚 Curier" după nevoie. Fiecare magazin expandat arată și câte comenzi au fost GLS vs Sameday.
           </div>
           {loading ? (
             <div style={{ textAlign: 'center', color: '#475569', padding: 24 }}>Se încarcă...</div>
@@ -1067,9 +1093,9 @@ export default function StatisticiTotalePage() {
                             ) : !exp.rows?.length ? (
                               <div style={{ fontSize: 11, color: '#475569' }}>Nicio comandă găsită aici — pentru magazinele Shopify, dacă nu ai sincronizat încă intervalul, apasă „💾 Sincronizează tot în bază" mai sus.</div>
                             ) : exp.kind === 'order' ? (
-                              <OrderRows rows={exp.rows} statusFilter={statusFilter} />
+                              <OrderRows rows={exp.rows} statusFilter={statusFilter} courierFilter={courierFilter} />
                             ) : exp.kind === 'gls_detail' ? (
-                              <GlsDetailRows rows={exp.rows} statusFilter={statusFilter} />
+                              <GlsDetailRows rows={exp.rows} statusFilter={statusFilter} courierFilter={courierFilter} />
                             ) : exp.kind === 'emag' ? (
                               <EmagRows rows={exp.rows} />
                             ) : null}
@@ -1171,12 +1197,34 @@ function StatusBadge({ o }) {
  * și statusul de livrare per comandă — rezultatul /api/stats-totale/order-list.
  * Filtrată după statusFilter (implicit: doar livrate/refuzate/tranzit — vezi
  * STATUS_META mai sus). */
-function OrderRows({ rows, statusFilter }) {
-  const filtered = rows.filter(o => statusFilter.has(orderStatusKey(o)));
-  if (!filtered.length) return <div style={{ fontSize: 11, color: '#475569' }}>Nicio comandă cu statusul selectat ({rows.length} ascunse de filtru).</div>;
+function CourierBreakdown({ counts }) {
+  const present = COURIER_ORDER.filter(k => counts[k]);
+  if (!present.length) return null;
+  return (
+    <div style={{ fontSize: 10, color: '#64748b', marginBottom: 6, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      {present.map(k => (
+        <span key={k}><span style={{ color: COURIER_META[k].color, fontWeight: 700 }}>{COURIER_META[k].label}</span>: {counts[k]}</span>
+      ))}
+    </div>
+  );
+}
+
+function OrderRows({ rows, statusFilter, courierFilter }) {
+  const statusFiltered = rows.filter(o => statusFilter.has(orderStatusKey(o)));
+  const filtered = statusFiltered.filter(o => courierFilter.has(courierKey(o)));
+  const courierCounts = statusFiltered.reduce((acc, o) => { const k = courierKey(o); acc[k] = (acc[k] || 0) + 1; return acc; }, {});
+  if (!filtered.length) {
+    return (
+      <>
+        <CourierBreakdown counts={courierCounts} />
+        <div style={{ fontSize: 11, color: '#475569' }}>Nicio comandă cu filtrele selectate ({rows.length - filtered.length} ascunse de filtru).</div>
+      </>
+    );
+  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto' }}>
-      {filtered.length < rows.length && <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>{filtered.length} din {rows.length} afișate (filtru status)</div>}
+      <CourierBreakdown counts={courierCounts} />
+      {filtered.length < rows.length && <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>{filtered.length} din {rows.length} afișate (filtru status/curier)</div>}
       {filtered.map((o, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < filtered.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
           <span style={{ color: '#cbd5e1', fontWeight: 700, width: 70, flexShrink: 0 }}>{o.name}</span>
@@ -1195,7 +1243,8 @@ function OrderRows({ rows, statusFilter }) {
  * (ref/nume/oraș), fiindcă nu există un Order la noi pentru ele. Nu au
  * statusurile "Anulată"/"Fără AWB" (orice colet din MyGLS are, prin
  * definiție, un AWB) — filtrul se aplică doar pe livrat/refuzat/tranzit. */
-function GlsDetailRows({ rows, statusFilter }) {
+function GlsDetailRows({ rows, statusFilter, courierFilter }) {
+  if (!courierFilter.has('gls')) return <div style={{ fontSize: 11, color: '#475569' }}>Filtrul de curier exclude GLS — toate coletele neatribuite sunt GLS.</div>;
   const filtered = rows.filter(p => statusFilter.has(glsDetailStatusKey(p)));
   if (!filtered.length) return <div style={{ fontSize: 11, color: '#475569' }}>Niciun colet cu statusul selectat ({rows.length} ascunse de filtru).</div>;
   return (
