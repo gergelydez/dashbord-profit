@@ -96,7 +96,7 @@ function filteredCountFor(exp, statusFilter, courierFilter) {
  * TOTAL" (vizibile înainte să desfaci vreun magazin, din cache-ul deja
  * pre-încărcat — vezi efectul de prefetch mai sus). Colete GLS neatribuite
  * (posibil/manual) intră și ele la GLS, fiindcă chiar sunt colete GLS. */
-function rowsForCourier(period, shopsInPeriod, courier, orderCache, liveGlsDetails, statusFilter, samedayLive) {
+function rowsForCourier(period, shopsInPeriod, courier, orderCache, liveGlsDetails, statusFilter, samedayLive, knownSamedayAwbs) {
   const out = [];
   for (const shopKey of shopsInPeriod) {
     if (shopKey === 'neatribuit_posibil' || shopKey === 'neatribuit_manual') {
@@ -127,7 +127,7 @@ function rowsForCourier(period, shopsInPeriod, courier, orderCache, liveGlsDetai
     const known = new Set();
     for (const exp of Object.values(orderCache)) for (const o of exp?.rows || []) if (o.trackingNumber) known.add(o.trackingNumber);
     for (const awb of live.emag) out.push({ _kind: 'sd_parcel', _shopKey: 'emag', parcelNumber: awb, sdKind: 'emag' });
-    for (const awb of live.shop) if (!known.has(awb)) out.push({ _kind: 'sd_parcel', _shopKey: 'necunoscut', parcelNumber: awb, sdKind: 'shop' });
+    for (const awb of live.shop) if (!known.has(awb) && !knownSamedayAwbs?.has(awb)) out.push({ _kind: 'sd_parcel', _shopKey: 'necunoscut', parcelNumber: awb, sdKind: 'shop' });
     for (const awb of live.client_return) out.push({ _kind: 'sd_parcel', _shopKey: 'retur', parcelNumber: awb, sdKind: 'client_return' });
   }
   return out;
@@ -306,6 +306,7 @@ export default function StatisticiTotalePage() {
   // importul local) — vezi fetchEmagSameday mai jos ──
   const [emagSameday, setEmagSameday] = useState(null); // { [periodKey]: count }
   const [samedayLive, setSamedayLive] = useState(null); // { [periodKey]: { emag: [], client_return: [], shop: [] } } — AWB-uri din contul Sameday
+  const [knownSamedayAwbs, setKnownSamedayAwbs] = useState(() => new Set()); // AWB-uri "shop" care EXISTĂ deja ca Shipment în bază, oriunde (nu doar în lunile vizibile) — vezi /api/stats-totale/known-awbs
   const [emagSamedayLoading, setEmagSamedayLoading] = useState(false);
   const [emagSamedayProgress, setEmagSamedayProgress] = useState(null);
   const [emagSamedayError, setEmagSamedayError] = useState('');
@@ -867,6 +868,19 @@ export default function StatisticiTotalePage() {
       }
       setEmagSameday(counts);
       setSamedayLive(live);
+
+      // Verificare DB-WIDE (nu doar lunile vizibile acum) pentru AWB-urile
+      // "shop" — status-sync raportează orice AWB cu mișcare în fereastră,
+      // inclusiv o comandă mai veche (ex. septembrie) abia livrată acum, deci
+      // fără verificarea asta ieșea greșit numărată ca "fără comandă" aici.
+      const allShopAwbs = Array.from(new Set(Object.values(live).flatMap(b => b.shop)));
+      if (allShopAwbs.length) {
+        const kr = await fetch('/api/stats-totale/known-awbs', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ awbs: allShopAwbs }),
+        }).then(r => r.json()).catch(() => ({ ok: false, known: [] }));
+        if (kr.ok) setKnownSamedayAwbs(new Set(kr.known || []));
+      }
     } catch (e) {
       setEmagSamedayError(e.message);
     } finally {
@@ -1196,7 +1210,7 @@ export default function StatisticiTotalePage() {
                 return s + (fc != null ? fc : (periods[period][k].orders || 0));
               }, 0);
               const glsTotalRows = rowsForCourier(period, shopsInPeriod, 'gls', orderCache, liveGlsDetails, statusFilter);
-              const samedayTotalRows = rowsForCourier(period, shopsInPeriod, 'sameday', orderCache, liveGlsDetails, statusFilter, samedayLive);
+              const samedayTotalRows = rowsForCourier(period, shopsInPeriod, 'sameday', orderCache, liveGlsDetails, statusFilter, samedayLive, knownSamedayAwbs);
               const totalsPending = shopsInPeriod.some(k => {
                 if (k === 'emag' || k === 'necunoscut') return false;
                 if (k === 'neatribuit_posibil' || k === 'neatribuit_manual') return false;
@@ -1372,7 +1386,7 @@ function CourierTotalTile({ label, icon, color, rows, pending, onOpen }) {
           <div style={{ fontSize: 10, color: '#64748b', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span>{c.order} magazin</span>
             {!!c.emag && <span style={{ color: '#eab308' }}>{c.emag} eMAG</span>}
-            {!!c.shop && <span>{c.shop} fără comandă</span>}
+            {!!c.shop && <span title="Verificat deja în toată baza (nu doar lunile vizibile) — dacă tot apare aici, chiar nu are nicio comandă legată la noi.">{c.shop} fără comandă</span>}
             {!!c.client_return && <span style={{ color: '#38bdf8' }}>{c.client_return} retur client</span>}
           </div>
         );
