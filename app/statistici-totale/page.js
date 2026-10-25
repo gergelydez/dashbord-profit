@@ -17,7 +17,7 @@
  * Nu amestecă monede diferite într-un singur total — fiecare magazin/bucket
  * își ține propria monedă (RON sau HUF), iar un total "general" e per monedă.
  */
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 
 const ls = {
   get: k => { try { return typeof window !== 'undefined' ? localStorage.getItem(k) : null; } catch { return null; } },
@@ -68,6 +68,54 @@ function glsDetailStatusKey(p) {
   if (p.returned) return 'returned';
   if (p.delivered) return 'delivered';
   return 'transit';
+}
+
+/** Numărul de comenzi care chiar trec de filtrele Status/Curier, pentru
+ * rândul unui magazin — dar DOAR după ce a fost expandat măcar o dată (până
+ * atunci nu avem detaliul per comandă, deci rămânem pe totalul din bază —
+ * vezi `b.orders` la locul de apel). Fără asta, numărul afișat pe rândul
+ * încă nedesfăcut ("85 comenzi") nu se potrivea cu ce rămânea vizibil după
+ * ce dădeai click și vedeai filtrul aplicat (ex. "63 din 85 afișate"). */
+function filteredCountFor(exp, statusFilter, courierFilter) {
+  if (!exp || exp.loading || exp.error || !exp.rows) return null;
+  if (exp.kind === 'order') {
+    return exp.rows.filter(o => statusFilter.has(orderStatusKey(o)) && courierFilter.has(courierKey(o))).length;
+  }
+  if (exp.kind === 'gls_detail') {
+    if (!courierFilter.has('gls')) return 0;
+    return exp.rows.filter(p => statusFilter.has(glsDetailStatusKey(p))).length;
+  }
+  if (exp.kind === 'emag') return exp.rows.length;
+  return null;
+}
+
+/** Comenzile unui curier (GLS sau Sameday), adunate din TOATE magazinele
+ * unei perioade — ce stă în spatele rândurilor "📦 GLS TOTAL"/"🚀 SAMEDAY
+ * TOTAL" (vizibile înainte să desfaci vreun magazin, din cache-ul deja
+ * pre-încărcat — vezi efectul de prefetch mai sus). Colete GLS neatribuite
+ * (posibil/manual) intră și ele la GLS, fiindcă chiar sunt colete GLS. */
+function rowsForCourier(period, shopsInPeriod, courier, orderCache, liveGlsDetails, statusFilter) {
+  const out = [];
+  for (const shopKey of shopsInPeriod) {
+    if (shopKey === 'neatribuit_posibil' || shopKey === 'neatribuit_manual') {
+      if (courier !== 'gls') continue;
+      const rows = liveGlsDetails?.[period]?.[shopKey] || [];
+      for (const p of rows) {
+        if (!statusFilter.has(glsDetailStatusKey(p))) continue;
+        out.push({ _kind: 'gls_detail', _shopKey: shopKey, ...p });
+      }
+      continue;
+    }
+    if (shopKey === 'emag' || shopKey === 'necunoscut') continue;
+    const exp = orderCache[`${period}|${shopKey}`];
+    if (!exp?.rows) continue;
+    for (const o of exp.rows) {
+      if (!statusFilter.has(orderStatusKey(o))) continue;
+      if (courierKey(o) !== courier) continue;
+      out.push({ _kind: 'order', _shopKey: shopKey, ...o });
+    }
+  }
+  return out;
 }
 const MONTH_NAMES = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Noi', 'Dec'];
 const pad2 = n => String(n).padStart(2, '0');
@@ -229,7 +277,9 @@ export default function StatisticiTotalePage() {
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [courierFilter, setCourierFilter] = useState(() => new Set(COURIER_ORDER));
   const [courierDropdownOpen, setCourierDropdownOpen] = useState(false);
-  const [expanded, setExpanded] = useState({}); // `${period}|${shopKey}` -> { loading, kind, rows, error }
+  const [orderCache, setOrderCache] = useState({}); // `${period}|${shopKey}` -> { loading, kind, rows, error } — cache INDEPENDENT de UI (vezi loadRow), ca totalurile GLS/Sameday pe lună să poată fi calculate chiar înainte să dai click pe un magazin
+  const [openRows, setOpenRows] = useState(() => new Set()); // care rânduri magazin sunt desfăcute vizual
+  const loadingKeysRef = useRef(new Set()); // deduplichează fetch-urile pentru aceeași cheie (prefetch + click simultan)
 
   const [emagOrders, setEmagOrders] = useState([]);
   const [sbChecking, setSbChecking] = useState(false);
@@ -271,7 +321,24 @@ export default function StatisticiTotalePage() {
   // moment — dacă utilizatorul schimbă intervalul fără să le re-tragă,
   // le ștergem ca să nu rămână suprapuse peste o perioadă greșită.
   useEffect(() => { setLiveGls(null); setLiveGlsSummary(null); setLiveGlsDetails({}); setEmagSameday(null); setEmagSamedayError(''); }, [from, to]);
-  useEffect(() => { setExpanded({}); }, [from, to, granularity]);
+  useEffect(() => { setOrderCache({}); setOpenRows(new Set()); loadingKeysRef.current = new Set(); }, [from, to, granularity]);
+  // Coletele "neatribuit_*" cache-uite vin din liveGlsDetails (în memorie, nu
+  // din rețea) — când se termină o nouă tragere live MyGLS, cache-ul vechi
+  // (eventual gol, dacă nu rulase încă pull-ul) trebuie invalidat ca
+  // totalurile GLS/Sameday și rândurile neatribuite să se recalculeze.
+  useEffect(() => {
+    setOrderCache(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const key of Object.keys(next)) {
+        if (key.endsWith('|neatribuit_posibil') || key.endsWith('|neatribuit_manual')) { delete next[key]; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    for (const key of Array.from(loadingKeysRef.current)) {
+      if (key.endsWith('|neatribuit_posibil') || key.endsWith('|neatribuit_manual')) loadingKeysRef.current.delete(key);
+    }
+  }, [liveGlsDetails]);
 
   useEffect(() => {
     try { setEmagOrders(JSON.parse(ls.get('emag_orders') || '[]')); } catch { setEmagOrders([]); }
@@ -316,29 +383,32 @@ export default function StatisticiTotalePage() {
     setFrom(r.from); setTo(r.to);
   };
 
-  const toggleExpand = async (period, shopKey) => {
+  // Încarcă (o singură dată, cache-uit) comenzile pentru un rând magazin —
+  // SEPARAT de deschiderea vizuală a rândului (vezi toggleExpand), ca să
+  // putem pre-încărca datele pentru toate magazinele dintr-o lună (pentru
+  // totalurile "GLS TOTAL"/"SAMEDAY TOTAL" de mai jos) fără să fim nevoiți
+  // să le afișăm desfăcute.
+  const loadRow = useCallback(async (period, shopKey) => {
     const key = `${period}|${shopKey}`;
-    if (expanded[key]) {
-      setExpanded(prev => { const n = { ...prev }; delete n[key]; return n; });
-      return;
-    }
-    setExpanded(prev => ({ ...prev, [key]: { loading: true } }));
+    if (loadingKeysRef.current.has(key)) return;
+    loadingKeysRef.current.add(key);
+    setOrderCache(prev => ({ ...prev, [key]: { loading: true } }));
 
     if (shopKey === 'emag') {
       const rows = emagOrders.filter(o => {
         const mk = emagMonthKey(o.date);
         return granularity === 'year' ? mk?.startsWith(period) : mk === period;
       });
-      setExpanded(prev => ({ ...prev, [key]: { loading: false, kind: 'emag', rows } }));
+      setOrderCache(prev => ({ ...prev, [key]: { loading: false, kind: 'emag', rows } }));
       return;
     }
     if (shopKey === 'neatribuit_posibil' || shopKey === 'neatribuit_manual') {
       const rows = liveGlsDetails?.[period]?.[shopKey] || [];
-      setExpanded(prev => ({ ...prev, [key]: { loading: false, kind: 'gls_detail', rows } }));
+      setOrderCache(prev => ({ ...prev, [key]: { loading: false, kind: 'gls_detail', rows } }));
       return;
     }
     if (shopKey === 'necunoscut') {
-      setExpanded(prev => ({ ...prev, [key]: { loading: false, kind: 'order', rows: [] } }));
+      setOrderCache(prev => ({ ...prev, [key]: { loading: false, kind: 'order', rows: [] } }));
       return;
     }
     // magazin real (ro/hu/glato/glatohu) — comenzi din baza noastră, vezi /api/stats-totale/order-list
@@ -348,11 +418,21 @@ export default function StatisticiTotalePage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shop: shopKey, from: range.from, to: range.to }),
       }).then(r => r.json());
-      if (res.ok) setExpanded(prev => ({ ...prev, [key]: { loading: false, kind: 'order', rows: res.orders } }));
-      else setExpanded(prev => ({ ...prev, [key]: { loading: false, error: res.error || 'Eroare necunoscută' } }));
+      if (res.ok) setOrderCache(prev => ({ ...prev, [key]: { loading: false, kind: 'order', rows: res.orders } }));
+      else setOrderCache(prev => ({ ...prev, [key]: { loading: false, error: res.error || 'Eroare necunoscută' } }));
     } catch (e) {
-      setExpanded(prev => ({ ...prev, [key]: { loading: false, error: e.message } }));
+      setOrderCache(prev => ({ ...prev, [key]: { loading: false, error: e.message } }));
     }
+  }, [emagOrders, granularity, liveGlsDetails]);
+
+  const toggleExpand = (period, shopKey) => {
+    const key = `${period}|${shopKey}`;
+    setOpenRows(prev => {
+      const n = new Set(prev);
+      if (n.has(key)) n.delete(key); else n.add(key);
+      return n;
+    });
+    if (!orderCache[key]) loadRow(period, shopKey);
   };
 
   // ── Combină serverData (ro/hu/glato/glatohu) + emagOrders (local) într-o
@@ -449,6 +529,24 @@ export default function StatisticiTotalePage() {
   }, [serverData, emagOrders, granularity, from, to, liveGls, emagSameday]);
 
   const visibleShops = SHOP_ORDER.filter(k => activeShops.has(k) && (shopTotals[k] || k === 'emag'));
+
+  // Pre-încarcă (în fundal, cache-uit) comenzile fiecărui magazin real pentru
+  // toate lunile/anii afișați curent — ca rândurile "📦 GLS TOTAL" / "🚀
+  // SAMEDAY TOTAL" de la fiecare perioadă să aibă deja numărul calculat
+  // ÎNAINTE ca utilizatorul să deschidă vreun magazin, nu doar după click.
+  useEffect(() => {
+    const realShops = ['ro', 'hu', 'glato', 'glatohu'];
+    const jobs = [];
+    for (const period of periodKeysSorted) {
+      for (const shopKey of realShops) {
+        if (!periods[period]?.[shopKey]) continue;
+        const key = `${period}|${shopKey}`;
+        if (orderCache[key] || loadingKeysRef.current.has(key)) continue;
+        jobs.push({ period, shopKey });
+      }
+    }
+    if (jobs.length) mapWithConcurrency(jobs, 3, job => loadRow(job.period, job.shopKey));
+  }, [periodKeysSorted, periods, orderCache, loadRow]);
 
   // Totale globale per monedă (nu amestecăm RON cu HUF)
   const grandByCurrency = useMemo(() => {
@@ -1060,12 +1158,27 @@ export default function StatisticiTotalePage() {
           ) : (
             periodKeysSorted.map(period => {
               const shopsInPeriod = visibleShops.filter(k => periods[period]?.[k]);
-              const periodTotal = shopsInPeriod.reduce((s, k) => s + (periods[period][k].orders || 0), 0);
+              const periodTotal = shopsInPeriod.reduce((s, k) => {
+                const fc = filteredCountFor(orderCache[`${period}|${k}`], statusFilter, courierFilter);
+                return s + (fc != null ? fc : (periods[period][k].orders || 0));
+              }, 0);
+              const glsTotalRows = rowsForCourier(period, shopsInPeriod, 'gls', orderCache, liveGlsDetails, statusFilter);
+              const samedayTotalRows = rowsForCourier(period, shopsInPeriod, 'sameday', orderCache, liveGlsDetails, statusFilter);
+              const totalsPending = shopsInPeriod.some(k => {
+                if (k === 'emag' || k === 'necunoscut') return false;
+                if (k === 'neatribuit_posibil' || k === 'neatribuit_manual') return false;
+                const exp = orderCache[`${period}|${k}`];
+                return !exp || exp.loading;
+              });
               return (
                 <div key={period} style={{ marginBottom: 16 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: '#f97316', padding: '6px 4px', borderBottom: '1px solid rgba(249,115,22,.25)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
                     <span>📅 {periodLabel(period)}</span>
                     <span style={{ color: '#94a3b8', fontWeight: 400 }}>{fmtInt(periodTotal)} comenzi</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, margin: '6px 0 8px', flexWrap: 'wrap' }}>
+                    <CourierTotalTile label="GLS TOTAL" icon="📦" color="#3b82f6" rows={glsTotalRows} pending={totalsPending} />
+                    <CourierTotalTile label="SAMEDAY TOTAL" icon="🚀" color="#a855f7" rows={samedayTotalRows} pending={totalsPending} />
                   </div>
                   {shopsInPeriod.map(shopKey => {
                     const b = periods[period][shopKey];
@@ -1073,20 +1186,25 @@ export default function StatisticiTotalePage() {
                     const isGlsLive = !!liveGls?.[period]?.[shopKey];
                     const isEmagLive = shopKey === 'emag' && !!emagSameday?.[period];
                     const rowKey = `${period}|${shopKey}`;
-                    const exp = expanded[rowKey];
+                    const exp = orderCache[rowKey];
+                    const isOpen = openRows.has(rowKey);
+                    const filteredCount = filteredCountFor(exp, statusFilter, courierFilter);
+                    const displayCount = filteredCount != null ? filteredCount : b.orders;
                     return (
                       <div key={rowKey} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
                         <div onClick={() => toggleExpand(period, shopKey)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 6px', cursor: 'pointer' }}>
-                          <span style={{ fontSize: 10, color: '#475569', width: 12 }}>{exp ? '▾' : '▸'}</span>
+                          <span style={{ fontSize: 10, color: '#475569', width: 12 }}>{isOpen ? '▾' : '▸'}</span>
                           <span style={{ color: meta.color, fontWeight: 700, fontSize: 12, flex: 1 }}>{meta.flag} {meta.label}</span>
-                          <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{fmtInt(b.orders)}</span>
-                          <span style={{ fontSize: 10, color: '#64748b' }}>comenzi</span>
+                          <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{fmtInt(displayCount)}</span>
+                          <span style={{ fontSize: 10, color: '#64748b' }}>
+                            comenzi{filteredCount != null && filteredCount !== b.orders ? ` (din ${fmtInt(b.orders)})` : ''}
+                          </span>
                           {(isGlsLive || isEmagLive) && <span title="Date live, nu din baza de date" style={{ fontSize: 10, color: '#f97316' }}>📡</span>}
                           {!!b.retururi && <span style={{ fontSize: 10, color: '#f43f5e' }}>↩ {fmtInt(b.retururi)}</span>}
                         </div>
-                        {exp && (
+                        {isOpen && (
                           <div style={{ padding: '2px 6px 10px 22px' }}>
-                            {exp.loading ? (
+                            {!exp || exp.loading ? (
                               <div style={{ fontSize: 11, color: '#64748b' }}>Se încarcă...</div>
                             ) : exp.error ? (
                               <div style={{ fontSize: 11, color: '#f43f5e' }}>⚠️ {exp.error}</div>
@@ -1197,6 +1315,55 @@ function StatusBadge({ o }) {
  * și statusul de livrare per comandă — rezultatul /api/stats-totale/order-list.
  * Filtrată după statusFilter (implicit: doar livrate/refuzate/tranzit — vezi
  * STATUS_META mai sus). */
+/** Rândul "📦 GLS TOTAL" / "🚀 SAMEDAY TOTAL" de la începutul fiecărei luni —
+ * vizibil ÎNAINTE de a desface vreun magazin (numărul vine din cache-ul
+ * pre-încărcat), cu propriul lui expand/collapse, ca un mic KPI clicabil. */
+function CourierTotalTile({ label, icon, color, rows, pending }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ flex: '1 1 150px', minWidth: 150 }}>
+      <div onClick={() => setOpen(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0b0f14', border: `1px solid ${color}55`, borderRadius: 8, padding: '8px 10px', cursor: 'pointer' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color }}>{icon} {label}</span>
+        <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 15, color: '#e2e8f0' }}>{pending ? '…' : fmtInt(rows.length)}</span>
+      </div>
+      {open && (
+        <div style={{ marginTop: 4, padding: '6px 8px', background: '#0b0f14', border: `1px solid ${color}22`, borderRadius: 8 }}>
+          {pending ? (
+            <div style={{ fontSize: 11, color: '#64748b' }}>Se încarcă încă unele magazine...</div>
+          ) : !rows.length ? (
+            <div style={{ fontSize: 11, color: '#475569' }}>Nimic de afișat.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 320, overflowY: 'auto' }}>
+              {rows.map((o, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.03)' : 'none' }}>
+                  <span style={{ color: SHOP_META[o._shopKey]?.color || '#94a3b8', fontWeight: 700, width: 72, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {SHOP_META[o._shopKey]?.flag} {SHOP_META[o._shopKey]?.label}
+                  </span>
+                  {o._kind === 'order' ? (
+                    <>
+                      <span style={{ color: '#cbd5e1', fontWeight: 700, width: 60, flexShrink: 0 }}>{o.name}</span>
+                      <span style={{ color: '#64748b', width: 78, flexShrink: 0 }}>{new Date(o.date).toLocaleDateString('ro-RO')}</span>
+                      <span style={{ fontFamily: 'monospace', color: '#e2e8f0', flex: 1, textAlign: 'right' }}>{fmt(o.total)} {o.currency}</span>
+                      <StatusBadge o={o} />
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ color: '#f97316', fontFamily: 'monospace', width: 90, flexShrink: 0 }}>{o.parcelNumber}</span>
+                      <span style={{ color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name || '(fără nume)'}, {o.city || '—'}</span>
+                      {o.returned && <span style={{ color: '#f43f5e', flexShrink: 0 }}>Retur</span>}
+                      {o.delivered && <span style={{ color: '#10b981', flexShrink: 0 }}>Livrat</span>}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CourierBreakdown({ counts }) {
   const present = COURIER_ORDER.filter(k => counts[k]);
   if (!present.length) return null;
