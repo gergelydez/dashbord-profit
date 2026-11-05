@@ -8,6 +8,21 @@ import type {
   ProcessingStatus, CourierName, AwbWizardData,
 } from './types';
 
+/**
+ * Numărul/URL-ul de factură din note_attributes Shopify e un rest din bug-ul
+ * de reatribuire facturi (vezi lib/services/invoice-service.ts) — poate arăta
+ * la o comandă căreia nu-i mai aparține. Un număr DB (order.invoice) are
+ * mereu serie (ex. "GLA3784"); un fallback fără literă la început (ex. "3789")
+ * nu are nicio garanție că e al acestei comenzi, deci nu se afișează.
+ */
+function trustedFallbackInvoiceNumber(attrs: Record<string, string> | undefined): string {
+  const raw = attrs?.['invoice-number'] || attrs?.['Factură'] || '';
+  return /^[A-Za-z]/.test(raw) ? raw : '';
+}
+function trustedFallbackInvoiceUrl(attrs: Record<string, string> | undefined): string {
+  return trustedFallbackInvoiceNumber(attrs) ? (attrs?.['xconnector-invoice-url'] || attrs?.['invoice-url'] || '') : '';
+}
+
 const S: Record<string, React.CSSProperties> = {
   page:        { background: 'var(--c-bg)', minHeight: '100dvh', fontFamily: 'DM Sans, sans-serif', color: 'var(--c-text)', paddingBottom: 80 },
   topbar:      { background: 'var(--c-bg2)', borderBottom: '1px solid var(--c-border)', padding: '12px 20px', display: 'flex', flexDirection: 'column', gap: 10, position: 'sticky', top: 0, zIndex: 50 },
@@ -269,8 +284,8 @@ function InvoiceModal({ order, shop, actionState, onClose, onGenerate, generated
 
   // Existing invoice check
   const attrs     = order.noteAttributes ?? {};
-  const existUrl  = order.invoice?.url || attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
-  const existNum  = order.invoice ? `${order.invoice.series}${order.invoice.number}` : (attrs['invoice-number'] || attrs['Factură'] || '');
+  const existUrl  = order.invoice?.url || trustedFallbackInvoiceUrl(attrs);
+  const existNum  = order.invoice ? `${order.invoice.series}${order.invoice.number}` : trustedFallbackInvoiceNumber(attrs);
 
   const updateItem = (i: number, patch: Partial<InvoiceLineLocal>) => {
     setItems(p => { const n = [...p]; n[i] = { ...n[i], ...patch }; return n; });
@@ -784,8 +799,8 @@ function InvoiceSection({ order, shop, actionState, onOpenModal }: {
   onOpenModal: () => void;
 }) {
   const attrs    = order.noteAttributes ?? {};
-  const existUrl = order.invoice?.url || attrs['xconnector-invoice-url'] || attrs['invoice-url'] || '';
-  const existNum = order.invoice ? `${order.invoice.series}${order.invoice.number}` : (attrs['invoice-number'] || attrs['Factură'] || '');
+  const existUrl = order.invoice?.url || trustedFallbackInvoiceUrl(attrs);
+  const existNum = order.invoice ? `${order.invoice.series}${order.invoice.number}` : trustedFallbackInvoiceNumber(attrs);
 
   if (existUrl || existNum) {
     return (
@@ -984,7 +999,7 @@ function buildDefaultWizard(order: EnrichedOrder, courier: CourierName): AwbWiza
   const isCOD = order.financialStatus === 'pending';
   const invoiceNum = order.invoice
     ? `${order.invoice.series}${order.invoice.number}`
-    : ((order.noteAttributes as Record<string,string>)?.['invoice-number'] || (order.noteAttributes as Record<string,string>)?.['Factură'] || '');
+    : trustedFallbackInvoiceNumber(order.noteAttributes as Record<string,string>);
   const firstProduct = order.lineItems[0]?.name || 'Colet';
   const productName = invoiceNum
     ? `${order.name}- ${invoiceNum}- ${firstProduct}`
@@ -1123,7 +1138,7 @@ function AwbWizard({ order, initialCourier, onClose, onConfirm, loading, serverE
   const zipNoteColor = zipNote?.tone === 'warn' ? 'var(--c-red)' : zipNote?.tone === 'info' ? '#f59e0b' : '#10b981';
   const invNum = order.invoice
     ? `${order.invoice.series}${order.invoice.number}`
-    : ((order.noteAttributes as Record<string,string>)?.['invoice-number'] || (order.noteAttributes as Record<string,string>)?.['Factură'] || '');
+    : trustedFallbackInvoiceNumber(order.noteAttributes as Record<string,string>);
   const firstProd = order.lineItems[0]?.name || 'Colet';
   const templates = [
     { label: '🏷 Cmd+Fact+Produs', val: invNum ? `${order.name}- ${invNum}- ${firstProd}` : `${order.name}- ${firstProd}` },
@@ -2044,7 +2059,7 @@ export default function XConnectorPage() {
   const orders   = data?.orders ?? [];
   const statPaid = orders.filter(o => o.financialStatus === 'paid').length;
   const statCOD  = orders.filter(o => o.financialStatus === 'pending').length;
-  const statInv  = orders.filter(o => o.invoice || o.noteAttributes?.['xconnector-invoice-url'] || o.noteAttributes?.['invoice-url']).length;
+  const statInv  = orders.filter(o => o.invoice || trustedFallbackInvoiceNumber(o.noteAttributes)).length;
   const statShip = orders.filter(o => o.shipment).length;
   const statFail = orders.filter(o => o.processingStatus === 'failed').length;
 
@@ -2054,13 +2069,11 @@ export default function XConnectorPage() {
   const getInvoiceLink = (order: EnrichedOrder): { label: string; url: string } | null => {
     if (order.invoice) return { label: `${order.invoice.series}${order.invoice.number}`, url: order.invoice.url };
     const attrs = order.noteAttributes ?? {};
+    const label = trustedFallbackInvoiceNumber(attrs);
+    if (!label) return null; // rest din bug-ul de reatribuire facturi — fără serie nu e de încredere, se ascunde
     const url = attrs['xconnector-invoice-url'] || attrs['invoice-url'] || attrs['xconnector-invoice-short-url'] || '';
     if (!url) return null;
-    try {
-      const u = new URL(attrs['xconnector-invoice-url'] || '');
-      const s = u.searchParams.get('s') || ''; const n = u.searchParams.get('n') || '';
-      return { label: (s && n) ? `${s}${n}` : (attrs['invoice-number'] || 'Factură'), url };
-    } catch { return { label: attrs['invoice-number'] || 'Factură', url }; }
+    return { label, url };
   };
 
   return (

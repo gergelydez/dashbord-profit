@@ -261,7 +261,11 @@ export async function GET(request: Request) {
 
     if (invFilter === 'invoiced' || invFilter === 'not_invoiced') {
       orders = orders.filter((o: ReturnType<typeof mapOrder>) => {
-        const hasInvoice = Boolean(o.invoice || o.noteAttributes['xconnector-invoice-url'] || o.noteAttributes['invoice-url']);
+        // Numărul din note_attributes e rest din bug-ul de reatribuire facturi —
+        // de încredere doar dacă are serie (literă la început, ex. "GLA3784").
+        const fallbackNum = o.noteAttributes['invoice-number'] || o.noteAttributes['Factură'] || '';
+        const trustedFallback = /^[A-Za-z]/.test(fallbackNum) && Boolean(o.noteAttributes['xconnector-invoice-url'] || o.noteAttributes['invoice-url']);
+        const hasInvoice = Boolean(o.invoice) || trustedFallback;
         return invFilter === 'invoiced' ? hasInvoice : !hasInvoice;
       });
     }
