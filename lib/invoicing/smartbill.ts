@@ -260,6 +260,16 @@ export async function createInvoice(
 
   const invoiceSeries = data.series as string;
   const invoiceNumber = data.number as string;
+  // SmartBill a răspuns 2xx, dar fără serie/număr valide (formă de răspuns
+  // neașteptată) — a lăsa să treacă mai departe cu undefined ducea la un bug
+  // GRAV: Invoice.create eșua silențios (câmpuri NOT NULL), căutarea de
+  // fallback din ensureInvoice devenea findFirst({ shopId }) — Prisma tratează
+  // `undefined` ca "fără filtru", nu ca "IS NULL" — și fura orice factură
+  // găsită primă, reatribuind-o comenzii curente (exact cauza facturilor
+  // duplicate pe clienți diferiți, confirmată live pe Glato HU).
+  if (!invoiceSeries || !invoiceNumber) {
+    throw new Error(`SmartBill a răspuns fără serie/număr valide pentru factură. Răspuns brut: ${rawText.slice(0, 300)}`);
+  }
   const invoiceUrl =
     (data.url ?? data.documentUrl) as string ??
     `https://cloud.smartbill.ro/core/factura/vizualizeaza/?cif=${encodeURIComponent(cfg.cif)}&series=${encodeURIComponent(invoiceSeries)}&number=${encodeURIComponent(invoiceNumber)}`;

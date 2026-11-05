@@ -12,6 +12,7 @@
  *  8. Write invoice URL back to Shopify order
  */
 
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import {
@@ -117,7 +118,22 @@ export async function ensureInvoice(
     },
   });
 
-  // Try to create; if duplicate (same series+number), find and update existing
+  // Try to create; if duplicate (same series+number, same order retrying),
+  // find and update the existing row instead of erroring.
+  //
+  // IMPORTANT: NU reatribui orbește un Invoice existent unei alte comenzi
+  // doar pentru că db.invoice.create a eșuat — asta a cauzat un bug grav
+  // confirmat live (facturi "furate" de la o comandă și arătate la alta,
+  // clienți diferiți cu același număr de factură). Două căi distincte
+  // duceau acolo: (1) un conflict real pe @@unique([shopId, series, number])
+  // — posibil doar dacă seria+numărul chiar se repetă pentru o comandă
+  // DIFERITĂ, caz în care e o coliziune reală ce trebuie semnalată, nu
+  // reparată silențios; (2) orice ALTĂ eroare la create (ex. serie/număr
+  // lipsă — vezi validarea adăugată în lib/invoicing/smartbill.ts) ajungea
+  // în același catch, iar findFirst({ series: undefined, number: undefined })
+  // devine, din perspectiva Prisma, findFirst({ shopId }) — "fără filtru",
+  // nu "IS NULL" — adică găsea ȘI FURA PRIMA factură găsită pentru magazin,
+  // complet neînrudită.
   let invoice;
   try {
     invoice = await db.invoice.create({
@@ -130,19 +146,30 @@ export async function ensureInvoice(
         status:     'CREATED',
       },
     });
-  } catch {
-    // Already exists (same series+number) — find and update it
+  } catch (createErr) {
+    const isUniqueConflict = createErr instanceof Prisma.PrismaClientKnownRequestError && createErr.code === 'P2002';
+    if (!isUniqueConflict) throw createErr; // orice altă eroare (ex. date invalide) trebuie să iasă la suprafață, nu ascunsă
+
     const existing2 = await db.invoice.findFirst({
       where: { shopId: order.shopId, series: result.series, number: result.number },
     });
-    if (existing2) {
-      invoice = await db.invoice.update({
-        where: { id: existing2.id },
-        data:  { orderId: order.id, invoiceUrl: result.invoiceUrl, status: 'CREATED' },
-      });
-    } else {
+    if (!existing2) {
       throw new Error(`Nu s-a putut salva factura ${result.series}${result.number} în baza de date.`);
     }
+    if (existing2.orderId !== order.id) {
+      // Coliziune REALĂ: SmartBill a întors un serie+număr deja folosit de
+      // ALTĂ comandă. Nu reatribuim — asta ar fura factura de la comanda ei
+      // legitimă. Oprim și semnalăm clar, ca utilizatorul să verifice manual
+      // în SmartBill (eventual anulează/reface factura).
+      throw new Error(
+        `SmartBill a întors factura ${result.series}${result.number}, dar ea aparține deja altei comenzi (nu ${order.shopifyName}). ` +
+        `Nu am reatribuit-o automat — verifică manual în SmartBill înainte să reîncerci.`,
+      );
+    }
+    invoice = await db.invoice.update({
+      where: { id: existing2.id },
+      data:  { invoiceUrl: result.invoiceUrl, status: 'CREATED' },
+    });
   }
 
   // ── Store PDF ──────────────────────────────────────────────────────────────
