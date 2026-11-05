@@ -208,6 +208,7 @@ function mapOrder(o: any, enriched: Awaited<ReturnType<typeof enrichWithDbState>
     currency:          o.currency || 'RON',
     financialStatus:   fin,
     fulfillmentStatus: ful || null,
+    paymentGateway:    (o.payment_gateway_names || [])[0] || '',
     // Numele metodei de shipping alese la checkout (ex: "Sameday Easybox") —
     // folosit ca indiciu pentru auto-detectarea livrării la easybox.
     shippingMethod:    o.shipping_lines?.[0]?.title || '',

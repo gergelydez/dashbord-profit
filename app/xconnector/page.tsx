@@ -99,6 +99,14 @@ function finBadge(s: string) {
   if (s === 'refunded') return <Badge label="Returnat" color="red" />;
   return <Badge label={s} color="gray" />;
 }
+const ONLINE_GW = ['shopify_payments', 'stripe', 'paypal'];
+function isOnlineGateway(gw: string | undefined | null): boolean {
+  return !!gw && ONLINE_GW.some(g => gw.toLowerCase().includes(g));
+}
+function gatewayBadge(gw: string | undefined | null) {
+  if (!isOnlineGateway(gw)) return null;
+  return <Badge label="💳 Plătit online" color="blue" />;
+}
 function fulBadge(s: string | null) {
   if (!s || s === 'unfulfilled' || s === 'null') return <Badge label="Nefulfilat" color="gray" />;
   if (s === 'fulfilled') return <Badge label="Expediat" color="green" />;
@@ -1571,6 +1579,7 @@ function OrderDrawer({ order, onClose, onOpenInvoiceModal, onShipmentWizard, act
             <div style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ color: 'var(--c-orange)' }}>{order.name}</span>
               {finBadge(order.financialStatus)}
+              {gatewayBadge(order.paymentGateway)}
               {fulBadge(order.fulfillmentStatus)}
             </div>
             <div style={{ fontSize: 12, color: 'var(--c-text3)', marginTop: 4 }}>
@@ -1886,6 +1895,84 @@ export default function XConnectorPage() {
     });
   }, []);
 
+  /* ── Status curier în timp real (GLS/Sameday) — reuse /api/tracking,
+     deja folosit în pagina Comenzi. Scop: să se vadă livrat/refuzat/tranzit,
+     nu doar „Expediat" (care arată doar dacă a fost creat AWB-ul în Shopify). */
+  type LiveTrack = { ts: string; statusRaw: string; lastUpdate: string; location: string };
+  const [liveTrack, setLiveTrack] = useState<Record<string, LiveTrack>>({});
+  const [liveTrackLoading, setLiveTrackLoading] = useState(false);
+
+  // La montare, preia overrides deja calculate în altă parte a aplicației (Comenzi)
+  // — id-ul comenzii Shopify e același, deci statusul apare instant, fără refetch.
+  useEffect(() => {
+    fetch('/api/tracking-overrides')
+      .then(r => r.json())
+      .then(d => {
+        const ov = d.overrides || {};
+        const mapped: Record<string, LiveTrack> = {};
+        for (const [id, v] of Object.entries(ov as Record<string, any>)) {
+          if (v?.ts) mapped[id] = { ts: v.ts, statusRaw: v.statusRaw || '', lastUpdate: v.lastUpdate || '', location: v.location || '' };
+        }
+        setLiveTrack(prev => ({ ...mapped, ...prev }));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const checkLiveStatus = async () => {
+    const list = (data?.orders ?? []).filter(o => o.shipment?.tracking);
+    if (!list.length) { addToast('info', 'Nicio comandă cu AWB pe pagina curentă.'); return; }
+    setLiveTrackLoading(true);
+    try {
+      const res = await fetch('/api/tracking', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orders: list.map(o => ({ id: o.id, awb: o.shipment!.tracking, courier: o.shipment!.courier })) }),
+      });
+      const resData = await res.json();
+      const results: any[] = resData.results || [];
+      const next: Record<string, LiveTrack> = {};
+      const toPersist: Record<string, any> = {};
+      for (const t of results) {
+        if (!t.id || !t.status) continue;
+        const ts = t.hasReturnCode ? 'retur'
+          : t.status === 'delivered'        ? 'livrat'
+          : t.status === 'out_for_delivery' ? 'outfor'
+          : t.status === 'easybox'          ? 'easybox'
+          : t.status === 'in_transit'       ? 'incurs'
+          : t.status === 'failed_attempt'   ? 'outfor'
+          : (t.status === 'returned' || t.status === 'failure') ? 'retur' : 'incurs';
+        const entry = { ts, statusRaw: t.statusRaw || '', lastUpdate: t.lastUpdate || '', location: t.location || '' };
+        next[t.id] = entry;
+        toPersist[t.id] = { ...entry, at: new Date().toISOString() };
+      }
+      setLiveTrack(prev => ({ ...prev, ...next }));
+      addToast('ok', `Status actualizat pentru ${Object.keys(next).length} comenzi`);
+      if (Object.keys(toPersist).length) {
+        fetch('/api/tracking-overrides', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ overrides: toPersist }),
+        }).catch(() => {});
+      }
+    } catch (e) {
+      addToast('err', 'Eroare la verificarea statusului curier');
+    } finally {
+      setLiveTrackLoading(false);
+    }
+  };
+
+  function liveStatusBadge(live: LiveTrack | undefined): React.ReactNode {
+    if (!live) return <span style={{ fontSize: 11, color: 'var(--c-text4)' }}>—</span>;
+    const map: Record<string, { label: string; color: 'green' | 'red' | 'orange' | 'blue' | 'yellow' }> = {
+      livrat:  { label: '✅ Livrat',   color: 'green' },
+      retur:   { label: '↩ Refuzat',  color: 'red' },
+      outfor:  { label: '🚚 La curier', color: 'orange' },
+      easybox: { label: '📦 Easybox', color: 'yellow' },
+      incurs:  { label: '🚛 Tranzit', color: 'blue' },
+    };
+    const m = map[live.ts] || { label: live.ts, color: 'gray' as const };
+    return <Badge label={m.label} color={m.color} />;
+  }
+
   const [actionStates, setActionStates] = useState<Record<string, RowActionState>>({});
   const getState = (id: string): RowActionState => actionStates[id] ?? { invoiceLoading: false, shipmentLoading: false, error: null };
   const setAS = (id: string, patch: Partial<RowActionState>) => setActionStates(p => ({ ...p, [id]: { ...getState(id), ...patch } }));
@@ -2124,6 +2211,9 @@ export default function XConnectorPage() {
           )}
           <button style={S.iconBtn} onClick={() => refetch()}>{isLoading ? <Spin /> : '↻'} Refresh</button>
           <SyncButton shop={activeShop} onDone={() => { addToast('ok', 'Sync trimis! Refresh în 30s.'); setTimeout(() => refetch(), 30000); }} />
+          <button style={liveTrackLoading ? { ...S.iconBtn, opacity: 0.6, cursor: 'not-allowed' } : S.iconBtn} onClick={checkLiveStatus} disabled={liveTrackLoading} title="Interoghează GLS/Sameday pentru statusul real de livrare">
+            {liveTrackLoading ? <Spin /> : '🚚'} Verifică livrări
+          </button>
           <button
             style={autoInvLoading ? { ...S.toggleOff, opacity: 0.6, cursor: 'not-allowed' } : autoInvoice ? S.toggleOn : S.toggleOff}
             onClick={toggleAutoInvoice} disabled={autoInvLoading}
@@ -2174,6 +2264,7 @@ export default function XConnectorPage() {
               <th style={S.th}>Total</th>
               <th style={S.th}>Plată</th>
               <th style={S.th}>Fulfillment</th>
+              <th style={S.th}>Livrare</th>
               <th style={S.th}>Factură</th>
               <th style={S.th}>AWB</th>
               <th style={S.th}>Status</th>
@@ -2182,7 +2273,7 @@ export default function XConnectorPage() {
           </thead>
           <tbody>
             {isLoading ? <Skeleton rows={8} /> : orders.length === 0 ? (
-              <tr><td colSpan={11} style={S.empty}>
+              <tr><td colSpan={12} style={S.empty}>
                 <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
                 <div>Nicio comandă găsită</div>
                 <div style={{ fontSize: 12, marginTop: 6, color: 'var(--c-text4)' }}>Schimbă filtrele sau verifică conexiunea Shopify</div>
@@ -2193,6 +2284,8 @@ export default function XConnectorPage() {
               const awbRes  = awbResults[order.id];
               const existingAwb = order.shipment?.tracking || awbRes?.awb;
               const labelUrl = awbRes?.labelUrl || order.shipment?.labelUrl || null;
+              const live = liveTrack[order.id];
+              const hasInvoiceNow = !!invLink;
               return (
                 <tr key={order.id} style={{ cursor: 'pointer', animation: 'fadeIn 0.2s ease' }}>
                   <td style={S.td} onClick={e => e.stopPropagation()}><input type="checkbox" style={S.checkbox} checked={selected.has(order.id)} onChange={() => toggleSelect(order.id)} /></td>
@@ -2211,8 +2304,24 @@ export default function XConnectorPage() {
                   <td style={S.td} onClick={() => setDrawerOrder(order)}>
                     <div style={{ fontWeight: 700, color: order.financialStatus === 'pending' ? '#f59e0b' : 'var(--c-text)' }}>{fmtPrice(order.totalPrice, order.currency)}</div>
                   </td>
-                  <td style={S.td} onClick={() => setDrawerOrder(order)}>{finBadge(order.financialStatus)}</td>
+                  <td style={S.td} onClick={() => setDrawerOrder(order)}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start' }}>
+                      {finBadge(order.financialStatus)}
+                      {gatewayBadge(order.paymentGateway)}
+                    </div>
+                  </td>
                   <td style={S.td} onClick={() => setDrawerOrder(order)}>{fulBadge(order.fulfillmentStatus)}</td>
+                  <td style={S.td} onClick={() => setDrawerOrder(order)}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start' }}>
+                      {liveStatusBadge(live)}
+                      {live?.ts === 'livrat' && !hasInvoiceNow && !order.cancelled && (
+                        <span style={{ fontSize: 9, fontWeight: 700, color: '#10b981' }}>📋 De facturat</span>
+                      )}
+                      {live?.ts === 'retur' && hasInvoiceNow && (
+                        <span style={{ fontSize: 9, fontWeight: 700, color: '#f43f5e' }}>⚠ STORNO necesar</span>
+                      )}
+                    </div>
+                  </td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
                     {invLink ? (
                       // Click on invoice number → open modal viewer (not external link)

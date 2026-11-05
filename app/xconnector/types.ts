@@ -43,6 +43,8 @@ export interface EnrichedOrder {
   currency:          string;
   financialStatus:   string;
   fulfillmentStatus: string | null;
+  /** Primul gateway de plată Shopify (ex. "shopify_payments", "cod") — folosit ca să deosebim plata online de ramburs. */
+  paymentGateway:    string;
   invoice:   OrderInvoice  | null;
   shipment:  OrderShipment | null;
   processingStatus: ProcessingStatus;
