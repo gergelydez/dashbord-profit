@@ -83,6 +83,12 @@ async function parseGlsSettlement(file) {
   return rows;
 }
 
+/** "GLA3911" → { series: "GLA", number: "3911" }; "3789" → { series: "", number: "3789" }. */
+function splitInvoiceNumber(s) {
+  const m = (s || '').trim().match(/^([A-Za-z]*)(\d+)$/);
+  return m ? { series: m[1], number: m[2] } : { series: '', number: (s || '').trim() };
+}
+
 /** Observatii SmartBill: "Order: #4116; Payment method: ..." → "#4116". */
 function extractOrderRefFromObs(obs) {
   if (!obs) return null;
@@ -210,11 +216,14 @@ export default function FacturiLipsaPage() {
   }, [glsParcels, invoicedRefs]);
 
   const resolveShops = async () => {
-    if (!missing.length) return;
+    if (!glsParcels.length) return;
     setMatchLoading(true); setMatchError(''); setMatchDone(false);
     try {
-      const dates = missing.map(m => m.pickupDate).filter(Boolean).sort();
-      const from = dates[0] || new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+      // Interval cât mai larg (nu doar coletele "lipsă") — ca harta
+      // nume-comandă→magazin să acopere și referințele din facturile
+      // SmartBill deja asociate corect, necesare pentru „Repară asocieri".
+      const dates = glsParcels.map(m => m.pickupDate).filter(Boolean).sort();
+      const from = dates[0] || new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10);
       const to = new Date().toISOString().slice(0, 10);
       const res = await fetch('/api/stats-totale/shopify-order-names', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -228,6 +237,50 @@ export default function FacturiLipsaPage() {
       setMatchLoading(false);
     }
   };
+
+  // ── Reparare asocieri Invoice↔Order greșite (vezi bug-ul confirmat în
+  // lib/services/invoice-service.ts) — folosește exportul SmartBill ca
+  // sursă de adevăr (Observatii conține referința comenzii, imuabilă din
+  // momentul creării facturii), nu DB-ul nostru, care e exact ce s-a corupt.
+  const [repairPreview, setRepairPreview] = useState(null); // rezultatul ultimei previzualizări/aplicări
+  const [repairLoading, setRepairLoading] = useState(false);
+  const [repairError, setRepairError] = useState('');
+  const [repairApplied, setRepairApplied] = useState(false);
+
+  const buildRepairItems = () => {
+    const items = [];
+    for (const r of invoiceRows) {
+      if (!r.orderRef) continue;
+      if (r.status.includes('anulat') || r.status.includes('ciorn')) continue;
+      const shopKey = shopMatches[r.orderRef];
+      if (!shopKey) continue; // nu s-a găsit în niciun magazin conectat — nu avem ce repara
+      const { series, number } = splitInvoiceNumber(r.invoiceNumber);
+      if (!number) continue;
+      items.push({ shopKey, orderName: r.orderRef, series, number, client: r.client });
+    }
+    return items;
+  };
+
+  const runRepair = async (apply) => {
+    setRepairLoading(true); setRepairError('');
+    try {
+      const items = buildRepairItems();
+      if (!items.length) throw new Error('Nimic de verificat — apasă întâi „Atribuie magazin" mai sus.');
+      const res = await fetch('/api/connector/repair-invoice-links', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, apply }),
+      }).then(r => r.json());
+      if (res.error) throw new Error(res.error);
+      setRepairPreview(res.results);
+      setRepairApplied(!!apply);
+    } catch (e) {
+      setRepairError(e.message);
+    } finally {
+      setRepairLoading(false);
+    }
+  };
+
+  const repairToFix = (repairPreview || []).filter(r => r.action === 'reassign' || r.action === 'create');
 
   const exportCsv = () => {
     const rows = [['Referință', 'Magazin', 'Client (GLS)', 'Oraș/Țară', 'Dată livrare', 'Colet (AWB)']];
@@ -286,7 +339,7 @@ export default function FacturiLipsaPage() {
                 ⚠️ {missing.length} colete livrate, fără factură găsită
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={resolveShops} disabled={matchLoading || !missing.length} style={btnGhost}>
+                <button onClick={resolveShops} disabled={matchLoading || !glsParcels.length} style={btnGhost}>
                   {matchLoading ? '⟳ Se atribuie...' : '🏬 Atribuie magazin (Shopify live)'}
                 </button>
                 <button onClick={exportCsv} disabled={!missing.length} style={btnGhost}>⬇ Export CSV</button>
@@ -328,6 +381,63 @@ export default function FacturiLipsaPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Reparare asocieri greșite (facturi "furate" de la comanda lor reală) ── */}
+        {!!invoiceRows.length && (
+          <div style={{ background: '#0f1419', border: '1px solid rgba(249,115,22,.3)', borderRadius: 12, padding: '14px 16px', marginTop: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#f97316', marginBottom: 6 }}>🔧 3. Repară asocieri greșite (facturi arătate la altă comandă)</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10, lineHeight: 1.6 }}>
+              Compară, pentru fiecare factură SmartBill cu referință recunoscută, cine chiar o deține la noi în bază — și arată dacă e asociată greșit la altă comandă (bug-ul deja reparat în cod, dar datele vechi au rămas greșite). <b style={{ color: '#e2e8f0' }}>Nu schimbă nimic</b> până apeși „✅ Aplică reparațiile", după ce verifici tu lista.
+              {!matchDone && <> Apasă întâi „🏬 Atribuie magazin" mai sus.</>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <button onClick={() => runRepair(false)} disabled={repairLoading || !matchDone} style={btnGhost}>
+                {repairLoading && !repairApplied ? '⟳ Se verifică...' : '🔍 Verifică (fără să schimbe nimic)'}
+              </button>
+              {!!repairToFix.length && !repairApplied && (
+                <button onClick={() => { if (confirm(`Sigur aplici ${repairToFix.length} reparații? Schimbă date reale în baza de date.`)) runRepair(true); }}
+                  disabled={repairLoading} style={{ ...btnPrimary, background: '#f97316' }}>
+                  {repairLoading ? '⟳ Se aplică...' : `✅ Aplică reparațiile (${repairToFix.length})`}
+                </button>
+              )}
+            </div>
+            {repairError && <div style={errBox}>⚠️ {repairError}</div>}
+            {repairApplied && <div style={{ fontSize: 12, color: '#10b981', marginBottom: 10 }}>✅ Reparații aplicate — reîncarcă pagina xConnector ca să vezi actualizarea.</div>}
+            {repairPreview && (
+              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+                <b style={{ color: '#10b981' }}>{repairPreview.filter(r => r.action === 'ok').length}</b> deja corecte · <b style={{ color: '#f97316' }}>{repairPreview.filter(r => r.action === 'reassign').length}</b> {repairApplied ? 'mutate' : 'de mutat'} · <b style={{ color: '#3b82f6' }}>{repairPreview.filter(r => r.action === 'create').length}</b> {repairApplied ? 'create' : 'de creat'} · <b style={{ color: '#64748b' }}>{repairPreview.filter(r => r.action === 'skip').length}</b> sărite
+              </div>
+            )}
+            {!!repairToFix.length && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 620 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
+                      {['Factură', 'Comandă', 'Client SmartBill', 'Client Shopify', 'Era la', 'Acțiune'].map(h => (
+                        <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: '#64748b', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {repairToFix.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
+                        <td style={{ padding: '5px 8px', color: '#f97316', fontFamily: 'monospace', fontWeight: 700 }}>{r.series}{r.number}</td>
+                        <td style={{ padding: '5px 8px', color: '#cbd5e1' }}>{r.orderName}</td>
+                        <td style={{ padding: '5px 8px', color: '#94a3b8' }}>{r.client}</td>
+                        <td style={{ padding: '5px 8px', color: '#e2e8f0' }}>{r.shopifyCustomer}</td>
+                        <td style={{ padding: '5px 8px', color: r.wrongOwnerOrderName ? '#f43f5e' : '#475569' }}>{r.wrongOwnerOrderName ? `${r.wrongOwnerOrderName} (${r.wrongOwnerCustomer})` : '—'}</td>
+                        <td style={{ padding: '5px 8px', color: r.action === 'reassign' ? '#f43f5e' : '#3b82f6', fontWeight: 700 }}>{r.action === 'reassign' ? 'Mută' : 'Creează'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {repairPreview && !repairToFix.length && (
+              <div style={{ textAlign: 'center', color: '#475569', padding: 16 }}>Nicio asociere greșită găsită. 🎉</div>
             )}
           </div>
         )}
