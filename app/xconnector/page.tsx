@@ -1919,9 +1919,9 @@ export default function XConnectorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const checkLiveStatus = async () => {
+  const checkLiveStatus = async (opts?: { silent?: boolean }) => {
     const list = (data?.orders ?? []).filter(o => o.shipment?.tracking);
-    if (!list.length) { addToast('info', 'Nicio comandă cu AWB pe pagina curentă.'); return; }
+    if (!list.length) { if (!opts?.silent) addToast('info', 'Nicio comandă cu AWB pe pagina curentă.'); return; }
     setLiveTrackLoading(true);
     try {
       const res = await fetch('/api/tracking', {
@@ -1946,7 +1946,7 @@ export default function XConnectorPage() {
         toPersist[t.id] = { ...entry, at: new Date().toISOString() };
       }
       setLiveTrack(prev => ({ ...prev, ...next }));
-      addToast('ok', `Status actualizat pentru ${Object.keys(next).length} comenzi`);
+      if (!opts?.silent) addToast('ok', `Status actualizat pentru ${Object.keys(next).length} comenzi`);
       if (Object.keys(toPersist).length) {
         fetch('/api/tracking-overrides', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1954,11 +1954,20 @@ export default function XConnectorPage() {
         }).catch(() => {});
       }
     } catch (e) {
-      addToast('err', 'Eroare la verificarea statusului curier');
+      if (!opts?.silent) addToast('err', 'Eroare la verificarea statusului curier');
     } finally {
       setLiveTrackLoading(false);
     }
   };
+
+  // Verificare automată — de îndată ce se încarcă o pagină de comenzi, fără
+  // să mai fie nevoie de click manual pe „Verifică livrări" (ca în Stats).
+  // Cache-ul de 30 min din /api/tracking face sigur și ieftin să rulăm asta
+  // de fiecare dată când se schimbă lista (filtru/pagină/shop).
+  useEffect(() => {
+    if (data?.orders?.length) checkLiveStatus({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   function liveStatusBadge(live: LiveTrack | undefined): React.ReactNode {
     if (!live) return <span style={{ fontSize: 11, color: 'var(--c-text4)' }}>—</span>;
@@ -2211,7 +2220,7 @@ export default function XConnectorPage() {
           )}
           <button style={S.iconBtn} onClick={() => refetch()}>{isLoading ? <Spin /> : '↻'} Refresh</button>
           <SyncButton shop={activeShop} onDone={() => { addToast('ok', 'Sync trimis! Refresh în 30s.'); setTimeout(() => refetch(), 30000); }} />
-          <button style={liveTrackLoading ? { ...S.iconBtn, opacity: 0.6, cursor: 'not-allowed' } : S.iconBtn} onClick={checkLiveStatus} disabled={liveTrackLoading} title="Interoghează GLS/Sameday pentru statusul real de livrare">
+          <button style={liveTrackLoading ? { ...S.iconBtn, opacity: 0.6, cursor: 'not-allowed' } : S.iconBtn} onClick={() => checkLiveStatus()} disabled={liveTrackLoading} title="Interoghează GLS/Sameday pentru statusul real de livrare (se face și automat la încărcare)">
             {liveTrackLoading ? <Spin /> : '🚚'} Verifică livrări
           </button>
           <button
