@@ -15,6 +15,8 @@ const NAV: { href: string; icon: string; label: string; badge?: string }[] = [
   { href: '/fulfillment',     icon: '🚚', label: 'Fulfillment' },
   { href: '/gls',             icon: '🏷️', label: 'GLS AWB', badge: 'NEW' },
   { href: '/stats',           icon: '📊', label: 'Statistici' },
+  { href: '/statistici-totale', icon: '🧮', label: 'Stat. Totale', badge: 'NEW' },
+  { href: '/facturi-lipsa',   icon: '⚠️', label: 'Facturi lipsă', badge: 'NEW' },
   { href: '/meta-intelligence', icon: '🎯', label: 'Meta Intel', badge: 'NEW' },
   { href: '/profit',          icon: '💹', label: 'Profit' },
   { href: '/whatsapp',        icon: '📱', label: 'WhatsApp' },
