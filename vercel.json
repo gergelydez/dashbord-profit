@@ -11,6 +11,10 @@
     {
       "path": "/api/mail/sync",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/agent/daily-report",
+      "schedule": "30 6 * * *"
     }
   ]
 }
