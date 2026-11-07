@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { SidebarStoreSwitcher } from './StoreSwitcher';
 
 const NAV: { href: string; icon: string; label: string; badge?: string }[] = [
+  { href: '/agent',           icon: '🤖', label: 'Agent AI', badge: 'NEW' },
   { href: '/',                icon: '📦', label: 'Comenzi' },
   { href: '/xconnector',      icon: '⚡', label: 'Procesare' },
   { href: '/fulfillment',     icon: '🚚', label: 'Fulfillment' },
